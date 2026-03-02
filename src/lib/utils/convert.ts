@@ -1,6 +1,27 @@
 // --- Type conversion helpers --- //
 
 import { checksumAddress } from "viem";
+import bs58 from "bs58";
+
+export function solanaAddressToBytes32(base58Address: string): `0x${string}` {
+	const decoded = bs58.decode(base58Address);
+	if (decoded.length !== 32) {
+		throw new Error(`Invalid Solana address: expected 32 bytes, got ${decoded.length}`);
+	}
+	const hex = Array.from(decoded)
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+	return `0x${hex}`;
+}
+
+export function isValidSolanaAddress(value: string): boolean {
+	try {
+		const decoded = bs58.decode(value.trim());
+		return decoded.length === 32;
+	} catch {
+		return false;
+	}
+}
 
 export function toBigIntWithDecimals(value: number, decimals: number): bigint {
 	// Convert number to string in full precision
@@ -21,10 +42,11 @@ export function toBigIntWithDecimals(value: number, decimals: number): bigint {
 }
 
 export function addressToBytes32(address: `0x${string}`): `0x${string}` {
-	if (address.length !== 42 && address.length !== 40) {
+	const raw = address.replace("0x", "");
+	if (raw.length !== 40 && raw.length !== 64) {
 		throw new Error(`Invalid address length: ${address.length}`);
 	}
-	return `0x${address.replace("0x", "").padStart(64, "0")}`;
+	return `0x${raw.padStart(64, "0")}`;
 }
 
 export function bytes32ToAddress(bytes: `0x${string}`): `0x${string}` {

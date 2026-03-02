@@ -4,8 +4,9 @@
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
-	import { POLYMER_ALLOCATOR, formatTokenAmount, type chain } from "$lib/config";
+	import { POLYMER_ALLOCATOR, clients, formatTokenAmount, type chain } from "$lib/config";
 	import { isAddress } from "viem";
+	import { isValidSolanaAddress } from "$lib/utils/convert";
 	import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
 	import { CompactLib } from "$lib/libraries/compactLib";
 	import store from "$lib/state.svelte";
@@ -33,6 +34,7 @@
 
 	const opts = $derived({
 		recipient: store.recipient,
+		solanaRecipient: store.solanaRecipient,
 		exclusiveFor: store.exclusiveFor,
 		inputTokens: store.inputTokens,
 		outputTokens: store.outputTokens,
@@ -147,7 +149,18 @@
 		return uniqueChains.length;
 	});
 
-	const recipientValid = $derived(isAddress(store.recipient, { strict: false }));
+	const hasEvmOutput = $derived(store.outputTokens.some(({ token }) => token.chain in clients));
+	const hasSolanaOutput = $derived(
+		store.outputTokens.some(({ token }) => token.chain === "solanaDevnet")
+	);
+
+	const evmRecipientValid = $derived(
+		!hasEvmOutput || isAddress(store.recipient, { strict: false })
+	);
+	const solanaRecipientValid = $derived(
+		!hasSolanaOutput || isValidSolanaAddress(store.solanaRecipient)
+	);
+	const recipientValid = $derived(evmRecipientValid && solanaRecipientValid);
 
 	const sameChain = $derived.by(() => {
 		if (numInputChains > 1) return false;
@@ -190,7 +203,10 @@
 						inputTokens={store.inputTokens}
 						bind:outputTokens={store.outputTokens}
 						{account}
-						recipient={() => (recipientValid ? (store.recipient as `0x${string}`) : undefined)}
+						recipient={() =>
+							evmRecipientValid && store.recipient.length > 0
+								? (store.recipient as `0x${string}`)
+								: undefined}
 					></GetQuote>
 				</div>
 			{/snippet}
@@ -258,14 +274,43 @@
 		<SectionCard compact>
 			<div class="flex flex-col gap-2">
 				<div class="flex min-w-0 items-center gap-1">
-					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500">Recipient</span>
+					<span
+						class="text-[11px] font-semibold whitespace-nowrap {hasEvmOutput
+							? 'text-gray-500'
+							: 'text-gray-300'}">EVM Recipient</span
+					>
 					<FormControl
 						type="text"
 						size="sm"
 						className="flex-1"
 						placeholder="0x..."
-						state={store.recipient.length > 0 && !recipientValid ? "error" : "default"}
+						disabled={!hasEvmOutput}
+						state={!hasEvmOutput
+							? "disabled"
+							: store.recipient.length > 0 && !evmRecipientValid
+								? "error"
+								: "default"}
 						bind:value={store.recipient}
+					/>
+				</div>
+				<div class="flex min-w-0 items-center gap-1">
+					<span
+						class="text-[11px] font-semibold whitespace-nowrap {hasSolanaOutput
+							? 'text-gray-500'
+							: 'text-gray-300'}">Solana Recipient</span
+					>
+					<FormControl
+						type="text"
+						size="sm"
+						className="flex-1"
+						placeholder="Base58 address..."
+						disabled={!hasSolanaOutput}
+						state={!hasSolanaOutput
+							? "disabled"
+							: store.solanaRecipient.length > 0 && !solanaRecipientValid
+								? "error"
+								: "default"}
+						bind:value={store.solanaRecipient}
 					/>
 				</div>
 				<div class="flex items-center gap-1">
@@ -311,7 +356,13 @@
 					class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
 					disabled
 				>
-					Enter Recipient
+					{#if hasEvmOutput && !evmRecipientValid && hasSolanaOutput && !solanaRecipientValid}
+						Enter Recipients
+					{:else if hasEvmOutput && !evmRecipientValid}
+						Enter EVM Recipient
+					{:else}
+						Enter Solana Recipient
+					{/if}
 				</button>
 			{:else if !allowanceCheck}
 				<AwaitButton buttonFunction={approveFunction}>

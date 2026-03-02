@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { chainMap, coinList, type Token } from "$lib/config";
+	import { chainMap, clients, coinList, type Token } from "$lib/config";
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import InlineMetaField from "$lib/components/ui/InlineMetaField.svelte";
@@ -64,6 +64,7 @@
 			const token = getTokenFor(key);
 			// If we can't find the token, then it is most likely because the user changed their token.
 			if (!token) continue;
+			if (!hasClient(token.chain)) continue;
 			if (!isEnabled(key)) continue;
 
 			if (inputValue === 0) continue;
@@ -76,6 +77,8 @@
 
 		active = false;
 	}
+
+	const hasClient = (chain: string) => chain in clients;
 
 	const uniqueInputTokens = $derived([
 		...new Set(
@@ -105,7 +108,7 @@
 		const tokens = tokenSet;
 		const selectedIndices = tokens
 			.map((token, i) => [token, i] as const)
-			.filter(([token]) => isEnabled(iaddrFor(token)))
+			.filter(([token]) => hasClient(token.chain) && isEnabled(iaddrFor(token)))
 			.map(([, i]) => i);
 		if (selectedIndices.length === 0) {
 			for (const token of tokens) {
@@ -211,29 +214,38 @@
 				<div>
 					{#each tokenSet as tkn, rowIndex}
 						{@const iaddr = iaddrFor(tkn)}
+						{@const evmChain = hasClient(tkn.chain)}
 						<FieldRow columns={rowColumns} striped index={rowIndex}>
-							<div class="truncate text-xs font-medium text-gray-700">{tkn.chain}</div>
-							{#await (store.intentType === "compact" ? store.compactBalances : store.balances)[tkn.chain][tkn.address]}
-								<InlineMetaField
-									bind:value={inputs[iaddr]}
-									metaText="..."
-									disabled={!isEnabled(iaddr)}
-								/>
-							{:then balance}
-								<InlineMetaField
-									bind:value={inputs[iaddr]}
-									metaText={formatBalance(balance, tkn.decimals)}
-									disabled={!isEnabled(iaddr)}
-								/>
-							{:catch _}
-								<InlineMetaField
-									bind:value={inputs[iaddr]}
-									metaText="err"
-									disabled={!isEnabled(iaddr)}
-								/>
-							{/await}
+							<div
+								class="truncate text-xs font-medium {evmChain ? 'text-gray-700' : 'text-gray-400'}"
+							>
+								{tkn.chain}
+							</div>
+							{#if evmChain}
+								{#await (store.intentType === "compact" ? store.compactBalances : store.balances)[tkn.chain][tkn.address]}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="..."
+										disabled={!isEnabled(iaddr)}
+									/>
+								{:then balance}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText={formatBalance(balance, tkn.decimals)}
+										disabled={!isEnabled(iaddr)}
+									/>
+								{:catch _}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="err"
+										disabled={!isEnabled(iaddr)}
+									/>
+								{/await}
+							{:else}
+								<InlineMetaField bind:value={inputs[iaddr]} metaText="—" disabled={true} />
+							{/if}
 							<div class="flex justify-center">
-								<input type="checkbox" bind:checked={enabledByToken[iaddr]} />
+								<input type="checkbox" bind:checked={enabledByToken[iaddr]} disabled={!evmChain} />
 							</div>
 						</FieldRow>
 					{/each}

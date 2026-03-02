@@ -54,6 +54,7 @@ export type CompactLock = {
 };
 
 export type CreateIntentOptionsEscrow = {
+	recipient: string;
 	exclusiveFor: string;
 	inputTokens: TokenContext[];
 	outputTokens: TokenContext[];
@@ -63,6 +64,7 @@ export type CreateIntentOptionsEscrow = {
 };
 
 export type CreateIntentOptionsCompact = {
+	recipient: string;
 	exclusiveFor: string;
 	inputTokens: TokenContext[];
 	outputTokens: TokenContext[];
@@ -107,6 +109,7 @@ export class Intent {
 
 	// User facing order options
 	private user: () => `0x${string}`;
+	private recipient: `0x${string}`;
 	private inputs: TokenContext[];
 	private outputs: TokenContext[];
 	private verifier: Verifier;
@@ -122,11 +125,21 @@ export class Intent {
 		this.lock = opts.lock;
 
 		this.user = opts.account;
+		this.recipient = this.normalizeRecipient(opts.recipient);
 		this.inputs = opts.inputTokens;
 		this.outputs = opts.outputTokens;
 		this.verifier = opts.verifier;
 
 		this.exclusiveFor = this.normalizeExclusiveFor(opts.exclusiveFor);
+	}
+
+	private normalizeRecipient(recipient: string): `0x${string}` {
+		const trimmed = recipient.trim();
+		const normalized = trimmed.toLowerCase();
+		if (!/^0x[0-9a-f]{40}$/.test(normalized)) {
+			throw new Error(`Recipient not formatted correctly: ${recipient}`);
+		}
+		return normalized as `0x${string}`;
 	}
 
 	private normalizeExclusiveFor(exclusiveFor: string): `0x${string}` | undefined {
@@ -205,7 +218,7 @@ export class Intent {
 				chainId: BigInt(chainMap[token.chain].id),
 				token: addressToBytes32(token.address),
 				amount: amount,
-				recipient: addressToBytes32(this.user()),
+				recipient: addressToBytes32(this.recipient),
 				callbackData: "0x",
 				context
 			};

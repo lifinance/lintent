@@ -5,6 +5,7 @@
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
 	import { POLYMER_ALLOCATOR, formatTokenAmount, type chain } from "$lib/config";
+	import { isAddress } from "viem";
 	import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
 	import { CompactLib } from "$lib/libraries/compactLib";
 	import store from "$lib/state.svelte";
@@ -31,6 +32,7 @@
 	let outputTokenSelectorActive = $state<boolean>(false);
 
 	const opts = $derived({
+		recipient: store.recipient,
 		exclusiveFor: store.exclusiveFor,
 		inputTokens: store.inputTokens,
 		outputTokens: store.outputTokens,
@@ -145,6 +147,8 @@
 		return uniqueChains.length;
 	});
 
+	const recipientValid = $derived(isAddress(store.recipient, { strict: false }));
+
 	const sameChain = $derived.by(() => {
 		if (numInputChains > 1) return false;
 		const inputChain = store.inputTokens[0].token.chain;
@@ -186,6 +190,7 @@
 						inputTokens={store.inputTokens}
 						bind:outputTokens={store.outputTokens}
 						{account}
+						recipient={() => (recipientValid ? (store.recipient as `0x${string}`) : undefined)}
 					></GetQuote>
 				</div>
 			{/snippet}
@@ -252,6 +257,17 @@
 
 		<SectionCard compact>
 			<div class="flex flex-col gap-2">
+				<div class="flex min-w-0 items-center gap-1">
+					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500">Recipient</span>
+					<FormControl
+						type="text"
+						size="sm"
+						className="flex-1"
+						placeholder="0x..."
+						state={store.recipient.length > 0 && !recipientValid ? "error" : "default"}
+						bind:value={store.recipient}
+					/>
+				</div>
 				<div class="flex items-center gap-1">
 					<span class="text-[11px] font-semibold text-gray-500">Verifier</span>
 					{#if sameChain}
@@ -289,7 +305,15 @@
 		</SectionCard>
 
 		<div class="mt-2 flex justify-center">
-			{#if !allowanceCheck}
+			{#if !recipientValid}
+				<button
+					type="button"
+					class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+					disabled
+				>
+					Enter Recipient
+				</button>
+			{:else if !allowanceCheck}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance

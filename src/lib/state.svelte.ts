@@ -273,6 +273,7 @@ class Store {
 	allocatorId = $state<availableAllocators>(ALWAYS_OK_ALLOCATOR);
 	verifier = $state<Verifier>("polymer");
 	recipient: string = $state("");
+	solanaRecipient: string = $state("");
 	exclusiveFor: string = $state("");
 	useExclusiveForQuoteRequest = $state(false);
 
@@ -393,11 +394,13 @@ class Store {
 		const { bucket, ttlMs, isMainnet, scopeKey, fetcher } = opts;
 		const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
 		for (const token of coinList(isMainnet)) {
+			const client = clientsById[token.chainId];
+			if (!client) continue;
 			if (!resolved[token.chainId]) resolved[token.chainId] = {};
 			const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${scopeKey}`;
 			resolved[token.chainId][token.address] = getOrFetchRpc(
 				key,
-				() => fetcher(token.address, clientsById[token.chainId]),
+				() => fetcher(token.address, client),
 				{ ttlMs }
 			);
 		}

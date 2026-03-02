@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, custom, fallback, http } from "viem";
+import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
 import {
 	arbitrum,
 	arbitrumSepolia,
@@ -13,6 +13,16 @@ import {
 	megaeth
 } from "viem/chains";
 
+const solanaDevnet = defineChain({
+	id: 11,
+	name: "Solana Devnet",
+	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
+	rpcUrls: {
+		default: { http: ["https://api.devnet.solana.com"] }
+	},
+	testnet: true
+});
+
 export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000" as const;
 export const BYTES32_ZERO =
 	"0x0000000000000000000000000000000000000000000000000000000000000000" as const;
@@ -26,6 +36,8 @@ export const MULTICHAIN_INPUT_SETTLER_COMPACT =
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
 export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
+export const SOLANA_OUTPUT_SETTLER_PDA =
+	"0xfef7041ed572ebef0bcb798166b921a7691e435b9e035e2236cc225e655bc237" as const;
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[ethereum.id]: "0x0000000000000000000000000000000000000000",
 	[arbitrum.id]: "0x0000000000000000000000000000000000000000",
@@ -43,7 +55,8 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[sepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	[baseSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	[arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00"
+	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
+	[solanaDevnet.id]: "0xfd8c1179dcc56c06fe0e9363feadd964dd3fa13b75ce88f61dee3bfdade95af6"
 };
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
@@ -62,14 +75,17 @@ export const chainMap = {
 	katana,
 	megaeth,
 	bsc,
-	polygon
+	polygon,
+	solanaDevnet
 } as const;
 type ChainName = keyof typeof chainMap;
+export type chain = ChainName;
 export const chains = Object.keys(chainMap) as ChainName[];
 export const chainList = (mainnet: boolean) => {
 	if (mainnet == true) {
 		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc"] as ChainName[];
-	} else return ["sepolia", "optimismSepolia", "baseSepolia", "arbitrumSepolia"] as ChainName[];
+	} else
+		return ["sepolia", "optimismSepolia", "baseSepolia", "arbitrumSepolia", "solanaDevnet"] as ChainName[];
 };
 
 export const chainIdList = (mainnet: boolean) => {
@@ -267,6 +283,25 @@ export const coinList = (mainnet: boolean) => {
 				name: "weth",
 				chainId: arbitrumSepolia.id,
 				decimals: 18
+			},
+			{
+				address: ADDRESS_ZERO,
+				name: "sol",
+				chainId: solanaDevnet.id,
+				decimals: 9
+			},
+			{
+				// So11111111111111111111111111111111111111112
+				address: `0x069b8857feab8184fb687f634618c035dac439dc1aeb3b5598a0f00000000001`,
+				name: "wsol",
+				chainId: solanaDevnet.id,
+				decimals: 9
+			},
+			{
+				address: `0x3b442cb3912157f13a933d0134282d032b5ffecd01a2dbf1b7790608df002ea7`,
+				name: "usdc",
+				chainId: solanaDevnet.id,
+				decimals: 6
 			}
 		] as const;
 };
@@ -308,7 +343,8 @@ export const polymerChainIds = {
 	megaeth: megaeth.id,
 	katana: katana.id,
 	bsc: bsc.id,
-	polygon: polygon.id
+	polygon: polygon.id,
+	solanaDevnet: solanaDevnet.id
 } as const;
 
 export type Verifier = "wormhole" | "polymer";

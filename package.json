@@ -46,7 +46,7 @@
 		"vite": "^7.1.1"
 	},
 	"dependencies": {
-		"@lifi/intent": "^0.0.2-alpha",
+		"@lifi/intent": "0.0.3-alpha.1",
 		"@electric-sql/pglite": "^0.3.15",
 		"@metamask/sdk": "^0.34.0",
 		"@sveltejs/adapter-cloudflare": "^7.0.3",

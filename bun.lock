@@ -6,7 +6,7 @@
       "name": "cat-swapper",
       "dependencies": {
         "@electric-sql/pglite": "^0.3.15",
-        "@lifi/intent": "^0.0.2-alpha",
+        "@lifi/intent": "0.0.3-alpha.1",
         "@metamask/sdk": "^0.34.0",
         "@sveltejs/adapter-cloudflare": "^7.0.3",
         "@wagmi/connectors": "^7.2.1",
@@ -219,7 +219,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.29", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-uw6guiW/gcAGPDhLmd77/6lW8QLeiV5RUTsAX46Db6oLhGaVj4lhnPwb184s1bkc8kdVg/+h988dro8GRDpmYQ=="],
 
-    "@lifi/intent": ["@lifi/intent@0.0.2-alpha", "", { "dependencies": { "ky": "^1.12.0", "viem": "~2.45.1" } }, "sha512-N9hjHmJD/t1PAR/KQ4EiOYs9YPfMHXTzn2x2R7qScaq/FXm+qSZt7BmkbGtg/KcvIwhMwcFf1+nBTEYW1KUOgA=="],
+    "@lifi/intent": ["@lifi/intent@0.0.3-alpha.1", "", { "dependencies": { "ky": "^1.12.0", "viem": "~2.45.1" } }, "sha512-dzEcS8U5buW7nLpkMmC0kj5R7EQC7l8l1mBd9IWr6R5/vSnSF3kO9zVaNQOmrbezSOS9TROrOpGDUWc847d/Uw=="],
 
     "@metamask/json-rpc-engine": ["@metamask/json-rpc-engine@8.0.2", "", { "dependencies": { "@metamask/rpc-errors": "^6.2.1", "@metamask/safe-event-emitter": "^3.0.0", "@metamask/utils": "^8.3.0" } }, "sha512-IoQPmql8q7ABLruW7i4EYVHWUbF74yrp63bRuXV5Zf9BQwcn5H9Ww1eLtROYvI1bUXwOiHZ6qT5CWTrDc/t/AA=="],
 

@@ -31,14 +31,12 @@
 
 	let inputTokenSelectorActive = $state<boolean>(false);
 	let outputTokenSelectorActive = $state<boolean>(false);
-
-	const resolveExclusiveFor = (value: string, fallback: `0x${string}`): `0x${string}` => {
-		return isAddress(value, { strict: false }) ? value : fallback;
-	};
+	const resolveExclusiveFor = (value: string): `0x${string}` | undefined =>
+		isAddress(value, { strict: false }) ? value : undefined;
 
 	const intentOptions = $derived.by(
 		(): AppCreateIntentOptions => ({
-			exclusiveFor: resolveExclusiveFor(store.exclusiveFor, account()),
+			exclusiveFor: resolveExclusiveFor(store.exclusiveFor),
 			inputTokens: store.inputTokens,
 			outputTokens: store.outputTokens,
 			verifier: store.verifier,

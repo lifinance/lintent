@@ -6,7 +6,7 @@ import {
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
 	type WC
 } from "$lib/config";
-import { isAddress, maxUint256 } from "viem";
+import { maxUint256 } from "viem";
 import type {
 	CreateIntentOptions,
 	TokenContext,
@@ -38,12 +38,9 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
 
 function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOptions {
 	const account = opts.account();
-	const exclusiveFor = isAddress(opts.exclusiveFor, { strict: false })
-		? opts.exclusiveFor
-		: account;
 	if (opts.lock.type === "compact") {
 		return {
-			exclusiveFor,
+			exclusiveFor: opts.exclusiveFor,
 			inputTokens: opts.inputTokens.map(toCoreTokenContext),
 			outputTokens: opts.outputTokens.map(toCoreTokenContext),
 			verifier: opts.verifier,
@@ -57,7 +54,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 	}
 
 	return {
-		exclusiveFor,
+		exclusiveFor: opts.exclusiveFor,
 		inputTokens: opts.inputTokens.map(toCoreTokenContext),
 		outputTokens: opts.outputTokens.map(toCoreTokenContext),
 		verifier: opts.verifier,

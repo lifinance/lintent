@@ -36,6 +36,14 @@ export const MULTICHAIN_INPUT_SETTLER_COMPACT =
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
 export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
+
+// catalyst-intent-svm program IDs (devnet) — from Anchor.toml
+export const SOLANA_INTENTS_PROTOCOL = "4SQaweUpT1LrRg1gh9sVEDL3Q4jZH3wxRi3qpz23SRpj" as const;
+export const SOLANA_OUTPUT_SETTLER_SIMPLE = "8yt6Q3Gj8QCAqRVHQULckMf4rWSKQgN6SKVy9QTY5uWe" as const;
+export const SOLANA_INPUT_SETTLER_ESCROW = "HyfCubUzStNcbAhW94PHPwRMqz2FTo9ox5HXxu2o6Ygq" as const;
+export const SOLANA_POLYMER_ORACLE = "GjXkLKfMpz1MGDTFhKf31gXdcPAxPEFaEu85GmqQgLyL" as const;
+
+// PDA(seed: "output_settler_simple") of the SOLANA_OUTPUT_SETTLER_SIMPLE program
 export const SOLANA_OUTPUT_SETTLER_PDA =
 	"0xfef7041ed572ebef0bcb798166b921a7691e435b9e035e2236cc225e655bc237" as const;
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
@@ -56,6 +64,7 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[baseSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	[arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
+	// PDA(seed: "polymer") of the SOLANA_POLYMER_ORACLE program
 	[solanaDevnet.id]: "0xfd8c1179dcc56c06fe0e9363feadd964dd3fa13b75ce88f61dee3bfdade95af6"
 };
 

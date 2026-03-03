@@ -19,7 +19,7 @@ import {
 	COMPACT,
 	getChainName,
 	getOracle,
-	SOLANA_COIN_FILLER,
+	SOLANA_OUTPUT_SETTLER_PDA,
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
@@ -161,8 +161,8 @@ export class Intent {
 				throw new Error("Solana recipient is required for solanaDevnet outputs");
 			return this.solanaRecipient;
 		}
-		if (!this.recipient) throw new Error("EVM recipient is required for EVM outputs");
-		return addressToBytes32(this.recipient);
+		const evmRecipient = this.recipient ?? this.user();
+		return addressToBytes32(evmRecipient);
 	}
 
 	private normalizeExclusiveFor(exclusiveFor: string): `0x${string}` | undefined {
@@ -232,7 +232,7 @@ export class Intent {
 
 		return this.outputs.map(({ token, amount }) => {
 			const isSolana = token.chain === "solanaDevnet";
-			const outputSettler = isSolana ? SOLANA_COIN_FILLER : COIN_FILLER;
+			const outputSettler = isSolana ? SOLANA_OUTPUT_SETTLER_PDA : COIN_FILLER;
 			const settlerBytes32 = isSolana
 				? (outputSettler as `0x${string}`)
 				: addressToBytes32(outputSettler);

@@ -166,7 +166,9 @@
 	const hasSolanaOutput = $derived(store.outputTokens.some(({ token }) => token.chainId === 11));
 
 	const evmRecipientValid = $derived(
-		!hasEvmOutput || isAddress(store.recipient, { strict: false })
+		!hasEvmOutput ||
+			store.recipient.trim().length === 0 ||
+			isAddress(store.recipient, { strict: false })
 	);
 	const solanaRecipientValid = $derived(
 		!hasSolanaOutput || isValidSolanaAddress(store.solanaRecipient)
@@ -302,7 +304,7 @@
 						type="text"
 						size="sm"
 						className="flex-1"
-						placeholder="0x..."
+						placeholder="0x... (defaults to connected wallet)"
 						disabled={!hasEvmOutput}
 						state={!hasEvmOutput
 							? "disabled"
@@ -375,10 +377,10 @@
 					class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
 					disabled
 				>
-					{#if hasEvmOutput && !evmRecipientValid && hasSolanaOutput && !solanaRecipientValid}
-						Enter Recipients
-					{:else if hasEvmOutput && !evmRecipientValid}
-						Enter EVM Recipient
+					{#if !evmRecipientValid && !solanaRecipientValid}
+						Fix Recipients
+					{:else if !evmRecipientValid}
+						Fix EVM Recipient
 					{:else}
 						Enter Solana Recipient
 					{/if}

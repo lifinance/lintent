@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { formatTokenAmount, getChainName, getClient, getCoin, type chain } from "$lib/config";
-	import { addressToBytes32 } from "$lib/utils/convert";
-	import { encodeMandateOutput } from "$lib/utils/orderLib";
+	import { formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
+	import { addressToBytes32 } from "@lifi/intent";
+	import { encodeMandateOutput } from "@lifi/intent";
 	import { hashStruct, keccak256 } from "viem";
-	import type { MandateOutput, OrderContainer } from "../../types";
+	import type { MandateOutput, OrderContainer } from "@lifi/intent";
 	import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 	import { Solver } from "$lib/libraries/solver";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
@@ -12,8 +12,8 @@
 	import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
 	import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
 	import store from "$lib/state.svelte";
-	import { orderToIntent } from "$lib/libraries/intent";
-	import { compactTypes } from "$lib/utils/typedMessage";
+	import { orderToIntent } from "@lifi/intent";
+	import { compactTypes } from "@lifi/intent";
 
 	// This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 
@@ -26,7 +26,7 @@
 	}: {
 		scroll: (direction: boolean | number) => () => void;
 		orderContainer: OrderContainer;
-		preHook?: (chain: chain) => Promise<any>;
+		preHook?: (chainId: number) => Promise<any>;
 		postHook: () => Promise<any>;
 		account: () => `0x${string}`;
 	} = $props();
@@ -72,12 +72,12 @@
 		const block = await outputClient.getBlock({
 			blockHash: blockHashOfFill
 		});
-		const encodedOutput = encodeMandateOutput(
-			addressToBytes32(transactionReceipt.from),
+		const encodedOutput = encodeMandateOutput({
+			solver: addressToBytes32(transactionReceipt.from),
 			orderId,
-			Number(block.timestamp),
+			timestamp: Number(block.timestamp),
 			output
-		);
+		});
 		const outputHash = keccak256(encodedOutput);
 		const sourceChainClient = getClient(chainId);
 		return await sourceChainClient.readContract({
@@ -180,10 +180,9 @@
 								<TokenAmountChip
 									amountText={formatTokenAmount(
 										output.amount,
-										getCoin({ address: output.token, chain: getChainName(output.chainId) }).decimals
+										getCoin({ address: output.token, chainId: output.chainId }).decimals
 									)}
-									symbol={getCoin({ address: output.token, chain: getChainName(output.chainId) })
-										.name}
+									symbol={getCoin({ address: output.token, chainId: output.chainId }).name}
 									tone="warning"
 								/>
 							{:else}
@@ -206,7 +205,7 @@
 																primaryType: "MandateOutput"
 															})
 														],
-													sourceChain: getChainName(inputChain),
+													sourceChainId: Number(inputChain),
 													mainnet: store.mainnet
 												},
 												{
@@ -219,13 +218,12 @@
 									{#snippet name()}
 										{formatTokenAmount(
 											output.amount,
-											getCoin({ address: output.token, chain: getChainName(output.chainId) })
-												.decimals
+											getCoin({ address: output.token, chainId: output.chainId }).decimals
 										)}
 										&nbsp;
 										{getCoin({
 											address: output.token,
-											chain: getChainName(output.chainId)
+											chainId: output.chainId
 										}).name.toUpperCase()}
 									{/snippet}
 									{#snippet awaiting()}

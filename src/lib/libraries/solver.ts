@@ -1,23 +1,15 @@
-import {
-	BYTES32_ZERO,
-	type chain,
-	chainMap,
-	clients,
-	COIN_FILLER,
-	getChainName,
-	getOracle,
-	type WC
-} from "$lib/config";
+import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
 import { hashStruct, maxUint256, parseEventLogs } from "viem";
-import type { MandateOutput, OrderContainer } from "../../types";
-import { addressToBytes32, bytes32ToAddress } from "$lib/utils/convert";
+import type { MandateOutput, OrderContainer } from "@lifi/intent";
+import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
 import axios from "axios";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { orderToIntent } from "./intent";
-import { compactTypes } from "$lib/utils/typedMessage";
+import { orderToIntent } from "@lifi/intent";
+import { compactTypes } from "@lifi/intent";
 import store from "$lib/state.svelte";
+import { finaliseIntent } from "./intentExecution";
 
 /**
  * @notice Class for solving intents. Functions called by solvers.
@@ -51,8 +43,7 @@ export class Solver {
 			(cached as { logs?: unknown[] }).logs!.length > 0
 		)
 			return cached as any;
-		const chainName = getChainName(chainId);
-		const receipt = await clients[chainName].getTransactionReceipt({ hash: txHash });
+		const receipt = await getClient(chainId).getTransactionReceipt({ hash: txHash });
 		await Solver.persistReceipt(chainId, txHash, receipt);
 		return receipt;
 	}
@@ -64,7 +55,7 @@ export class Solver {
 			outputs: MandateOutput[];
 		},
 		opts: {
-			preHook?: (chain: chain) => Promise<any>;
+			preHook?: (chainId: number) => Promise<any>;
 			postHook?: () => Promise<any>;
 			account: () => `0x${string}`;
 		}
@@ -75,18 +66,16 @@ export class Solver {
 				orderContainer: { order, inputSettler },
 				outputs
 			} = args;
-			const publicClients = clients;
 			const orderId = orderToIntent({ order, inputSettler }).orderId();
 
-			const outputChain = getChainName(outputs[0].chainId);
+			const outputChainId = Number(outputs[0].chainId);
+			const outputChain = getChain(outputChainId);
 			// Always attempt chain switch before fill, including native-token fills.
-			if (preHook) await preHook(outputChain);
+			if (preHook) await preHook(outputChain.id);
 			const connectedChainId = await walletClient.getChainId();
-			const expectedChainId = chainMap[outputChain].id;
+			const expectedChainId = outputChain.id;
 			if (connectedChainId !== expectedChainId) {
-				throw new Error(
-					`Wallet is on chain ${connectedChainId}, expected ${expectedChainId} (${outputChain})`
-				);
+				throw new Error(`Wallet is on chain ${connectedChainId}, expected ${expectedChainId}`);
 			}
 
 			let value = 0n;
@@ -104,7 +93,7 @@ export class Solver {
 
 				// Check allowance & set allowance if needed
 				const assetAddress = bytes32ToAddress(output.token);
-				const allowance = await publicClients[outputChain].readContract({
+				const allowance = await getClient(outputChain.id).readContract({
 					address: assetAddress,
 					abi: ERC20_ABI,
 					functionName: "allowance",
@@ -112,14 +101,14 @@ export class Solver {
 				});
 				if (BigInt(allowance) < output.amount) {
 					const approveTransaction = await walletClient.writeContract({
-						chain: chainMap[outputChain],
+						chain: outputChain,
 						account: account(),
 						address: assetAddress,
 						abi: ERC20_ABI,
 						functionName: "approve",
 						args: [bytes32ToAddress(output.settler), maxUint256]
 					});
-					const approveReceipt = await clients[outputChain].waitForTransactionReceipt({
+					const approveReceipt = await getClient(outputChain.id).waitForTransactionReceipt({
 						hash: approveTransaction
 					});
 					await Solver.persistReceipt(outputs[0].chainId, approveTransaction, approveReceipt);
@@ -127,7 +116,7 @@ export class Solver {
 			}
 
 			const transactionHash = await walletClient.writeContract({
-				chain: chainMap[outputChain],
+				chain: outputChain,
 				account: account(),
 				address: bytes32ToAddress(outputs[0].settler),
 				value,
@@ -135,7 +124,7 @@ export class Solver {
 				functionName: "fillOrderOutputs",
 				args: [orderId, outputs, order.fillDeadline, addressToBytes32(account())]
 			});
-			const fillReceipt = await clients[outputChain].waitForTransactionReceipt({
+			const fillReceipt = await getClient(outputChain.id).waitForTransactionReceipt({
 				hash: transactionHash
 			});
 			await Solver.persistReceipt(outputs[0].chainId, transactionHash, fillReceipt);
@@ -151,11 +140,11 @@ export class Solver {
 			output: MandateOutput;
 			orderContainer: OrderContainer;
 			fillTransactionHash: string;
-			sourceChain: chain;
+			sourceChainId: number | bigint;
 			mainnet: boolean;
 		},
 		opts: {
-			preHook?: (chain: chain) => Promise<any>;
+			preHook?: (chainId: number) => Promise<any>;
 			postHook?: () => Promise<any>;
 			account: () => `0x${string}`;
 		}
@@ -166,7 +155,7 @@ export class Solver {
 				output,
 				orderContainer: { order },
 				fillTransactionHash,
-				sourceChain,
+				sourceChainId,
 				mainnet
 			} = args;
 			const expectedOutputHash = hashStruct({
@@ -174,12 +163,11 @@ export class Solver {
 				primaryType: "MandateOutput",
 				data: output
 			});
-			const validationKey = `${sourceChain}:${fillTransactionHash}:${expectedOutputHash}`;
+			const validationKey = `${Number(sourceChainId)}:${fillTransactionHash}:${expectedOutputHash}`;
 			const existingValidation = Solver.validationInflight.get(validationKey);
 			if (existingValidation) return existingValidation;
 
 			const validationPromise = (async () => {
-				const outputChain = getChainName(output.chainId);
 				if (
 					!fillTransactionHash ||
 					!fillTransactionHash.startsWith("0x") ||
@@ -216,7 +204,7 @@ export class Solver {
 				}
 				if (logIndex === -1) throw Error(`Could not find matching log`);
 
-				if (order.inputOracle === getOracle("polymer", sourceChain)) {
+				if (order.inputOracle === getOracle("polymer", sourceChainId)) {
 					let proof: string | undefined;
 					const polymerKey = `${Number(output.chainId)}:${Number(transactionReceipt.blockNumber)}:${Number(logIndex)}`;
 					let polymerIndex: number | undefined = Solver.polymerRequestIndexByLog.get(polymerKey);
@@ -247,10 +235,10 @@ export class Solver {
 						await Solver.sleep(waitMs);
 					}
 					if (proof) {
-						if (preHook) await preHook(sourceChain);
+						if (preHook) await preHook(Number(sourceChainId));
 
 						const transactionHash = await walletClient.writeContract({
-							chain: chainMap[sourceChain],
+							chain: getChain(sourceChainId),
 							account: account(),
 							address: order.inputOracle,
 							abi: POLYMER_ORACLE_ABI,
@@ -258,23 +246,23 @@ export class Solver {
 							args: [`0x${proof.replace("0x", "")}`]
 						});
 
-						const result = await clients[sourceChain].waitForTransactionReceipt({
+						const result = await getClient(sourceChainId).waitForTransactionReceipt({
 							hash: transactionHash,
 							timeout: 120_000,
 							pollingInterval: 2_000
 						});
-						await Solver.persistReceipt(chainMap[sourceChain].id, transactionHash, result);
+						await Solver.persistReceipt(sourceChainId, transactionHash, result);
 						if (postHook) await postHook();
 						return result;
 					}
 					throw new Error(
-						`Polymer proof unavailable for output on ${outputChain}. Try again after the fill attestation is indexed.`
+						`Polymer proof unavailable for output on ${output.chainId.toString()}. Try again after the fill attestation is indexed.`
 					);
 				} else if (order.inputOracle === COIN_FILLER) {
 					const log = logs.find((log) => log.logIndex === logIndex)!;
-					if (preHook) await preHook(sourceChain);
+					if (preHook) await preHook(Number(sourceChainId));
 					const transactionHash = await walletClient.writeContract({
-						chain: chainMap[sourceChain],
+						chain: getChain(sourceChainId),
 						account: account(),
 						address: order.inputOracle,
 						abi: COIN_FILLER_ABI,
@@ -282,17 +270,17 @@ export class Solver {
 						args: [log.args.orderId, log.args.solver, log.args.timestamp, log.args.output]
 					});
 
-					const result = await clients[sourceChain].waitForTransactionReceipt({
+					const result = await getClient(sourceChainId).waitForTransactionReceipt({
 						hash: transactionHash,
 						timeout: 120_000,
 						pollingInterval: 2_000
 					});
-					await Solver.persistReceipt(chainMap[sourceChain].id, transactionHash, result);
+					await Solver.persistReceipt(sourceChainId, transactionHash, result);
 					if (postHook) await postHook();
 					return result;
 				}
 				throw new Error(
-					`Unsupported input oracle ${order.inputOracle} for source chain ${sourceChain}.`
+					`Unsupported input oracle ${order.inputOracle} for source chain ${Number(sourceChainId)}.`
 				);
 			})();
 
@@ -310,17 +298,17 @@ export class Solver {
 		args: {
 			orderContainer: OrderContainer;
 			fillTransactionHashes: string[];
-			sourceChain: chain;
+			sourceChainId: number | bigint;
 		},
 		opts: {
-			preHook?: (chain: chain) => Promise<any>;
+			preHook?: (chainId: number) => Promise<any>;
 			postHook?: () => Promise<any>;
 			account: () => `0x${string}`;
 		}
 	) {
 		return async () => {
 			const { preHook, postHook, account } = opts;
-			const { orderContainer, fillTransactionHashes, sourceChain } = args;
+			const { orderContainer, fillTransactionHashes, sourceChainId } = args;
 			const { order, inputSettler } = orderContainer;
 			const intent = orderToIntent({
 				inputSettler,
@@ -344,20 +332,19 @@ export class Solver {
 			);
 			const blocks = await Promise.all(
 				transactionReceipts.map((r, i) => {
-					const outputChain = getChainName(order.outputs[i].chainId);
-					return clients[outputChain].getBlock({
+					return getClient(order.outputs[i].chainId).getBlock({
 						blockHash: r.blockHash
 					});
 				})
 			);
 			const fillTimestamps = blocks.map((b) => b.timestamp);
 
-			if (preHook) await preHook(sourceChain);
-			const expectedChainId = chainMap[sourceChain].id;
+			if (preHook) await preHook(Number(sourceChainId));
+			const expectedChainId = Number(sourceChainId);
 			const connectedChainId = await walletClient.getChainId();
 			if (connectedChainId !== expectedChainId) {
 				throw new Error(
-					`Wallet is on chain ${connectedChainId}, expected ${expectedChainId} (${sourceChain}) before finalise`
+					`Wallet is on chain ${connectedChainId}, expected ${expectedChainId} before finalise`
 				);
 			}
 
@@ -368,8 +355,9 @@ export class Solver {
 				};
 			});
 
-			const transactionHash = await intent.finalise({
-				sourceChain,
+			const transactionHash = await finaliseIntent({
+				intent,
+				sourceChainId,
 				account: account(),
 				walletClient,
 				solveParams,
@@ -377,23 +365,23 @@ export class Solver {
 			});
 			if (!transactionHash) {
 				throw new Error(
-					`Finalise did not return a transaction hash for source chain ${sourceChain}.`
+					`Finalise did not return a transaction hash for source chain ${Number(sourceChainId)}.`
 				);
 			}
 			let result;
 			try {
-				result = await clients[sourceChain].waitForTransactionReceipt({
+				result = await getClient(sourceChainId).waitForTransactionReceipt({
 					hash: transactionHash,
 					timeout: 120_000,
 					pollingInterval: 2_000
 				});
 			} catch (error) {
 				throw new Error(
-					`Timed out waiting for finalise tx receipt on ${sourceChain} for hash ${transactionHash}.`,
+					`Timed out waiting for finalise tx receipt on ${Number(sourceChainId)} for hash ${transactionHash}.`,
 					{ cause: error as Error }
 				);
 			}
-			await Solver.persistReceipt(chainMap[sourceChain].id, transactionHash, result);
+			await Solver.persistReceipt(sourceChainId, transactionHash, result);
 			if (postHook) await postHook();
 			return result;
 		};

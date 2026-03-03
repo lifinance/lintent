@@ -1,43 +1,43 @@
 <script lang="ts">
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
-	import { chainList, type chain, coinList } from "$lib/config";
-	import store, { type TokenContext } from "$lib/state.svelte";
-	import { toBigIntWithDecimals } from "$lib/utils/convert";
+	import { chainIdList, coinList, getChainName } from "$lib/config";
+	import type { AppTokenContext } from "$lib/appTypes";
+	import store from "$lib/state.svelte";
+	import { toBigIntWithDecimals } from "@lifi/intent";
 
 	let {
 		active = $bindable(),
 		currentOutputTokens = $bindable()
 	}: {
 		active: boolean;
-		currentOutputTokens: TokenContext[];
+		currentOutputTokens: AppTokenContext[];
 	} = $props();
 
-	const outputs = $state<{ chain: chain; name: string; amount: number }[]>(
+	const outputs = $state<{ chainId: number; name: string; amount: number }[]>(
 		currentOutputTokens.map(({ token, amount }) => {
 			return {
-				chain: token.chain,
+				chainId: token.chainId,
 				name: token.name,
 				amount: Number(amount) / 10 ** token.decimals
 			};
 		})
 	);
 
-	function getTokensForChain(chain: chain) {
+	function getTokensForChain(chainId: number) {
 		const coins = coinList(store.mainnet);
-		console.log(chain);
-		return coins.filter((v) => v.chain == chain);
+		return coins.filter((v) => v.chainId === chainId);
 	}
 
 	function save() {
 		const coins = coinList(store.mainnet);
 		const nextOutputTokens = [];
 		for (const output of outputs) {
-			const { name, chain, amount } = output;
-			const token = coins.find((v) => v.name == name && v.chain == chain);
+			const { name, chainId, amount } = output;
+			const token = coins.find((v) => v.name == name && v.chainId === chainId);
 			// Check if we found token.
 			if (!token) {
-				console.log(`Could not find ${name} on ${chain}`);
+				console.log(`Could not find ${name} on ${chainId}`);
 				continue;
 			}
 			nextOutputTokens.push({
@@ -53,7 +53,7 @@
 	function add() {
 		if (outputs.length == 3) return;
 		outputs.push({
-			chain: outputs[outputs.length - 1].chain,
+			chainId: outputs[outputs.length - 1].chainId,
 			name: "usdc",
 			amount: 0
 		});
@@ -98,14 +98,14 @@
 				<div>
 					{#each outputs as output, rowIndex}
 						<FieldRow columns={rowColumns} striped index={rowIndex}>
-							<FormControl as="select" size="sm" bind:value={output.chain}>
-								{#each Object.values(chainList(store.mainnet)) as chain}
-									<option value={chain}>{chain}</option>
+							<FormControl as="select" size="sm" bind:value={output.chainId}>
+								{#each chainIdList(store.mainnet) as chainId}
+									<option value={chainId}>{getChainName(chainId)}</option>
 								{/each}
 							</FormControl>
 							<FormControl type="number" size="sm" bind:value={output.amount} />
 							<FormControl as="select" size="sm" bind:value={output.name}>
-								{#each getTokensForChain(output.chain) as token}
+								{#each getTokensForChain(output.chainId) as token}
 									<option value={token.name}>{token.name.toUpperCase()}</option>
 								{/each}
 							</FormControl>

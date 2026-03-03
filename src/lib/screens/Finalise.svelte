@@ -6,7 +6,7 @@
 	import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
 
 	import { Solver } from "$lib/libraries/solver";
-	import type { OrderContainer } from "../../types";
+	import type { OrderContainer } from "@lifi/intent";
 	import {
 		COMPACT,
 		formatTokenAmount,
@@ -16,16 +16,15 @@
 		INPUT_SETTLER_COMPACT_LIFI,
 		INPUT_SETTLER_ESCROW_LIFI,
 		MULTICHAIN_INPUT_SETTLER_COMPACT,
-		MULTICHAIN_INPUT_SETTLER_ESCROW,
-		type chain
+		MULTICHAIN_INPUT_SETTLER_ESCROW
 	} from "$lib/config";
 	import { COMPACT_ABI } from "$lib/abi/compact";
 	import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
-	import { idToToken } from "$lib/utils/convert";
+	import { idToToken } from "@lifi/intent";
 	import store from "$lib/state.svelte";
-	import { orderToIntent } from "$lib/libraries/intent";
+	import { orderToIntent } from "@lifi/intent";
 	import { hashStruct } from "viem";
-	import { compactTypes } from "$lib/utils/typedMessage";
+	import { compactTypes } from "@lifi/intent";
 
 	let {
 		orderContainer,
@@ -34,7 +33,7 @@
 		postHook
 	}: {
 		orderContainer: OrderContainer;
-		preHook?: (chain: chain) => Promise<any>;
+		preHook?: (chainId: number) => Promise<any>;
 		postHook?: () => Promise<any>;
 		account: () => `0x${string}`;
 	} = $props();
@@ -43,6 +42,13 @@
 	let claimedByChain = $state<Record<string, boolean>>({});
 	let claimStatusRun = 0;
 	const inputChains = $derived(orderToIntent(orderContainer).inputChains());
+	const getInputsForChain = (container: OrderContainer, inputChain: bigint): [bigint, bigint][] => {
+		const { order } = container;
+		if ("originChainId" in order) {
+			return order.originChainId === inputChain ? order.inputs : [];
+		}
+		return order.inputs.find((chainInput) => chainInput.chainId === inputChain)?.inputs ?? [];
+	};
 	const allFinalised = $derived(
 		inputChains.length > 0 &&
 			inputChains.every((chainId) => claimedByChain[chainId.toString()] === true)
@@ -59,6 +65,19 @@
 		if (postHook) await postHook();
 		refreshClaimed += 1;
 	};
+
+	const outputKey = (output: (typeof orderContainer.order.outputs)[number]) =>
+		hashStruct({
+			data: output,
+			types: compactTypes,
+			primaryType: "MandateOutput"
+		});
+
+	const fillTransactionHashesFor = (container: OrderContainer) =>
+		container.order.outputs.map((output) => store.fillTransactions[outputKey(output)]);
+
+	const isValidFillTxHash = (hash: unknown): hash is `0x${string}` =>
+		typeof hash === "string" && hash.startsWith("0x") && hash.length === 66;
 
 	// Order status enum
 	const OrderStatus_None = 0;
@@ -90,7 +109,8 @@
 			inputSettler === MULTICHAIN_INPUT_SETTLER_COMPACT
 		) {
 			// Check claim status
-			const flattenedInputs = "originChainId" in order ? order.inputs : order.inputs[0].inputs;
+			const flattenedInputs = "originChainId" in order ? order.inputs : order.inputs[0]?.inputs;
+			if (!flattenedInputs || flattenedInputs.length === 0) return false;
 
 			const [token, allocator, resetPeriod, scope] = await inputChainClient.readContract({
 				address: COMPACT,
@@ -173,75 +193,59 @@
 								Finalised
 							</button>
 						{:else}
-							<AwaitButton
-								buttonFunction={Solver.claim(
-									store.walletClient,
-									{
-										sourceChain: getChainName(inputChain),
-										orderContainer,
-										fillTransactionHashes: orderContainer.order.outputs.map(
-											(output) =>
-												store.fillTransactions[
-													hashStruct({
-														data: output,
-														types: compactTypes,
-														primaryType: "MandateOutput"
-													})
-												] as string
-										)
-									},
-									{
-										account,
-										preHook,
-										postHook: postHookRefreshValidate
-									}
-								)}
-							>
-								{#snippet name()}
-									Claim
-								{/snippet}
-								{#snippet awaiting()}
-									Waiting for transaction...
-								{/snippet}
-							</AwaitButton>
+							{@const fillTransactionHashes = fillTransactionHashesFor(orderContainer)}
+							{@const canClaim = fillTransactionHashes.every((hash) => isValidFillTxHash(hash))}
+							{#if !canClaim}
+								<button
+									type="button"
+									class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+									disabled
+								>
+									Await fills
+								</button>
+							{:else}
+								<AwaitButton
+									buttonFunction={Solver.claim(
+										store.walletClient,
+										{
+											sourceChainId: Number(inputChain),
+											orderContainer,
+											fillTransactionHashes: fillTransactionHashes as string[]
+										},
+										{
+											account,
+											preHook,
+											postHook: postHookRefreshValidate
+										}
+									)}
+								>
+									{#snippet name()}
+										Claim
+									{/snippet}
+									{#snippet awaiting()}
+										Waiting for transaction...
+									{/snippet}
+								</AwaitButton>
+							{/if}
 						{/if}
 					{/snippet}
 					{#snippet chips()}
-						{#if "originChainId" in orderContainer.order}
-							{#each orderContainer.order.inputs as input}
-								<TokenAmountChip
-									amountText={formatTokenAmount(
-										input[1],
-										getCoin({
-											address: idToToken(input[0]),
-											chain: getChainName(orderContainer.order.originChainId)
-										}).decimals
-									)}
-									symbol={getCoin({
+						{#each getInputsForChain(orderContainer, inputChain) as input}
+							<TokenAmountChip
+								amountText={formatTokenAmount(
+									input[1],
+									getCoin({
 										address: idToToken(input[0]),
-										chain: getChainName(orderContainer.order.originChainId)
-									}).name}
-									tone="neutral"
-								/>
-							{/each}
-						{:else}
-							{#each orderContainer.order.inputs.find((v) => v.chainId === inputChain)?.inputs ?? [] as input}
-								<TokenAmountChip
-									amountText={formatTokenAmount(
-										input[1],
-										getCoin({
-											address: idToToken(input[0]),
-											chain: getChainName(inputChain)
-										}).decimals
-									)}
-									symbol={getCoin({
-										address: idToToken(input[0]),
-										chain: getChainName(inputChain)
-									}).name}
-									tone="neutral"
-								/>
-							{/each}
-						{/if}
+										chainId: inputChain
+									}).decimals
+								)}
+								symbol={getCoin({
+									address: idToToken(input[0]),
+									chainId: inputChain
+								}).name}
+								tone="neutral"
+							/>
+						{/each}
 					{/snippet}
 				</ChainActionRow>
 			</SectionCard>

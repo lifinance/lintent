@@ -1,15 +1,8 @@
 <script lang="ts">
-	import {
-		BYTES32_ZERO,
-		formatTokenAmount,
-		getChainName,
-		getClient,
-		getCoin,
-		type chain
-	} from "$lib/config";
-	import { bytes32ToAddress } from "$lib/utils/convert";
-	import { getOutputHash } from "$lib/utils/orderLib";
-	import type { MandateOutput, OrderContainer } from "../../types";
+	import { BYTES32_ZERO, formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
+	import { bytes32ToAddress } from "@lifi/intent";
+	import { getOutputHash } from "@lifi/intent";
+	import type { MandateOutput, OrderContainer } from "@lifi/intent";
 	import { Solver } from "$lib/libraries/solver";
 	import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
@@ -18,8 +11,8 @@
 	import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
 	import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
 	import store from "$lib/state.svelte";
-	import { orderToIntent } from "$lib/libraries/intent";
-	import { compactTypes } from "$lib/utils/typedMessage";
+	import { orderToIntent } from "@lifi/intent";
+	import { compactTypes } from "@lifi/intent";
 	import { hashStruct } from "viem";
 
 	let {
@@ -31,7 +24,7 @@
 	}: {
 		scroll: (direction: boolean | number) => () => void;
 		orderContainer: OrderContainer;
-		preHook?: (chain: chain) => Promise<any>;
+		preHook?: (chainId: number) => Promise<any>;
 		postHook: () => Promise<any>;
 		account: () => `0x${string}`;
 	} = $props();
@@ -183,11 +176,10 @@
 									output.amount,
 									getCoin({
 										address: output.token,
-										chain: getChainName(output.chainId)
+										chainId: output.chainId
 									}).decimals
 								)}
-								symbol={getCoin({ address: output.token, chain: getChainName(output.chainId) })
-									.name}
+								symbol={getCoin({ address: output.token, chainId: output.chainId }).name}
 								tone={filled === undefined
 									? "muted"
 									: filled === BYTES32_ZERO

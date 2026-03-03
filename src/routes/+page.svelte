@@ -1,10 +1,9 @@
 <script lang="ts">
-	import onboard from "$lib/utils/web3-onboard";
-	import type { NoSignature, OrderContainer, Signature, StandardOrder } from "../types";
-	import { coinList, type chain } from "$lib/config";
+	import type { NoSignature, OrderContainer, Signature, StandardOrder } from "@lifi/intent";
+	import { coinList } from "$lib/config";
 	import { onDestroy } from "svelte";
 	import Introduction from "$lib/components/Introduction.svelte";
-	import { OrderServer } from "$lib/libraries/orderServer";
+	import { IntentApi } from "@lifi/intent";
 	import ManageDeposit from "$lib/screens/ManageDeposit.svelte";
 	import IssueIntent from "$lib/screens/IssueIntent.svelte";
 	import IntentList from "$lib/screens/IntentList.svelte";
@@ -14,7 +13,7 @@
 	import ConnectWallet from "$lib/screens/ConnectWallet.svelte";
 	import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
 	import store from "$lib/state.svelte";
-	import { orderToIntent } from "$lib/libraries/intent";
+	import { orderToIntent } from "@lifi/intent";
 
 	// Fix bigint so we can json serialize it:
 	(BigInt.prototype as any).toJSON = function () {
@@ -34,7 +33,7 @@
 		store.outputTokens = [{ token: coinList(store.mainnet)[1], amount: 0n }];
 	});
 
-	const orderServer = $derived(new OrderServer(store.mainnet));
+	const intentApi = $derived(new IntentApi(store.mainnet));
 
 	let disconnectWs: (() => void) | undefined;
 
@@ -45,7 +44,7 @@
 		await store.dbReady;
 
 		// Connect to websocket server
-		const connection = orderServer.connectOrderServerSocket((order: OrderPackage) => {
+		const connection = intentApi.connectIntentApiSocket((order: OrderPackage) => {
 			try {
 				const allocatorSignature = order.allocatorSignature
 					? ({
@@ -91,14 +90,8 @@
 		if (disconnectWs) disconnectWs();
 	});
 
-	// --- Wallet --- //
-
-	export async function connect() {
-		await onboard.connectWallet();
-	}
-
 	// --- Execute Transaction Variables --- //
-	const preHook = (chain: chain) => store.setWalletToCorrectChain(chain);
+	const preHook = (chainId: number) => store.setWalletToCorrectChain(chainId);
 	const postHook = async () => store.forceUpdate();
 	const account = () => store.connectedAccount?.address!;
 
@@ -106,7 +99,7 @@
 	let currentScreenIndex = $state(0);
 	let scrollStepProgress = $state(0);
 	async function importOrderById(orderId: `0x${string}`): Promise<"inserted" | "updated"> {
-		const importedOrder = await orderServer.getOrderByOnChainOrderId(orderId);
+		const importedOrder = await intentApi.getOrderByOnChainOrderId(orderId);
 		const importedOrderId = orderToIntent(importedOrder).orderId();
 		const existingIndex = store.orders.findIndex(
 			(o) => orderToIntent(o).orderId() === importedOrderId
@@ -215,7 +208,7 @@
 					{/if}
 					<div class="flex h-full w-max flex-row">
 						{#if !store.connectedAccount || !store.walletClient}
-							<ConnectWallet {onboard}></ConnectWallet>
+							<ConnectWallet></ConnectWallet>
 						{:else}
 							<ManageDeposit {scroll} {preHook} {postHook} {account}></ManageDeposit>
 							<IssueIntent {scroll} {preHook} {postHook} {account}></IssueIntent>

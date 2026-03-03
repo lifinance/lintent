@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { toBigIntWithDecimals } from "$lib/utils/convert";
+	import { toBigIntWithDecimals } from "@lifi/intent";
 
 	let {
 		value,

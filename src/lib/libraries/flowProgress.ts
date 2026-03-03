@@ -12,12 +12,12 @@ import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COMPACT_ABI } from "$lib/abi/compact";
 import { hashStruct, keccak256 } from "viem";
-import { compactTypes } from "$lib/utils/typedMessage";
-import { getOutputHash, encodeMandateOutput } from "$lib/utils/orderLib";
-import { addressToBytes32, bytes32ToAddress } from "$lib/utils/convert";
-import { orderToIntent } from "$lib/libraries/intent";
+import { compactTypes } from "@lifi/intent";
+import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
+import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
+import { orderToIntent } from "@lifi/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
-import type { MandateOutput, OrderContainer } from "../../types";
+import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import store from "$lib/state.svelte";
 
 const PROGRESS_TTL_MS = 30_000;
@@ -102,12 +102,12 @@ async function isOutputValidatedOnChain(
 		{ ttlMs: PROGRESS_TTL_MS }
 	);
 
-	const encodedOutput = encodeMandateOutput(
-		addressToBytes32(receipt.from),
+	const encodedOutput = encodeMandateOutput({
+		solver: addressToBytes32(receipt.from),
 		orderId,
-		Number(block.timestamp),
+		timestamp: Number(block.timestamp),
 		output
-	);
+	});
 	const outputHash = keccak256(encodedOutput);
 
 	return getOrFetchRpc(

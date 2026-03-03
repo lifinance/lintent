@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+	buildBaseIntentRow,
 	EXPIRING_THRESHOLD_SECONDS,
 	formatRelativeDeadline,
 	formatRemaining,
@@ -67,5 +68,40 @@ describe("intentList timing and formatting", () => {
 		expect(formatRemaining(180)).toBe("3m");
 		expect(formatRelativeDeadline(30)).toBe("in 30s");
 		expect(formatRelativeDeadline(-30)).toBe("30s ago");
+	});
+
+	it("builds rows for unknown chains without throwing", () => {
+		const unknownChainId = 999999999n;
+		const row = buildBaseIntentRow({
+			inputSettler: "0x000025c3226C00B2Cdc200005a1600509f4e00C0",
+			order: {
+				user: "0x1111111111111111111111111111111111111111",
+				nonce: 1n,
+				originChainId: unknownChainId,
+				expires: Math.floor(Date.now() / 1000) + 3600,
+				fillDeadline: Math.floor(Date.now() / 1000) + 3600,
+				inputOracle: "0x0000000000eC36B683C2E6AC89e9A75989C22a2e",
+				inputs: [[1n, 1n]],
+				outputs: [
+					{
+						oracle: "0x0000000000000000000000000000000000000000000000000000000000000001",
+						settler: "0x0000000000000000000000000000000000000000000000000000000000000002",
+						chainId: unknownChainId,
+						token: "0x0000000000000000000000000000000000000000000000000000000000000003",
+						amount: 1n,
+						recipient: "0x0000000000000000000000000000000000000000000000000000000000000004",
+						callbackData: "0x",
+						context: "0x00"
+					}
+				]
+			},
+			sponsorSignature: { type: "None", payload: "0x" },
+			allocatorSignature: { type: "None", payload: "0x" }
+		});
+
+		expect(row.inputChips[0].text).toContain("chain-999999999");
+		expect(row.outputChips[0].text).toContain("chain-999999999");
+		expect(row.inputChips[0].text).toContain("...");
+		expect(row.outputChips[0].text).toContain("...");
 	});
 });

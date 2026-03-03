@@ -26,13 +26,17 @@ The project now uses a two-layer automated test suite:
 Run:
 
 - `bun run test:unit` for library/unit/integration tests with coverage output
-- `bun run test:e2e` for deterministic browser tests
+- `bun run test:e2e` for live browser + chain escrow flow tests
 - `bun run test:all` to run both
 
 For local Playwright setup:
 
 1. `bun install`
 2. `bunx playwright install chromium`
+3. Copy `.env.e2e.example` to `.env.e2e` and set `E2E_PRIVATE_KEY`.
+4. Ensure the E2E wallet has mainnet gas + tiny USDC balances on Base and Arbitrum.
+5. Start E2E with `bun run test:e2e`.
+6. If `E2E_PRIVATE_KEY` is not defined, private-key E2E specs are skipped.
 
 ## Structure
 

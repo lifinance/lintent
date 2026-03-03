@@ -2,7 +2,7 @@
 	import FlowProgressList, { type FlowStep } from "$lib/components/ui/FlowProgressList.svelte";
 	import { getOrderProgressChecks, getOutputStorageKey } from "$lib/libraries/flowProgress";
 	import store from "$lib/state.svelte";
-	import type { OrderContainer } from "../../../types";
+	import type { OrderContainer } from "@lifi/intent";
 
 	let {
 		currentScreenIndex,
@@ -128,11 +128,11 @@
 		const activeStep =
 			activeByIndex[Math.max(0, Math.min(currentScreenIndex, activeByIndex.length - 1))];
 
-		const assetsDone = currentScreenIndex > 0;
-		const issueDone = currentScreenIndex > 1;
-		const fetchDone = selected;
-		const fillDone = flowChecks.allFilled;
-		const proveDone = flowChecks.allValidated;
+		const assetsDone = currentScreenIndex >= 1;
+		const issueDone = currentScreenIndex >= 2;
+		const fetchDone = selected || currentScreenIndex >= 3;
+		const fillDone = flowChecks.allFilled || currentScreenIndex >= 4;
+		const proveDone = flowChecks.allValidated || currentScreenIndex >= 5;
 		const claimDone = flowChecks.allFinalised;
 
 		const stepStatus = (opts: {

@@ -4,16 +4,18 @@
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
-	import { POLYMER_ALLOCATOR, formatTokenAmount, type chain } from "$lib/config";
+	import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
 	import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
 	import { CompactLib } from "$lib/libraries/compactLib";
 	import store from "$lib/state.svelte";
 	import InputTokenModal from "../components/InputTokenModal.svelte";
 	import OutputTokenModal from "$lib/components/OutputTokenModal.svelte";
-	import { ResetPeriod } from "$lib/utils/idLib";
-	import type { CreateIntentOptions } from "$lib/libraries/intent";
+	import { ResetPeriod } from "@lifi/intent";
+	import type { AppCreateIntentOptions } from "$lib/appTypes";
+	import { isAddress } from "viem";
 
 	const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
+	const REQUIRED_INPUT_USDC_RAW = 100n;
 
 	let {
 		scroll,
@@ -22,28 +24,40 @@
 		account
 	}: {
 		scroll: (direction: boolean | number) => () => void;
-		preHook?: (chain: chain) => Promise<any>;
+		preHook?: (chainId: number) => Promise<any>;
 		postHook: () => Promise<void>;
 		account: () => `0x${string}`;
 	} = $props();
 
 	let inputTokenSelectorActive = $state<boolean>(false);
 	let outputTokenSelectorActive = $state<boolean>(false);
+	const resolveExclusiveFor = (value: string): `0x${string}` | undefined =>
+		isAddress(value, { strict: false }) ? value : undefined;
 
-	const opts = $derived({
-		exclusiveFor: store.exclusiveFor,
-		inputTokens: store.inputTokens,
-		outputTokens: store.outputTokens,
+	const intentOptions = $derived.by(
+		(): AppCreateIntentOptions => ({
+			exclusiveFor: resolveExclusiveFor(store.exclusiveFor),
+			inputTokens: store.inputTokens,
+			outputTokens: store.outputTokens,
+			verifier: store.verifier,
+			lock:
+				store.intentType === "compact"
+					? {
+							type: "compact",
+							allocatorId: store.allocatorId,
+							resetPeriod: ResetPeriod.OneDay
+						}
+					: { type: "escrow" },
+			account
+		})
+	);
+
+	const approvalOptions = $derived({
 		preHook,
 		postHook,
-		verifier: store.verifier,
-		lock: {
-			type: store.intentType,
-			allocatorId: store.allocatorId,
-			resetPeriod: ResetPeriod.OneDay
-		},
+		inputTokens: store.inputTokens,
 		account
-	} as CreateIntentOptions);
+	});
 
 	const postHookScroll = async () => {
 		await postHook();
@@ -62,20 +76,20 @@
 
 	const approveFunction = $derived(
 		store.intentType === "compact"
-			? CompactLib.compactApprove(store.walletClient, opts)
-			: escrowApprove(store.walletClient, opts)
+			? CompactLib.compactApprove(store.walletClient, approvalOptions)
+			: escrowApprove(store.walletClient, approvalOptions)
 	);
 
 	let allowanceCheck = $state(true);
 	$effect(() => {
 		allowanceCheck = true;
-		if (!store.allowances[store.inputTokens[0].token.chain]) {
+		if (!store.allowances[store.inputTokens[0].token.chainId]) {
 			allowanceCheck = false;
 			return;
 		}
 		for (let i = 0; i < store.inputTokens.length; ++i) {
 			const { token, amount } = store.inputTokens[i];
-			store.allowances[token.chain][token.address].then((a) => {
+			store.allowances[token.chainId][token.address].then((a) => {
 				allowanceCheck = allowanceCheck && a >= amount;
 			});
 		}
@@ -83,13 +97,13 @@
 	let balanceCheckWallet = $state(true);
 	$effect(() => {
 		balanceCheckWallet = true;
-		if (!store.balances[store.inputTokens[0].token.chain]) {
+		if (!store.balances[store.inputTokens[0].token.chainId]) {
 			balanceCheckWallet = false;
 			return;
 		}
 		for (let i = 0; i < store.inputTokens.length; ++i) {
 			const { token, amount } = store.inputTokens[i];
-			store.balances[token.chain][token.address].then((b) => {
+			store.balances[token.chainId][token.address].then((b) => {
 				balanceCheckWallet = balanceCheckWallet && b >= amount;
 			});
 		}
@@ -97,13 +111,13 @@
 	let balanceCheckCompact = $state(true);
 	$effect(() => {
 		balanceCheckCompact = true;
-		if (!store.compactBalances[store.inputTokens[0].token.chain]) {
+		if (!store.compactBalances[store.inputTokens[0].token.chainId]) {
 			balanceCheckCompact = false;
 			return;
 		}
 		for (let i = 0; i < store.inputTokens.length; ++i) {
 			const { token, amount } = store.inputTokens[i];
-			store.compactBalances[token.chain][token.address].then((b) => {
+			store.compactBalances[token.chainId][token.address].then((b) => {
 				balanceCheckCompact = balanceCheckCompact && b >= amount;
 			});
 		}
@@ -131,7 +145,9 @@
 				decimals: store.inputTokens.find((v) => v.token.name == name)!.token.decimals,
 				chains: [
 					...new Set(
-						store.inputTokens.filter((v) => v.token.name == name).map((v) => v.token.chain)
+						store.inputTokens
+							.filter((v) => v.token.name == name)
+							.map((v) => getChainName(v.token.chainId))
 					)
 				]
 			};
@@ -140,20 +156,28 @@
 	});
 
 	const numInputChains = $derived.by(() => {
-		const tokenChains = store.inputTokens.map(({ token }) => token.chain);
+		const tokenChains = store.inputTokens.map(({ token }) => token.chainId);
 		const uniqueChains = [...new Set(tokenChains)];
 		return uniqueChains.length;
 	});
 
 	const sameChain = $derived.by(() => {
 		if (numInputChains > 1) return false;
-		const inputChain = store.inputTokens[0].token.chain;
-		const outputChains = store.outputTokens.map((o) => o.token.chain);
+		const inputChain = store.inputTokens[0].token.chainId;
+		const outputChains = store.outputTokens.map((o) => o.token.chainId);
 		const numOutputChains = [...new Set(outputChains)].length;
 		if (numOutputChains > 1) return false;
 		const outputChain = outputChains[0];
 		return inputChain === outputChain;
 	});
+
+	// const inputSecurityCheck = $derived.by(() => {
+	// 	if (store.inputTokens.length === 0) return false;
+	// 	const usdcOnly = store.inputTokens.every(({ token }) => token.name.toLowerCase() === "usdc");
+	// 	if (!usdcOnly) return false;
+	// 	const totalInput = store.inputTokens.reduce((sum, token) => sum + token.amount, 0n);
+	// 	return totalInput === REQUIRED_INPUT_USDC_RAW;
+	// });
 </script>
 
 <ScreenFrame
@@ -227,7 +251,7 @@
 				</div>
 				<div class="flex flex-col justify-center space-y-1">
 					<h2 class="text-center text-xs font-semibold text-gray-500">You Receive</h2>
-					{#each store.outputTokens as outputToken, i (`${outputToken.token.chain}-${outputToken.token.address}-${i}`)}
+					{#each store.outputTokens as outputToken, i (`${outputToken.token.chainId}-${outputToken.token.address}-${i}`)}
 						<button
 							data-testid={`open-output-modal-${i}`}
 							class="h-14 w-28 cursor-pointer rounded border border-gray-200 bg-white px-2 py-1 text-center transition-shadow ease-linear hover:shadow-md"
@@ -241,7 +265,7 @@
 									</div>
 								</div>
 								<div class="mt-0.5 text-[11px] leading-tight text-gray-500">
-									{outputToken.token.chain}
+									{getChainName(outputToken.token.chainId)}
 								</div>
 							</div>
 						</button>
@@ -289,7 +313,15 @@
 		</SectionCard>
 
 		<div class="mt-2 flex justify-center">
-			{#if !allowanceCheck}
+			{#if !true}
+				<button
+					type="button"
+					class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+					disabled
+				>
+					Input must be exactly raw 100 USDC
+				</button>
+			{:else if !allowanceCheck}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance
@@ -309,7 +341,7 @@
 							Low Balance
 						</button>
 					{:else if store.intentType === "escrow"}
-						<AwaitButton buttonFunction={intentFactory.openIntent(opts)}>
+						<AwaitButton buttonFunction={intentFactory.openIntent(intentOptions)}>
 							{#snippet name()}
 								Execute Open
 							{/snippet}
@@ -328,7 +360,7 @@
 								Low Compact Balance
 							</button>
 						{:else}
-							<AwaitButton buttonFunction={intentFactory.compact(opts)}>
+							<AwaitButton buttonFunction={intentFactory.compact(intentOptions)}>
 								{#snippet name()}
 									Sign Order
 								{/snippet}

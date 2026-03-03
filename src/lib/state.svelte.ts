@@ -1,9 +1,8 @@
-import type { WalletState } from "@web3-onboard/core";
-import type { OrderContainer } from "../types";
+import type { OrderContainer } from "@lifi/intent";
+import type { AppTokenContext } from "./appTypes";
 import {
 	ALWAYS_OK_ALLOCATOR,
-	chainMap,
-	clients,
+	clientsById,
 	coinList,
 	COMPACT,
 	INPUT_SETTLER_COMPACT_LIFI,
@@ -11,13 +10,11 @@ import {
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
 	type availableAllocators,
-	type chain,
 	type Token,
-	type Verifier
+	type Verifier,
+	type WC
 } from "./config";
 import { getAllowance, getBalance, getCompactBalance } from "./libraries/token";
-import onboard from "./utils/web3-onboard";
-import { createWalletClient, custom } from "viem";
 import { browser } from "$app/environment";
 import { initDb, db } from "./db";
 import {
@@ -26,13 +23,16 @@ import {
 	transactionReceipts as transactionReceiptsTable
 } from "./schema";
 import { and, eq } from "drizzle-orm";
-import { orderToIntent } from "./libraries/intent";
+import { orderToIntent } from "@lifi/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
-
-export type TokenContext = {
-	token: Token;
-	amount: bigint;
-};
+import {
+	getCurrentConnection,
+	getCurrentWalletClient,
+	reconnectWallet,
+	type WalletConnection,
+	watchWalletConnection
+} from "./utils/wagmi";
+import { switchWalletChain } from "./utils/walletClientRuntime";
 
 class Store {
 	mainnet = $state<boolean>(true);
@@ -200,17 +200,17 @@ class Store {
 		}
 	}
 
-	wallets = onboard.state.select("wallets");
-	activeWallet = $state<{ wallet?: WalletState }>({});
-	connectedAccount = $derived(this.activeWallet.wallet?.accounts?.[0]);
-	walletClient = $derived(
-		this.activeWallet?.wallet?.provider
-			? createWalletClient({ transport: custom(this.activeWallet.wallet.provider) })
+	walletConnection = $state<WalletConnection>(getCurrentConnection());
+	connectedAccount = $derived(
+		this.walletConnection.status === "connected"
+			? { address: this.walletConnection.address }
 			: undefined
-	)!;
+	);
+	walletClient = $state<WC>(undefined as unknown as WC);
+	_unwatchWalletConnection?: () => void;
 
-	inputTokens = $state<TokenContext[]>([]);
-	outputTokens = $state<TokenContext[]>([]);
+	inputTokens = $state<AppTokenContext[]>([]);
+	outputTokens = $state<AppTokenContext[]>([]);
 	fillTransactions = $state<{ [outputId: string]: `0x${string}` }>({});
 	transactionReceipts = $state<Record<string, string>>({});
 
@@ -260,7 +260,7 @@ class Store {
 		});
 	});
 
-	multichain = $derived([...new Set(this.inputTokens.map((i) => i.token.chain))].length > 1);
+	multichain = $derived([...new Set(this.inputTokens.map((i) => i.token.chainId))].length > 1);
 
 	inputSettler = $derived.by(() => {
 		if (this.intentType === "escrow" && !this.multichain) return INPUT_SETTLER_ESCROW_LIFI;
@@ -294,7 +294,7 @@ class Store {
 	refreshTokenBalance(token: Token, force = true) {
 		if (force) {
 			invalidateRpcPrefix(
-				`balance:${this.mainnet ? "mainnet" : "testnet"}:${token.chain}:${token.address}:`
+				`balance:${this.mainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:`
 			);
 		}
 		this.refreshEpoch += 1;
@@ -303,7 +303,7 @@ class Store {
 	refreshTokenAllowance(token: Token, force = true) {
 		if (force) {
 			invalidateRpcPrefix(
-				`allowance:${this.mainnet ? "mainnet" : "testnet"}:${token.chain}:${token.address}:`
+				`allowance:${this.mainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:`
 			);
 		}
 		this.refreshEpoch += 1;
@@ -312,7 +312,7 @@ class Store {
 	refreshCompactBalance(token: Token, force = true) {
 		if (force) {
 			invalidateRpcPrefix(
-				`compact:${this.mainnet ? "mainnet" : "testnet"}:${token.chain}:${token.address}:`
+				`compact:${this.mainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:`
 			);
 		}
 		this.refreshEpoch += 1;
@@ -354,12 +354,25 @@ class Store {
 		}
 	}
 
-	async setWalletToCorrectChain(chain: chain) {
+	async syncWalletClient() {
+		if (this.walletConnection.status !== "connected") {
+			this.walletClient = undefined as unknown as WC;
+			return;
+		}
 		try {
-			return await this.walletClient?.switchChain({ id: chainMap[chain].id });
+			this.walletClient = (await getCurrentWalletClient()) as unknown as WC;
+		} catch (error) {
+			console.warn("getCurrentWalletClient failed", error);
+			this.walletClient = undefined as unknown as WC;
+		}
+	}
+
+	async setWalletToCorrectChain(chainId: number | bigint) {
+		try {
+			return await switchWalletChain(this.walletClient, Number(chainId));
 		} catch (error) {
 			console.warn(
-				`Wallet does not support switchChain or failed to switch chain: ${chainMap[chain].id}`,
+				`Wallet does not support switchChain or failed to switch chain: ${Number(chainId)}`,
 				error
 			);
 			return undefined;
@@ -371,16 +384,19 @@ class Store {
 		ttlMs: number;
 		isMainnet: boolean;
 		scopeKey: string;
-		fetcher: (asset: `0x${string}`, client: (typeof clients)[keyof typeof clients]) => Promise<T>;
+		fetcher: (
+			asset: `0x${string}`,
+			client: (typeof clientsById)[keyof typeof clientsById]
+		) => Promise<T>;
 	}) {
 		const { bucket, ttlMs, isMainnet, scopeKey, fetcher } = opts;
-		const resolved: Record<chain, Record<`0x${string}`, Promise<T>>> = {} as any;
+		const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
 		for (const token of coinList(isMainnet)) {
-			if (!resolved[token.chain as chain]) resolved[token.chain] = {};
-			const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chain}:${token.address}:${scopeKey}`;
-			resolved[token.chain][token.address] = getOrFetchRpc(
+			if (!resolved[token.chainId]) resolved[token.chainId] = {};
+			const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${scopeKey}`;
+			resolved[token.chainId][token.address] = getOrFetchRpc(
 				key,
-				() => fetcher(token.address, clients[token.chain]),
+				() => fetcher(token.address, clientsById[token.chainId]),
 				{ ttlMs }
 			);
 		}
@@ -393,9 +409,19 @@ class Store {
 		this.inputTokens = [{ token: coinList(this.mainnet)[0], amount: 1000000n }];
 		this.outputTokens = [{ token: coinList(this.mainnet)[1], amount: 1000000n }];
 
-		this.wallets.subscribe((v) => {
-			this.activeWallet.wallet = v?.[0];
-		});
+		if (browser) {
+			reconnectWallet()
+				.catch((error) => console.warn("reconnectWallet failed", error))
+				.finally(() => {
+					this.walletConnection = getCurrentConnection();
+					this.syncWalletClient().catch((error) => console.warn("syncWalletClient failed", error));
+				});
+
+			this._unwatchWalletConnection = watchWalletConnection((connection) => {
+				this.walletConnection = connection;
+				this.syncWalletClient().catch((error) => console.warn("syncWalletClient failed", error));
+			});
+		}
 
 		this.startRpcRefreshLoop();
 

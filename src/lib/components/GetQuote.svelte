@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { OrderServer } from "$lib/libraries/orderServer";
-	import type { TokenContext } from "$lib/state.svelte";
+	import { IntentApi } from "@lifi/intent";
+	import type { AppTokenContext } from "$lib/appTypes";
 	import { interval } from "rxjs";
 	import { isAddress } from "viem";
 
@@ -14,8 +14,8 @@
 	}: {
 		exclusiveFor: string;
 		useExclusiveForQuoteRequest?: boolean;
-		inputTokens: TokenContext[];
-		outputTokens: TokenContext[];
+		inputTokens: AppTokenContext[];
+		outputTokens: AppTokenContext[];
 		account: () => `0x${string}`;
 		mainnet: boolean;
 	} = $props();
@@ -23,7 +23,7 @@
 	const toRawAddress = (value: string): `0x${string}` | undefined =>
 		isAddress(value, { strict: false }) ? (value as `0x${string}`) : undefined;
 
-	const orderServer = $derived(new OrderServer(mainnet));
+	const intentApi = $derived(new IntentApi(mainnet));
 
 	async function getQuoteAndSet() {
 		try {
@@ -33,15 +33,15 @@
 					)
 				: undefined;
 
-			const response = await orderServer.getQuotes({
+			const response = await intentApi.getQuotes({
 				user: account(),
-				userChain: inputTokens[0].token.chain,
+				userChainId: inputTokens[0].token.chainId,
 				exclusiveFor: requestedExclusiveFor,
 				inputs: inputTokens.map(({ token, amount }) => {
 					return {
 						sender: account(),
 						asset: token.address,
-						chain: token.chain,
+						chainId: token.chainId,
 						amount: amount
 					};
 				}),
@@ -49,7 +49,7 @@
 					return {
 						receiver: account(),
 						asset: token.address,
-						chain: token.chain,
+						chainId: token.chainId,
 						amount: 0n
 					};
 				})

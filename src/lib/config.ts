@@ -26,25 +26,25 @@ export const MULTICHAIN_INPUT_SETTLER_COMPACT =
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
 export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
-export const WORMHOLE_ORACLE = {
-	ethereum: "0x0000000000000000000000000000000000000000",
-	arbitrum: "0x0000000000000000000000000000000000000000",
-	base: "0x0000000000000000000000000000000000000000"
-} as const;
-export const POLYMER_ORACLE = {
-	ethereum: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	arbitrum: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	base: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	megaeth: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	katana: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	polygon: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	bsc: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
+	[ethereum.id]: "0x0000000000000000000000000000000000000000",
+	[arbitrum.id]: "0x0000000000000000000000000000000000000000",
+	[base.id]: "0x0000000000000000000000000000000000000000"
+};
+export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
+	[ethereum.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	[arbitrum.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	[base.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	[megaeth.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	[katana.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	[polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	[bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
 	// testnet
-	sepolia: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	baseSepolia: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	arbitrumSepolia: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	optimismSepolia: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00"
-} as const;
+	[sepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
+	[baseSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
+	[arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
+	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00"
+};
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
 export type availableInputSettlers =
@@ -64,20 +64,27 @@ export const chainMap = {
 	bsc,
 	polygon
 } as const;
-export const chains = Object.keys(chainMap) as (keyof typeof chainMap)[];
-export type chain = (typeof chains)[number];
+type ChainName = keyof typeof chainMap;
+export const chains = Object.keys(chainMap) as ChainName[];
 export const chainList = (mainnet: boolean) => {
 	if (mainnet == true) {
-		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc"];
-	} else return ["sepolia", "optimismSepolia", "baseSepolia", "arbitrumSepolia"];
+		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc"] as ChainName[];
+	} else return ["sepolia", "optimismSepolia", "baseSepolia", "arbitrumSepolia"] as ChainName[];
 };
 
-export type balanceQuery = Record<chain, Record<`0x${string}`, Promise<bigint>>>;
+export const chainIdList = (mainnet: boolean) => {
+	return chainList(mainnet).map((name) => chainMap[name].id);
+};
+
+const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
+const chainNameEntries = chains.map((name) => [chainMap[name].id, name] as const);
+
+export type balanceQuery = Record<number, Record<`0x${string}`, Promise<bigint>>>;
 
 export type Token = {
 	address: `0x${string}`;
 	name: string;
-	chain: chain;
+	chainId: number;
 	decimals: number;
 };
 
@@ -87,103 +94,103 @@ export const coinList = (mainnet: boolean) => {
 			{
 				address: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`,
 				name: "usdc",
-				chain: "base",
+				chainId: base.id,
 				decimals: 6
 			},
 			{
 				address: `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`,
 				name: "usdc",
-				chain: "arbitrum",
+				chainId: arbitrum.id,
 				decimals: 6
 			},
 			{
 				address: `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`,
 				name: "usdc",
-				chain: "ethereum",
+				chainId: ethereum.id,
 				decimals: 6
 			},
 			{
 				address: ADDRESS_ZERO,
 				name: "eth",
-				chain: "base",
+				chainId: base.id,
 				decimals: 18
 			},
 			{
 				address: ADDRESS_ZERO,
 				name: "eth",
-				chain: "arbitrum",
+				chainId: arbitrum.id,
 				decimals: 18
 			},
 			{
 				address: ADDRESS_ZERO,
 				name: "eth",
-				chain: "ethereum",
+				chainId: ethereum.id,
 				decimals: 18
 			},
 			{
 				address: `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`,
 				name: "weth",
-				chain: "ethereum",
+				chainId: ethereum.id,
 				decimals: 18
 			},
 			{
 				address: `0x4200000000000000000000000000000000000006`,
 				name: "weth",
-				chain: "base",
+				chainId: base.id,
 				decimals: 18
 			},
 			{
 				address: `0x82aF49447D8a07e3bd95BD0d56f35241523fBab1`,
 				name: "weth",
-				chain: "arbitrum",
+				chainId: arbitrum.id,
 				decimals: 18
 			},
 			{
 				address: `0x4200000000000000000000000000000000000006`,
 				name: "weth",
-				chain: "megaeth",
+				chainId: megaeth.id,
 				decimals: 18
 			},
 			{
 				address: `0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7`,
 				name: "usdm",
-				chain: "megaeth",
+				chainId: megaeth.id,
 				decimals: 18
 			},
 			{
 				address: `0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d`,
 				name: "usdc-b",
-				chain: "bsc",
+				chainId: bsc.id,
 				decimals: 18
 			},
 			{
 				address: `0x55d398326f99059ff775485246999027b3197955`,
 				name: "usdt-b",
-				chain: "bsc",
+				chainId: bsc.id,
 				decimals: 18
 			},
 			{
 				address: `0x203a662b0bd271a6ed5a60edfbd04bfce608fd36`,
 				name: "vbUSDC",
-				chain: "katana",
+				chainId: katana.id,
 				decimals: 6
 			},
 			{
 				address: `0x7ceb23fd6bc0add59e62ac25578270cff1b9f619`,
 				name: "weth",
-				chain: "polygon",
+				chainId: polygon.id,
 				decimals: 18
 			},
 			{
 				address: `0x3c499c542cef5e3811e1192ce70d8cc03d5c3359`,
 				name: "usdc",
-				chain: "polygon",
+				chainId: polygon.id,
 				decimals: 6
 			},
 			{
 				address: `0x2791bca1f2de4661ed88a30c99a7a9449aa84174`,
 				name: "usdc.e",
-				chain: "polygon",
+				chainId: polygon.id,
 				decimals: 6
 			}
 		] as const;
@@ -192,80 +199,80 @@ export const coinList = (mainnet: boolean) => {
 			{
 				address: `0x5fd84259d66Cd46123540766Be93DFE6D43130D7`,
 				name: "usdc",
-				chain: "optimismSepolia",
+				chainId: optimismSepolia.id,
 				decimals: 6
 			},
 			{
 				address: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`,
 				name: "usdc",
-				chain: "baseSepolia",
+				chainId: baseSepolia.id,
 				decimals: 6
 			},
 			{
 				address: `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`,
 				name: "usdc",
-				chain: "sepolia",
+				chainId: sepolia.id,
 				decimals: 6
 			},
 			{
 				address: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
 				name: "usdc",
-				chain: "arbitrumSepolia",
+				chainId: arbitrumSepolia.id,
 				decimals: 6
 			},
 			{
 				address: ADDRESS_ZERO,
 				name: "eth",
-				chain: "sepolia",
+				chainId: sepolia.id,
 				decimals: 18
 			},
 			{
 				address: ADDRESS_ZERO,
 				name: "eth",
-				chain: "baseSepolia",
+				chainId: baseSepolia.id,
 				decimals: 18
 			},
 			{
 				address: ADDRESS_ZERO,
 				name: "eth",
-				chain: "optimismSepolia",
+				chainId: optimismSepolia.id,
 				decimals: 18
 			},
 			{
 				address: ADDRESS_ZERO,
 				name: "eth",
-				chain: "arbitrumSepolia",
+				chainId: arbitrumSepolia.id,
 				decimals: 6
 			},
 			{
 				address: `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14`,
 				name: "weth",
-				chain: "sepolia",
+				chainId: sepolia.id,
 				decimals: 18
 			},
 			{
 				address: `0x4200000000000000000000000000000000000006`,
 				name: "weth",
-				chain: "baseSepolia",
+				chainId: baseSepolia.id,
 				decimals: 18
 			},
 			{
 				address: `0x4200000000000000000000000000000000000006`,
 				name: "weth",
-				chain: "optimismSepolia",
+				chainId: optimismSepolia.id,
 				decimals: 18
 			},
 			{
 				address: `0x980B62Da83eFf3D4576C647993b0c1D7faf17c73`,
 				name: "weth",
-				chain: "arbitrumSepolia",
+				chainId: arbitrumSepolia.id,
 				decimals: 18
 			}
 		] as const;
 };
 
 export function printToken(token: Token) {
-	return `${token.name.toUpperCase()}, ${token.chain}`;
+	return `${token.name.toUpperCase()}, ${getChainName(token.chainId)}`;
 }
 
 export function formatTokenAmount(amount: bigint, tokenDecimals: number, decimals = 4) {
@@ -274,9 +281,10 @@ export function formatTokenAmount(amount: bigint, tokenDecimals: number, decimal
 }
 
 export function getIndexOf(token: Token) {
-	for (let i = 0; i < coinList.length; ++i) {
-		const elem = coinList(!chainMap[token.chain].testnet)[i];
-		if (token.chain === elem.chain && token.address === elem.address) return i;
+	const coins = coinList(!isChainIdTestnet(token.chainId));
+	for (let i = 0; i < coins.length; ++i) {
+		const elem = coins[i];
+		if (token.chainId === elem.chainId && token.address === elem.address) return i;
 	}
 	return -1;
 }
@@ -307,20 +315,21 @@ export type Verifier = "wormhole" | "polymer";
 
 export function getCoin(
 	args:
-		| { name: string; chain: chain; address?: undefined }
+		| { name: string; chainId: number | bigint | string; address?: undefined }
 		| {
 				address: `0x${string}`;
-				chain: chain;
+				chainId: number | bigint | string;
 				name?: undefined;
 		  }
 ) {
-	const { name = undefined, address = undefined, chain } = args;
+	const { name = undefined, address = undefined } = args;
+	const chainId = normalizeChainId(args.chainId);
 	// ensure the address is ERC20-sized.
 	const concatedAddress =
 		"0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
-	for (const token of coinList(!chainMap[chain].testnet)) {
+	for (const token of coinList(!isChainIdTestnet(chainId))) {
 		// check chain first.
-		if (token.chain === chain) {
+		if (token.chainId === chainId) {
 			if (name === undefined) {
 				if (concatedAddress?.toLowerCase() === token.address.toLowerCase()) return token;
 			}
@@ -330,21 +339,30 @@ export function getCoin(
 	return {
 		name: name ?? "Unknown",
 		address: address ?? ADDRESS_ZERO,
-		chain,
+		chainId,
 		decimals: 1
 	};
 	// throw new Error(`No coins found for chain: ${concatedAddress} ${chain}`);
 }
 
+function normalizeChainId(chainId: number | bigint | string) {
+	if (typeof chainId === "string") return Number(chainId);
+	if (typeof chainId === "bigint") return Number(chainId);
+	return chainId;
+}
+
+export function isChainIdTestnet(chainId: number | bigint | string) {
+	const normalized = normalizeChainId(chainId);
+	const chain = chainById[normalized];
+	if (!chain) throw new Error(`Chain is not known: ${normalized}`);
+	return chain.testnet;
+}
+
 export function getChainName(chainId: number | bigint | string) {
-	if (typeof chainId === "string") chainId = Number(chainId);
-	if (typeof chainId === "bigint") chainId = Number(chainId);
-	for (const key of chains) {
-		if (chainMap[key].id === chainId) {
-			return key;
-		}
-	}
-	throw new Error(`Chain is not known: ${chainId}`);
+	const normalized = normalizeChainId(chainId);
+	const name = chainNameById[normalized];
+	if (!name) throw new Error(`Chain is not known: ${normalized}`);
+	return name;
 }
 
 export function formatTokenDecimals(
@@ -357,15 +375,25 @@ export function formatTokenDecimals(
 	return as === "string" ? result.toString() : result;
 }
 
-export function getOracle(verifier: Verifier, chain: chain) {
-	if (verifier === "polymer") return POLYMER_ORACLE[chain];
-	// if (verifier === "wormhole") return (WORMHOLE_ORACLE[chain] ?? ADDRESS_ZERO);
+export function getOracle(verifier: Verifier, chainId: number | bigint | string) {
+	const normalized = normalizeChainId(chainId);
+	if (verifier === "polymer") return POLYMER_ORACLE[normalized];
+	if (verifier === "wormhole") return WORMHOLE_ORACLE[normalized];
+	return undefined;
+}
+
+export function getChain(chainId: number | bigint | string) {
+	const normalized = normalizeChainId(chainId);
+	const chain = chainById[normalized];
+	if (!chain) throw new Error(`Could not find chain for chainId ${normalized}`);
+	return chain;
 }
 
 export function getClient(chainId: number | bigint | string) {
-	const chainName = getChainName(Number(chainId));
-	if (!chainName) new Error("Could not find chain");
-	return clients[chainName];
+	const normalized = normalizeChainId(chainId);
+	const client = clientsById[normalized];
+	if (!client) throw new Error(`Could not find client for chainId ${normalized}`);
+	return client;
 }
 
 export const clients = {
@@ -392,11 +420,17 @@ export const clients = {
 	}),
 	bsc: createPublicClient({
 		chain: bsc,
-		transport: fallback([...bsc.rpcUrls.default.http.map((v) => http(v))])
+		transport: fallback([
+			http("https://bsc-rpc.publicnode.com"),
+			...bsc.rpcUrls.default.http.map((v) => http(v))
+		])
 	}),
 	polygon: createPublicClient({
 		chain: base,
-		transport: fallback([...polygon.rpcUrls.default.http.map((v) => http(v))])
+		transport: fallback([
+			http("https://polygon-bor-rpc.publicnode.com"),
+			...polygon.rpcUrls.default.http.map((v) => http(v))
+		])
 	}),
 	megaeth: createPublicClient({
 		chain: megaeth,
@@ -436,6 +470,17 @@ export const clients = {
 		])
 	})
 } as const;
+
+export const chainById = Object.fromEntries(chainEntries) as Record<
+	number,
+	(typeof chainMap)[keyof typeof chainMap]
+>;
+
+export const chainNameById = Object.fromEntries(chainNameEntries) as Record<number, ChainName>;
+
+export const clientsById = Object.fromEntries(
+	chains.map((name) => [chainMap[name].id, clients[name]])
+) as Record<number, (typeof clients)[keyof typeof clients]>;
 
 export type WC = ReturnType<
 	typeof createWalletClient<ReturnType<typeof custom>, undefined, undefined, undefined>

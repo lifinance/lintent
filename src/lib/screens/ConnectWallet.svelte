@@ -1,26 +1,49 @@
 <script lang="ts">
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
+	import { connectWith, listWalletConnectors, walletConnectProjectId } from "$lib/utils/wagmi";
 
-	let { onboard }: { onboard: any } = $props();
-	let connecting = $state(false);
+	const connectors = listWalletConnectors();
+	let connectingId = $state<string | null>(null);
+	let errorMessage = $state<string | null>(null);
 
-	const connectWallet = async () => {
+	const connectWallet = async (connectorId: string) => {
 		try {
-			connecting = true;
-			await onboard.connectWallet();
+			connectingId = connectorId;
+			errorMessage = null;
+			await connectWith(connectorId);
+		} catch (error) {
+			console.warn(`connectWith failed for connector ${connectorId}`, error);
+			errorMessage = "Could not connect wallet. Please try again.";
 		} finally {
-			connecting = false;
+			connectingId = null;
 		}
 	};
 </script>
 
 <ScreenFrame title="" description="" contentClass="px-0" bodyClass="h-full">
-	<button
-		type="button"
-		class="h-full w-full cursor-pointer text-base font-semibold text-gray-700 hover:text-sky-700 disabled:cursor-not-allowed disabled:text-gray-400"
-		disabled={connecting}
-		onclick={connectWallet}
-	>
-		{connecting ? "Waiting for wallet..." : "Connect Wallet"}
-	</button>
+	<div class="flex h-full flex-col justify-center gap-3 px-4">
+		{#each connectors as connector (connector.id)}
+			<button
+				type="button"
+				class="w-full cursor-pointer rounded border border-gray-300 px-4 py-3 text-base font-semibold text-gray-700 hover:border-sky-500 hover:text-sky-700 disabled:cursor-not-allowed disabled:text-gray-400"
+				disabled={connectingId !== null}
+				onclick={() => connectWallet(connector.id)}
+			>
+				{#if connectingId === connector.id}
+					Connecting {connector.name}...
+				{:else}
+					Connect {connector.name}
+				{/if}
+			</button>
+		{/each}
+
+		{#if !walletConnectProjectId}
+			<p class="text-center text-xs text-gray-500">
+				WalletConnect is disabled (missing `PUBLIC_WALLET_CONNECT_PROJECT_ID`).
+			</p>
+		{/if}
+		{#if errorMessage}
+			<p class="text-center text-sm text-red-600">{errorMessage}</p>
+		{/if}
+	</div>
 </ScreenFrame>

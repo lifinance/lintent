@@ -1,4 +1,4 @@
-import { pgTable, text, integer, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, bigint } from "drizzle-orm/pg-core";
 
 export const intents = pgTable("intents", {
 	id: text("id").primaryKey(),

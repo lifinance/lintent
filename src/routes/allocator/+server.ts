@@ -1,7 +1,7 @@
 import { json } from "@sveltejs/kit";
 import axios from "axios";
 import type { RequestHandler } from "./$types";
-import { type StandardOrder } from "../../types";
+import { type StandardOrder } from "@lifi/intent";
 import {
 	PRIVATE_POLYMER_MAINNET_ZONE_API_KEY,
 	PRIVATE_POLYMER_TESTNET_ZONE_API_KEY

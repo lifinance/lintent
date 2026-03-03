@@ -13,19 +13,11 @@ import {
 	megaeth
 } from "viem/chains";
 
-const solanaDevnet = defineChain({
-	id: 11,
-	name: "Solana Devnet",
-	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
-	rpcUrls: {
-		default: { http: ["https://api.devnet.solana.com"] }
-	},
-	testnet: true
-});
-
 export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000" as const;
 export const BYTES32_ZERO =
 	"0x0000000000000000000000000000000000000000000000000000000000000000" as const;
+
+// --- EVM addresses --- //
 export const COMPACT = "0x00000000000000171ede64904551eeDF3C6C9788" as const;
 export const INPUT_SETTLER_COMPACT_LIFI = "0x0000000000cd5f7fDEc90a03a31F79E5Fbc6A9Cf" as const;
 export const INPUT_SETTLER_ESCROW_LIFI = "0x000025c3226C00B2Cdc200005a1600509f4e00C0" as const;
@@ -37,6 +29,16 @@ export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
 export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
 
+// --- Solana addresses --- //
+const solanaDevnet = defineChain({
+	id: 11,
+	name: "Solana Devnet",
+	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
+	rpcUrls: {
+		default: { http: ["https://api.devnet.solana.com"] }
+	},
+	testnet: true
+});
 // catalyst-intent-svm program IDs (devnet) — from Anchor.toml
 export const SOLANA_INTENTS_PROTOCOL = "4SQaweUpT1LrRg1gh9sVEDL3Q4jZH3wxRi3qpz23SRpj" as const;
 export const SOLANA_OUTPUT_SETTLER_SIMPLE = "8yt6Q3Gj8QCAqRVHQULckMf4rWSKQgN6SKVy9QTY5uWe" as const;
@@ -46,6 +48,8 @@ export const SOLANA_POLYMER_ORACLE = "GjXkLKfMpz1MGDTFhKf31gXdcPAxPEFaEu85GmqQgL
 // PDA(seed: "output_settler_simple") of the SOLANA_OUTPUT_SETTLER_SIMPLE program
 export const SOLANA_OUTPUT_SETTLER_PDA =
 	"0xfef7041ed572ebef0bcb798166b921a7691e435b9e035e2236cc225e655bc237" as const;
+
+// --- Oracles --- ///
 export const WORMHOLE_ORACLE = {
 	ethereum: "0x0000000000000000000000000000000000000000",
 	arbitrum: "0x0000000000000000000000000000000000000000",

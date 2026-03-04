@@ -7,6 +7,7 @@
 	import store, { type TokenContext } from "$lib/state.svelte";
 	import { toBigIntWithDecimals } from "$lib/utils/convert";
 	import { type InteropableAddress, getInteropableAddress } from "$lib/utils/interopableAddresses";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 
 	const v = (num: number | null) => (num ? num : 0);
 	const formatBalance = (value: bigint, decimals: number) =>
@@ -64,7 +65,6 @@
 			const token = getTokenFor(key);
 			// If we can't find the token, then it is most likely because the user changed their token.
 			if (!token) continue;
-			if (!hasClient(token.chain)) continue;
 			if (!isEnabled(key)) continue;
 
 			if (inputValue === 0) continue;
@@ -79,6 +79,7 @@
 	}
 
 	const hasClient = (chain: string) => chain in clients;
+	const isChainAvailable = (chain: string) => chain !== "solanaDevnet" || solanaWallet.connected;
 
 	const uniqueInputTokens = $derived([
 		...new Set(
@@ -108,7 +109,7 @@
 		const tokens = tokenSet;
 		const selectedIndices = tokens
 			.map((token, i) => [token, i] as const)
-			.filter(([token]) => hasClient(token.chain) && isEnabled(iaddrFor(token)))
+			.filter(([token]) => isEnabled(iaddrFor(token)))
 			.map(([, i]) => i);
 		if (selectedIndices.length === 0) {
 			for (const token of tokens) {
@@ -117,12 +118,16 @@
 			}
 			return 0;
 		}
-		const balancePromises = selectedIndices.map(
-			(i) =>
-				(store.intentType === "compact" ? store.compactBalances : store.balances)[tokens[i].chain][
-					tokens[i].address
-				]
-		);
+		const balancePromises = selectedIndices.map((i) => {
+			const token = tokens[i];
+			if (token.chain === "solanaDevnet") {
+				return store.solanaBalances.solanaDevnet?.[token.address] ?? Promise.resolve(0n);
+			}
+			if (!hasClient(token.chain)) return Promise.resolve(0n);
+			return (store.intentType === "compact" ? store.compactBalances : store.balances)[token.chain][
+				token.address
+			];
+		});
 		const balances = await Promise.all(balancePromises);
 
 		const goal = toBigIntWithDecimals(total, tokens[0].decimals);
@@ -215,10 +220,9 @@
 					{#each tokenSet as tkn, rowIndex}
 						{@const iaddr = iaddrFor(tkn)}
 						{@const evmChain = hasClient(tkn.chain)}
+						{@const chainAvailable = isChainAvailable(tkn.chain)}
 						<FieldRow columns={rowColumns} striped index={rowIndex}>
-							<div
-								class="truncate text-xs font-medium {evmChain ? 'text-gray-700' : 'text-gray-400'}"
-							>
+							<div class="truncate text-xs font-medium text-gray-700">
 								{tkn.chain}
 							</div>
 							{#if evmChain}
@@ -226,26 +230,54 @@
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText="..."
-										disabled={!isEnabled(iaddr)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{:then balance}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText={formatBalance(balance, tkn.decimals)}
-										disabled={!isEnabled(iaddr)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{:catch _}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText="err"
-										disabled={!isEnabled(iaddr)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{/await}
+							{:else if store.solanaBalances.solanaDevnet?.[tkn.address]}
+								{#await store.solanaBalances.solanaDevnet[tkn.address]}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="..."
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:then balance}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText={formatBalance(balance, tkn.decimals)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:catch _}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="err"
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{/await}
 							{:else}
-								<InlineMetaField bind:value={inputs[iaddr]} metaText="—" disabled={true} />
+								<InlineMetaField
+									bind:value={inputs[iaddr]}
+									metaText="—"
+									disabled={!isEnabled(iaddr) || !chainAvailable}
+								/>
 							{/if}
 							<div class="flex justify-center">
-								<input type="checkbox" bind:checked={enabledByToken[iaddr]} disabled={!evmChain} />
+								<input
+									type="checkbox"
+									bind:checked={enabledByToken[iaddr]}
+									disabled={!chainAvailable}
+								/>
 							</div>
 						</FieldRow>
 					{/each}

@@ -1,4 +1,5 @@
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
+import { Connection } from "@solana/web3.js";
 import {
 	arbitrum,
 	arbitrumSepolia,
@@ -39,6 +40,8 @@ const solanaDevnet = defineChain({
 	},
 	testnet: true
 });
+export const solanaDevnetConnection = new Connection("https://api.devnet.solana.com", "confirmed");
+
 // catalyst-intent-svm program IDs (devnet) — from Anchor.toml
 export const SOLANA_INTENTS_PROTOCOL = "4SQaweUpT1LrRg1gh9sVEDL3Q4jZH3wxRi3qpz23SRpj" as const;
 export const SOLANA_OUTPUT_SETTLER_SIMPLE = "8yt6Q3Gj8QCAqRVHQULckMf4rWSKQgN6SKVy9QTY5uWe" as const;

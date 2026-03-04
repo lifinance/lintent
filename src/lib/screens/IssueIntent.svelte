@@ -14,6 +14,7 @@
 	import OutputTokenModal from "$lib/components/OutputTokenModal.svelte";
 	import { ResetPeriod } from "@lifi/intent";
 	import type { AppCreateIntentOptions } from "$lib/appTypes";
+	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
 
 	const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
 	const REQUIRED_INPUT_USDC_RAW = 100n;
@@ -171,7 +172,9 @@
 			isAddress(store.recipient, { strict: false })
 	);
 	const solanaRecipientValid = $derived(
-		!hasSolanaOutput || isValidSolanaAddress(store.solanaRecipient)
+		!hasSolanaOutput ||
+			store.solanaRecipient.trim().length === 0 ||
+			isValidSolanaAddress(store.solanaRecipient)
 	);
 	const recipientValid = $derived(evmRecipientValid && solanaRecipientValid);
 
@@ -294,6 +297,12 @@
 
 		<SectionCard compact>
 			<div class="flex flex-col gap-2">
+				<div class="flex items-center gap-1.5">
+					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500"
+						>Solana Wallet</span
+					>
+					<SolanaWalletButton />
+				</div>
 				<div class="flex min-w-0 items-center gap-1">
 					<span
 						class="text-[11px] font-semibold whitespace-nowrap {hasEvmOutput
@@ -336,16 +345,10 @@
 				</div>
 				<div class="flex items-center gap-1">
 					<span class="text-[11px] font-semibold text-gray-500">Verifier</span>
-					{#if sameChain}
-						<FormControl as="select" size="sm" state="disabled" disabled>
-							<option selected disabled>Settler</option>
-						</FormControl>
-					{:else}
-						<FormControl as="select" id="verified-by" size="sm">
-							<option value="polymer" selected>Polymer</option>
-							<option value="wormhole" disabled>Wormhole</option>
-						</FormControl>
-					{/if}
+					<FormControl as="select" id="verified-by" size="sm">
+						<option value="polymer" selected>Polymer</option>
+						<option value="wormhole" disabled>Wormhole</option>
+					</FormControl>
 				</div>
 				<div class="flex min-w-0 items-center gap-1">
 					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500">Exclusive</span>
@@ -385,7 +388,7 @@
 						Enter Solana Recipient
 					{/if}
 				</button>
-			{:else if !allowanceCheck}
+			{:else if !allowanceCheck && !hasSolanaInput}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance

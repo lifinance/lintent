@@ -8,6 +8,7 @@
 	import store from "$lib/state.svelte";
 	import { toBigIntWithDecimals } from "@lifi/intent";
 	import { type InteropableAddress, getInteropableAddress } from "@lifi/intent";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 
 	const v = (num: number | null) => (num ? num : 0);
 	const formatBalance = (value: bigint, decimals: number) =>
@@ -65,8 +66,8 @@
 			const token = getTokenFor(key);
 			// If we can't find the token, then it is most likely because the user changed their token.
 			if (!token) continue;
-			if (!hasClient(token.chainId)) continue;
-			if (!isEnabled(key)) continue;
+		if (!hasClient(token.chainId)) continue;
+		if (!isEnabled(key)) continue;
 
 			if (inputValue === 0) continue;
 			inputTokens.push({ token, amount: toBigIntWithDecimals(inputValue, token.decimals) });
@@ -80,6 +81,7 @@
 	}
 
 	const hasClient = (chainId: number) => (getChainName(chainId) as string) in clients;
+	const isChainAvailable = (chainId: number) => chainId !== 11 || solanaWallet.connected;
 
 	const uniqueInputTokens = $derived([
 		...new Set(
@@ -216,6 +218,7 @@
 					{#each tokenSet as tkn, rowIndex}
 						{@const iaddr = iaddrFor(tkn)}
 						{@const evmChain = hasClient(tkn.chainId)}
+						{@const chainAvailable = isChainAvailable(tkn.chainId)}
 						<FieldRow columns={rowColumns} striped index={rowIndex}>
 							<div
 								class="truncate text-xs font-medium {evmChain ? 'text-gray-700' : 'text-gray-400'}"
@@ -227,26 +230,54 @@
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText="..."
-										disabled={!isEnabled(iaddr)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{:then balance}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText={formatBalance(balance, tkn.decimals)}
-										disabled={!isEnabled(iaddr)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{:catch _}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText="err"
-										disabled={!isEnabled(iaddr)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{/await}
+							{:else if store.solanaBalances.solanaDevnet?.[tkn.address]}
+								{#await store.solanaBalances.solanaDevnet[tkn.address]}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="..."
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:then balance}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText={formatBalance(balance, tkn.decimals)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:catch _}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="err"
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{/await}
 							{:else}
-								<InlineMetaField bind:value={inputs[iaddr]} metaText="—" disabled={true} />
+								<InlineMetaField
+									bind:value={inputs[iaddr]}
+									metaText="—"
+									disabled={!isEnabled(iaddr) || !chainAvailable}
+								/>
 							{/if}
 							<div class="flex justify-center">
-								<input type="checkbox" bind:checked={enabledByToken[iaddr]} disabled={!evmChain} />
+								<input
+									type="checkbox"
+									bind:checked={enabledByToken[iaddr]}
+									disabled={!chainAvailable}
+								/>
 							</div>
 						</FieldRow>
 					{/each}

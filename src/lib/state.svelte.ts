@@ -9,12 +9,14 @@ import {
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
+	solanaDevnetConnection,
 	type availableAllocators,
 	type Token,
 	type Verifier,
 	type WC
 } from "./config";
-import { getAllowance, getBalance, getCompactBalance } from "./libraries/token";
+import { getAllowance, getBalance, getCompactBalance, getSolanaBalance } from "./libraries/token";
+import solanaWallet from "./utils/solana-wallet.svelte";
 import { browser } from "$app/environment";
 import { initDb, db } from "./db";
 import {
@@ -260,6 +262,24 @@ class Store {
 		});
 	});
 
+	solanaBalances = $derived.by(() => {
+		this.refreshEpoch;
+		const account = this.solanaPublicKey || undefined;
+		const resolved: Partial<Record<string, Record<`0x${string}`, Promise<bigint>>>> = {};
+		if (!account) return resolved;
+		for (const token of coinList(this.mainnet)) {
+			if (token.chainId !== 11) continue;
+			if (!resolved.solanaDevnet) resolved.solanaDevnet = {};
+			const key = `balance:${this.mainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${account}`;
+			resolved.solanaDevnet[token.address] = getOrFetchRpc(
+				key,
+				() => getSolanaBalance(account, token.address, solanaDevnetConnection),
+				{ ttlMs: 30_000 }
+			);
+		}
+		return resolved;
+	});
+
 	multichain = $derived([...new Set(this.inputTokens.map((i) => i.token.chainId))].length > 1);
 
 	inputSettler = $derived.by(() => {
@@ -275,6 +295,8 @@ class Store {
 	recipient: string = $state("");
 	solanaRecipient: string = $state("");
 	exclusiveFor: string = $state("");
+
+	solanaPublicKey = $derived(solanaWallet.publicKey ?? "");
 	useExclusiveForQuoteRequest = $state(false);
 
 	invalidateWalletReadCache(scope: "all" | "balance" | "allowance" | "compact" = "all") {

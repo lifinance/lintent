@@ -1,4 +1,7 @@
 import { encodeAbiParameters, encodePacked, hashStruct, keccak256, parseAbiParameters } from "viem";
+import type { Connection } from "@solana/web3.js";
+import type { WalletAdapter } from "@solana/wallet-adapter-base";
+import { openSolanaEscrow } from "./solanaEscrowLib";
 import type {
 	BatchCompact,
 	CompactMandate,
@@ -466,6 +469,27 @@ export class StandardOrderIntent {
 				args: [this.order]
 			})
 		];
+	}
+
+	/**
+	 * @notice Opens a Solana→EVM intent by calling input_settler_escrow.open() on Solana.
+	 * @param solanaPublicKey  Base58 public key of the connected Solana wallet
+	 * @param walletAdapter    Connected Solana wallet adapter
+	 * @param connection       Solana Connection instance
+	 * @returns transaction signature string
+	 */
+	async openSolana(
+		solanaPublicKey: string,
+		walletAdapter: WalletAdapter,
+		connection: Connection
+	): Promise<[string]> {
+		const sig = await openSolanaEscrow({
+			order: this.order,
+			solanaPublicKey,
+			walletAdapter,
+			connection
+		});
+		return [sig];
 	}
 
 	// -- Compact Helpers -- //

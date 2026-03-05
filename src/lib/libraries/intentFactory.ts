@@ -4,8 +4,10 @@ import {
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
+	solanaDevnetConnection,
 	type WC
 } from "$lib/config";
+import solanaWallet from "$lib/utils/solana-wallet.svelte";
 import { maxUint256 } from "viem";
 import type {
 	CreateIntentOptions,
@@ -18,11 +20,11 @@ import type {
 } from "@lifi/intent";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { Intent } from "@lifi/intent";
-import { IntentApi } from "@lifi/intent";
+import { Intent, IntentApi, StandardOrderIntent } from "@lifi/intent";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
 import { intentDeps } from "./coreDeps";
+import { openSolanaEscrow } from "./solanaEscrowLib";
 
 function toCoreTokenContext(input: AppTokenContext): TokenContext {
 	return {
@@ -204,15 +206,28 @@ export class IntentFactory {
 			const inputChain = inputTokens[0].token.chainId;
 			if (this.preHook) await this.preHook(inputChain);
 
-			// Execute the open.
-			const transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
-			console.log({ tsh: transactionHashes });
+			let transactionHashes: string[];
 
-			// for (const hash of transactionHashes) {
-			// 	await clients[inputChain].waitForTransactionReceipt({
-			// 		hash: await hash
-			// 	});
-			// }
+			if (inputChain === 11) {
+				if (!solanaWallet.adapter || !solanaWallet.publicKey) {
+					throw new Error("Solana wallet not connected");
+				}
+				if (!(intent instanceof StandardOrderIntent)) {
+					throw new Error("Solana intents must be single-chain");
+				}
+				transactionHashes = [
+					await openSolanaEscrow({
+						order: intent.order,
+						solanaPublicKey: solanaWallet.publicKey,
+						walletAdapter: solanaWallet.adapter,
+						connection: solanaDevnetConnection
+					})
+				];
+			} else {
+				transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
+			}
+
+			console.log({ tsh: transactionHashes });
 
 			if (this.postHook) await this.postHook();
 

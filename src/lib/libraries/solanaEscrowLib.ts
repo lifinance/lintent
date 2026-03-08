@@ -1,14 +1,7 @@
-import { AnchorProvider, BN, Program, type Idl } from "@coral-xyz/anchor";
-import { Connection, PublicKey, SystemProgram } from "@solana/web3.js";
-import {
-	ASSOCIATED_TOKEN_PROGRAM_ID,
-	TOKEN_PROGRAM_ID,
-	getAssociatedTokenAddressSync
-} from "@solana/spl-token";
 import { keccak256 } from "viem";
 import idl from "../abi/input_settler_escrow.json";
 import { SOLANA_INPUT_SETTLER_ESCROW, SOLANA_POLYMER_ORACLE } from "../config";
-import type { MandateOutput, StandardOrder } from "../../types";
+import type { MandateOutput, StandardOrder } from "@lifi/intent";
 
 /** Convert a 0x-prefixed hex string (32 bytes) to a number[] */
 function hexToBytes32(hex: `0x${string}`): number[] {
@@ -18,11 +11,6 @@ function hexToBytes32(hex: `0x${string}`): number[] {
 /** Convert a bigint to a 32-byte big-endian number[] */
 function bigintToBeBytes32(n: bigint): number[] {
 	return Array.from(Buffer.from(n.toString(16).padStart(64, "0"), "hex"));
-}
-
-/** Recover a Solana PublicKey from a bigint (SPL mint stored as BigInt of its bytes32 hex) */
-function pubkeyFromBigInt(n: bigint): PublicKey {
-	return new PublicKey(Buffer.from(n.toString(16).padStart(64, "0"), "hex"));
 }
 
 /**
@@ -40,13 +28,25 @@ export async function openSolanaEscrow(params: {
 	solanaPublicKey: string;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	walletAdapter: any; // WalletAdapter with signTransaction / signAllTransactions
-	connection: Connection;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	connection: any; // Connection from @solana/web3.js
 }): Promise<string> {
+	// Dynamic imports to avoid CJS/ESM bundling issues with Rollup
+	const { AnchorProvider, BN, Program } = await import("@coral-xyz/anchor");
+	const { PublicKey, SystemProgram } = await import("@solana/web3.js");
+	const { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } =
+		await import("@solana/spl-token");
+
 	const { order, solanaPublicKey, walletAdapter, connection } = params;
 
 	const userPubkey = new PublicKey(solanaPublicKey);
 	const inputSettlerProgramId = new PublicKey(SOLANA_INPUT_SETTLER_ESCROW);
 	const polymerProgramId = new PublicKey(SOLANA_POLYMER_ORACLE);
+
+	/** Recover a Solana PublicKey from a bigint (SPL mint stored as BigInt of its bytes32 hex) */
+	function pubkeyFromBigInt(n: bigint) {
+		return new PublicKey(Buffer.from(n.toString(16).padStart(64, "0"), "hex"));
+	}
 
 	// Wrap the wallet adapter as an Anchor-compatible wallet
 	const anchorWallet = {
@@ -55,7 +55,8 @@ export async function openSolanaEscrow(params: {
 		signAllTransactions: (txs: unknown[]) => walletAdapter.signAllTransactions(txs)
 	};
 
-	const typedIdl = idl as Idl;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const typedIdl = idl as any;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const provider = new AnchorProvider(connection, anchorWallet as any, { commitment: "confirmed" });
 	// Program converts the IDL to camelCase internally; its coder uses camelCase field names.
@@ -103,7 +104,6 @@ export async function openSolanaEscrow(params: {
 	};
 
 	// Compute orderId = keccak256(borsh(anchorOrder)) — mirrors Rust's StandardOrder::derive_id().
-	// Follows example-scripts/utils/order.ts::orderIdHash().
 	const valueForEncoding = {
 		...anchorOrder,
 		outputs: anchorOrder.outputs.map((o) => ({

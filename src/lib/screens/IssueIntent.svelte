@@ -6,7 +6,7 @@
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
 	import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
 	import { isAddress } from "viem";
-	import { isValidSolanaAddress } from "$lib/utils/convert";
+	import { isValidSolanaAddress } from "@lifi/intent";
 	import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
 	import { CompactLib } from "$lib/libraries/compactLib";
 	import store from "$lib/state.svelte";
@@ -388,7 +388,7 @@
 						Enter Solana Recipient
 					{/if}
 				</button>
-			{:else if !allowanceCheck && !hasSolanaInput}
+			{:else if !allowanceCheck && !hasSolanaOutput}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance

@@ -217,7 +217,7 @@ export class IntentFactory {
 				}
 				transactionHashes = [
 					await openSolanaEscrow({
-						order: intent.order,
+						order: intent.asOrder() as import("@lifi/intent").StandardOrder,
 						solanaPublicKey: solanaWallet.publicKey,
 						walletAdapter: solanaWallet.adapter,
 						connection: solanaDevnetConnection

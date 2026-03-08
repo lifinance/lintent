@@ -100,7 +100,13 @@ export const chainList = (mainnet: boolean) => {
 	if (mainnet == true) {
 		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc"] as ChainName[];
 	} else
-		return ["sepolia", "optimismSepolia", "baseSepolia", "arbitrumSepolia", "solanaDevnet"] as ChainName[];
+		return [
+			"sepolia",
+			"optimismSepolia",
+			"baseSepolia",
+			"arbitrumSepolia",
+			"solanaDevnet"
+		] as ChainName[];
 };
 
 export const chainIdList = (mainnet: boolean) => {
@@ -530,7 +536,7 @@ export const chainById = Object.fromEntries(chainEntries) as Record<
 export const chainNameById = Object.fromEntries(chainNameEntries) as Record<number, ChainName>;
 
 export const clientsById = Object.fromEntries(
-	chains.map((name) => [chainMap[name].id, clients[name]])
+	chains.map((name) => [chainMap[name].id, (clients as Record<string, unknown>)[name]])
 ) as Record<number, (typeof clients)[keyof typeof clients]>;
 
 export type WC = ReturnType<

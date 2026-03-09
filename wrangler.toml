@@ -1,0 +1,28 @@
+name = "lintent-worker"
+main = "build/index.js"
+compatibility_date = "2024-03-06"
+compatibility_flags = ["nodejs_compat"]
+
+# account_id is NOT set here — passed via CLOUDFLARE_ACCOUNT_ID in CI
+
+[build]
+command = "bun run build"
+
+[env.production]
+name = "lintent-worker"
+vars = { ENVIRONMENT = "production" }
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[tags]
+lifi = "true"
+lintent = "true"
+
+[placement]
+mode = "smart"

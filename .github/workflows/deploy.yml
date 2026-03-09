@@ -1,0 +1,44 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:
+
+jobs:
+  deploy-production:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    uses: lifinance/github-actions/.github/workflows/cloudflare-worker-deploy.yaml@main
+    with:
+      environment: production
+      build-command: "bun run build"
+      node-version: "20"
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  deploy-preview:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    uses: lifinance/github-actions/.github/workflows/cloudflare-worker-deploy.yaml@main
+    with:
+      environment: preview
+      build-command: "bun run build"
+      node-version: "20"
+      preview-name: lintent-pr-${{ github.event.pull_request.number }}
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  cleanup-preview:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    uses: lifinance/github-actions/.github/workflows/cloudflare-worker-deploy.yaml@main
+    with:
+      delete-preview: true
+      preview-name: lintent-pr-${{ github.event.pull_request.number }}
+      node-version: "20"
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -5,6 +5,7 @@ import {
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
+	SOLANA_INPUT_SETTLER_ESCROW,
 	solanaDevnetConnection,
 	type WC
 } from "$lib/config";
@@ -21,7 +22,7 @@ import type {
 } from "@lifi/intent";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { Intent, IntentApi, SolanaIntent } from "@lifi/intent";
+import { Intent, IntentApi, SolanaIntent, solanaOrderToStandardOrder } from "@lifi/intent";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
 import { intentDeps, solanaDeps } from "./coreDeps";
@@ -229,6 +230,10 @@ export class IntentFactory {
 						connection: solanaDevnetConnection
 					})
 				];
+				this.saveOrder({
+					order: solanaOrderToStandardOrder(solanaOrderIntent.asOrder()),
+					inputSettler: solanaAddressToBytes32(SOLANA_INPUT_SETTLER_ESCROW)
+				});
 			} else {
 				if (this.preHook) await this.preHook(inputChain);
 				const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();

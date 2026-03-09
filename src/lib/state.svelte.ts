@@ -34,6 +34,14 @@ import {
 } from "./utils/wagmi";
 import { switchWalletChain } from "./utils/walletClientRuntime";
 
+function generateUUID(): string {
+	return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+		const r = (Math.random() * 16) | 0;
+		const v = c === "x" ? r : (r & 0x3) | 0x8;
+		return v.toString(16);
+	});
+}
+
 class Store {
 	mainnet = $state<boolean>(true);
 	orders = $state<OrderContainer[]>([]);
@@ -51,8 +59,7 @@ class Store {
 		if (!db) await initDb();
 		const orderId = orderToIntent(order).orderId();
 		const now = Math.floor(Date.now() / 1000);
-		const id =
-			(order as any).id ?? (typeof crypto !== "undefined" ? crypto.randomUUID() : String(now));
+		const id = (order as any).id ?? generateUUID();
 		const intentType = (order as any).intentType ?? "escrow";
 		const data = JSON.stringify(order);
 		if (db) {
@@ -127,7 +134,7 @@ class Store {
 				.where(eq(fillTransactionsTable.outputHash, outputHash));
 		} else {
 			await db!.insert(fillTransactionsTable).values({
-				id: typeof crypto !== "undefined" ? crypto.randomUUID() : String(Date.now()),
+				id: generateUUID(),
 				outputHash,
 				txHash
 			});

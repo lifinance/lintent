@@ -10,7 +10,8 @@ import {
 	polygon,
 	bsc,
 	katana,
-	megaeth
+	megaeth,
+	optimism
 } from "viem/chains";
 
 export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000" as const;
@@ -55,6 +56,7 @@ export const chainMap = {
 	ethereum,
 	base,
 	arbitrum,
+	optimism,
 	sepolia,
 	arbitrumSepolia,
 	optimismSepolia,
@@ -137,6 +139,12 @@ export const coinList = (mainnet: boolean) => {
 				address: `0x4200000000000000000000000000000000000006`,
 				name: "weth",
 				chainId: base.id,
+				decimals: 18
+			},
+			{
+				address: `0x4200000000000000000000000000000000000006`,
+				name: "weth",
+				chainId: optimism.id,
 				decimals: 18
 			},
 			{
@@ -305,6 +313,7 @@ export const polymerChainIds = {
 	arbitrumSepolia: arbitrumSepolia.id,
 	baseSepolia: baseSepolia.id,
 	optimismSepolia: optimismSepolia.id,
+	optimism: optimism.id,
 	megaeth: megaeth.id,
 	katana: katana.id,
 	bsc: bsc.id,
@@ -416,6 +425,13 @@ export const clients = {
 		transport: fallback([
 			http("https://base-rpc.publicnode.com"),
 			...base.rpcUrls.default.http.map((v) => http(v))
+		])
+	}),
+	optimism: createPublicClient({
+		chain: optimism,
+		transport: fallback([
+			http("https://optimism-rpc.publicnode.com"),
+			...optimism.rpcUrls.default.http.map((v) => http(v))
 		])
 	}),
 	bsc: createPublicClient({

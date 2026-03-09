@@ -6,7 +6,7 @@ import {
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
 	type WC
 } from "$lib/config";
-import { maxUint256 } from "viem";
+import { encodePacked, maxUint256 } from "viem";
 import type {
 	CreateIntentOptions,
 	TokenContext,
@@ -23,6 +23,36 @@ import { IntentApi } from "@lifi/intent";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
 import { intentDeps } from "./coreDeps";
+
+const SAME_CHAIN_DURATION_SECONDS = 10 * 60; // 10 minutes
+const SAME_CHAIN_EXCLUSIVITY_SECONDS = 12 * 3; // 36 seconds
+
+function applySameChainTimings(intent: Intent): void {
+	if (!intent.isSameChain()) return;
+	(intent as any).expiry = SAME_CHAIN_DURATION_SECONDS;
+	(intent as any).fillDeadline = SAME_CHAIN_DURATION_SECONDS;
+}
+
+function applyExclusivityOverride(
+	orderIntent: ReturnType<Intent["order"]>,
+	exclusiveFor: string | undefined,
+	isSameChain: boolean
+): void {
+	if (!isSameChain || !exclusiveFor) return;
+	const order = orderIntent.asOrder() as StandardOrder;
+	const currentTime = Math.floor(Date.now() / 1000);
+	const paddedExclusiveFor =
+		`0x${exclusiveFor.replace("0x", "").padStart(64, "0")}` as `0x${string}`;
+	const newContext = encodePacked(
+		["bytes1", "bytes32", "uint32"],
+		["0xe0", paddedExclusiveFor, currentTime + SAME_CHAIN_EXCLUSIVITY_SECONDS]
+	);
+	for (const output of order.outputs) {
+		if (output.context !== "0x") {
+			(output as any).context = newContext;
+		}
+	}
+}
 
 function toCoreTokenContext(input: AppTokenContext): TokenContext {
 	return {
@@ -126,7 +156,11 @@ export class IntentFactory {
 			const { account, inputTokens } = opts;
 			const inputChain = inputTokens[0].token.chainId;
 			if (this.preHook) await this.preHook(inputChain);
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
+			const intentInstance = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
+			applySameChainTimings(intentInstance);
+			const sameChain = intentInstance.isSameChain();
+			const intent = intentInstance.order();
+			applyExclusivityOverride(intent, opts.exclusiveFor, sameChain);
 
 			const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
 
@@ -164,7 +198,11 @@ export class IntentFactory {
 	compactDepositAndRegister(opts: AppCreateIntentOptions) {
 		return async () => {
 			const { inputTokens, account } = opts;
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).singlechain();
+			const intentInstance2 = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
+			applySameChainTimings(intentInstance2);
+			const sameChain2 = intentInstance2.isSameChain();
+			const intent = intentInstance2.singlechain();
+			applyExclusivityOverride(intent, opts.exclusiveFor, sameChain2);
 
 			if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
@@ -199,7 +237,11 @@ export class IntentFactory {
 	openIntent(opts: AppCreateIntentOptions) {
 		return async () => {
 			const { inputTokens, account } = opts;
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
+			const intentInstance3 = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
+			applySameChainTimings(intentInstance3);
+			const sameChain3 = intentInstance3.isSameChain();
+			const intent = intentInstance3.order();
+			applyExclusivityOverride(intent, opts.exclusiveFor, sameChain3);
 
 			const inputChain = inputTokens[0].token.chainId;
 			if (this.preHook) await this.preHook(inputChain);

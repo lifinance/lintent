@@ -173,12 +173,14 @@
 		class="mx-auto flex flex-col-reverse items-center px-4 pt-2 md:max-w-[80rem] md:flex-row md:items-start md:px-10 md:pt-3"
 	>
 		<Introduction />
-		<div class="mb-4 flex h-[30rem] w-max flex-row items-stretch gap-2 md:mb-0">
-			<div class="relative h-full w-[25rem]">
+		<div
+			class="mb-4 flex h-auto w-full flex-col items-stretch gap-2 md:mb-0 md:h-[30rem] md:w-max md:flex-row"
+		>
+			<div class="relative h-[30rem] w-full md:w-[25rem]">
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
-					class="h-[30rem] w-[25rem] snap-x snap-mandatory overflow-x-auto overflow-y-hidden rounded-md border border-gray-200 bg-gray-50"
+					class="h-[30rem] w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden rounded-md border border-gray-200 bg-gray-50 md:w-[25rem]"
 					bind:this={snapContainer}
 					onscroll={updateCurrentScreenIndex}
 				>
@@ -193,7 +195,7 @@
 					{#if !(!store.connectedAccount || !store.walletClient)}
 						<!-- Right Button -->
 						<button
-							class="absolute top-1.5 left-[23rem] z-50 cursor-pointer rounded bg-sky-50 px-1"
+							class="absolute top-1.5 right-2 z-50 cursor-pointer rounded bg-sky-50 px-1"
 							onclick={scroll(true)}
 						>
 							→
@@ -237,7 +239,7 @@
 				</div>
 			</div>
 			<FlowStepTracker
-				className="h-full w-[6.25rem] flex-shrink-0"
+				className="h-auto w-full md:h-full md:w-[6.25rem] flex-shrink-0"
 				{currentScreenIndex}
 				{scrollStepProgress}
 				{selectedOrder}

@@ -33,6 +33,10 @@
 	let autoScrolledOrderId = $state<`0x${string}` | null>(null);
 	let fillRun = 0;
 	let fillStatuses = $state<Record<string, `0x${string}`>>({});
+	let manualFillTxInputs = $state<Record<string, string>>({});
+	let manualFillTxSaving = $state<Record<string, boolean>>({});
+	let manualFillTxSaved = $state<Record<string, boolean>>({});
+	let manualFillTxErrors = $state<Record<string, string>>({});
 	const postHookScroll = async () => {
 		await postHook();
 		refreshValidation += 1;
@@ -73,6 +77,35 @@
 			types: compactTypes,
 			primaryType: "MandateOutput"
 		});
+	const isValidFillTxHash = (value: string): value is `0x${string}` =>
+		value.startsWith("0x") && value.length === 66;
+	const getManualFillTxInputValue = (output: MandateOutput) => {
+		const key = outputKey(output);
+		return manualFillTxInputs[key] ?? store.fillTransactions[key] ?? "";
+	};
+	const saveManualFillTransaction = async (output: MandateOutput) => {
+		const key = outputKey(output);
+		const txHash = getManualFillTxInputValue(output).trim();
+		if (!isValidFillTxHash(txHash)) {
+			manualFillTxErrors[key] = "Use a 0x-prefixed 66-char tx hash.";
+			manualFillTxSaved[key] = false;
+			return;
+		}
+		manualFillTxSaving[key] = true;
+		manualFillTxErrors[key] = "";
+		try {
+			store.fillTransactions[key] = txHash;
+			await store.saveFillTransaction(key, txHash);
+			manualFillTxSaved[key] = true;
+			refreshValidation += 1;
+		} catch (error) {
+			console.warn("saveFillTransaction error", error);
+			manualFillTxErrors[key] = "Failed to save tx hash.";
+			manualFillTxSaved[key] = false;
+		} finally {
+			manualFillTxSaving[key] = false;
+		}
+	};
 
 	$effect(() => {
 		refreshValidation;
@@ -123,6 +156,49 @@
 	description="Fill each chain once and continue to the right. If you refreshed the page provide your fill tx hash in the input box."
 >
 	<div class="space-y-2">
+		<SectionCard compact title="Add Fill Tx Hash">
+			<div class="space-y-2">
+				{#each orderContainer.order.outputs as output}
+					{@const key = outputKey(output)}
+					{@const currentHash = store.fillTransactions[key]}
+					<div class="flex flex-wrap items-center gap-2">
+						<TokenAmountChip
+							amountText={formatTokenAmount(
+								output.amount,
+								getCoin({ address: output.token, chainId: output.chainId }).decimals
+							)}
+							symbol={getCoin({ address: output.token, chainId: output.chainId }).name}
+							tone={isValidFillTxHash(currentHash ?? "") ? "success" : "warning"}
+						/>
+						<input
+							type="text"
+							class="h-7 min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-sky-300"
+							placeholder="0x... fill tx hash"
+							value={getManualFillTxInputValue(output)}
+							oninput={(event) => {
+								const value = (event.currentTarget as HTMLInputElement).value;
+								manualFillTxInputs[key] = value;
+								manualFillTxSaved[key] = false;
+								manualFillTxErrors[key] = "";
+							}}
+						/>
+						<button
+							type="button"
+							class="h-7 rounded border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-700 hover:border-sky-300 hover:text-sky-700 disabled:cursor-not-allowed disabled:text-gray-400"
+							disabled={manualFillTxSaving[key]}
+							onclick={() => saveManualFillTransaction(output)}
+						>
+							{manualFillTxSaving[key] ? "Saving..." : "Save Tx"}
+						</button>
+						{#if manualFillTxErrors[key]}
+							<div class="text-[11px] font-semibold text-rose-600">{manualFillTxErrors[key]}</div>
+						{:else if manualFillTxSaved[key]}
+							<div class="text-[11px] font-semibold text-emerald-700">Saved</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		</SectionCard>
 		{#each sortOutputsByChain(orderContainer) as chainIdAndOutputs}
 			<SectionCard compact>
 				<ChainActionRow chainLabel={getChainName(chainIdAndOutputs[0])}>
@@ -190,22 +266,6 @@
 					{/snippet}
 				</ChainActionRow>
 			</SectionCard>
-			<!-- <input
-				class="w-20 rounded border px-2 py-1"
-				placeholder="fillTransactionHash"
-				bind:value={
-					store.fillTransactions[
-						hashStruct({
-							data: { outputs: chainIdAndOutputs.outputs },
-							types: {
-								...compactTypes,
-								Outputs
-							},
-							primaryType: "Outputs"
-						})
-					]
-				}
-			/> -->
 		{/each}
 	</div>
 </ScreenFrame>

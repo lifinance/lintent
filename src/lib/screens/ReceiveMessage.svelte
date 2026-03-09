@@ -117,13 +117,7 @@
 		const inputChains = intent.inputChains();
 		const outputs = orderContainer.order.outputs;
 		const fillTxHashes = outputs.map((output) => {
-			return store.fillTransactions[
-				hashStruct({
-					data: output,
-					types: compactTypes,
-					primaryType: "MandateOutput"
-				})
-			];
+			return store.fillTransactions[outputKey(output)];
 		});
 
 		if (
@@ -197,14 +191,7 @@
 												{
 													output,
 													orderContainer,
-													fillTransactionHash:
-														store.fillTransactions[
-															hashStruct({
-																data: output,
-																types: compactTypes,
-																primaryType: "MandateOutput"
-															})
-														],
+													fillTransactionHash: store.fillTransactions[outputKey(output)],
 													sourceChainId: Number(inputChain),
 													mainnet: store.mainnet
 												},

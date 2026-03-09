@@ -13,7 +13,7 @@
 	import ConnectWallet from "$lib/screens/ConnectWallet.svelte";
 	import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
 	import store from "$lib/state.svelte";
-	import { orderToIntent } from "@lifi/intent";
+	import { orderToIntent, isSolanaOriginOrder } from "@lifi/intent";
 
 	// Fix bigint so we can json serialize it:
 	(BigInt.prototype as any).toJSON = function () {
@@ -66,9 +66,14 @@
 						} as NoSignature);
 				const orderContainer = { ...order, allocatorSignature, sponsorSignature };
 
+				// Skip Solana-origin orders — they have 32-byte users and cannot be processed here
+				if (isSolanaOriginOrder(orderContainer.order)) return;
+
 				// Deduplicate: only add if not already present
 				const orderId = orderToIntent(orderContainer).orderId();
-				const alreadyExists = store.orders.some((o) => orderToIntent(o).orderId() === orderId);
+				const alreadyExists = store.orders
+					.filter((o) => !isSolanaOriginOrder(o.order))
+					.some((o) => orderToIntent(o).orderId() === orderId);
 				if (alreadyExists) return;
 
 				store.orders.push(orderContainer);
@@ -100,18 +105,27 @@
 	let scrollStepProgress = $state(0);
 	async function importOrderById(orderId: `0x${string}`): Promise<"inserted" | "updated"> {
 		const importedOrder = await intentApi.getOrderByOnChainOrderId(orderId);
+		if (isSolanaOriginOrder(importedOrder.order)) {
+			throw new Error("Solana-origin orders cannot be imported into the intent list.");
+		}
 		const importedOrderId = orderToIntent(importedOrder).orderId();
 		const existingIndex = store.orders.findIndex(
-			(o) => orderToIntent(o).orderId() === importedOrderId
+			(o) => !isSolanaOriginOrder(o.order) && orderToIntent(o).orderId() === importedOrderId
 		);
 		await store.saveOrderToDb(importedOrder);
 		selectedOrder =
-			store.orders.find((o) => orderToIntent(o).orderId() === importedOrderId) ?? importedOrder;
+			store.orders.find(
+				(o) => !isSolanaOriginOrder(o.order) && orderToIntent(o).orderId() === importedOrderId
+			) ?? importedOrder;
 		return existingIndex >= 0 ? "updated" : "inserted";
 	}
 	async function deleteOrderById(orderId: `0x${string}`): Promise<void> {
 		await store.deleteOrderFromDb(orderId);
-		if (selectedOrder && orderToIntent(selectedOrder).orderId() === orderId) {
+		if (
+			selectedOrder &&
+			!isSolanaOriginOrder(selectedOrder.order) &&
+			orderToIntent(selectedOrder).orderId() === orderId
+		) {
 			selectedOrder = undefined;
 		}
 	}

@@ -2,6 +2,7 @@ import type { OrderContainer } from "@lifi/intent";
 import type { AppTokenContext } from "./appTypes";
 import {
 	ALWAYS_OK_ALLOCATOR,
+	chainMap,
 	clientsById,
 	coinList,
 	COMPACT,
@@ -25,7 +26,7 @@ import {
 	transactionReceipts as transactionReceiptsTable
 } from "./schema";
 import { and, eq } from "drizzle-orm";
-import { orderToIntent } from "@lifi/intent";
+import { orderToIntent, isSolanaOriginOrder } from "@lifi/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {
 	getCurrentConnection,
@@ -50,6 +51,7 @@ class Store {
 
 	async saveOrderToDb(order: OrderContainer) {
 		if (!browser) return;
+		if (isSolanaOriginOrder(order.order)) return;
 		if (!db) await initDb();
 		const orderId = orderToIntent(order).orderId();
 		const now = Math.floor(Date.now() / 1000);
@@ -91,7 +93,9 @@ class Store {
 				console.warn("saveOrderToDb db write failed", { orderId, error });
 			}
 		}
-		const idx = this.orders.findIndex((o) => orderToIntent(o).orderId() === orderId);
+		const idx = this.orders.findIndex(
+			(o) => !isSolanaOriginOrder(o.order) && orderToIntent(o).orderId() === orderId
+		);
 		if (idx >= 0) this.orders[idx] = order;
 		else this.orders.push(order);
 	}
@@ -268,7 +272,7 @@ class Store {
 		const resolved: Partial<Record<string, Record<`0x${string}`, Promise<bigint>>>> = {};
 		if (!account) return resolved;
 		for (const token of coinList(this.mainnet)) {
-			if (token.chainId !== 11) continue;
+			if (token.chainId !== chainMap.solanaDevnet.id) continue;
 			if (!resolved.solanaDevnet) resolved.solanaDevnet = {};
 			const key = `balance:${this.mainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${account}`;
 			resolved.solanaDevnet[token.address] = getOrFetchRpc(

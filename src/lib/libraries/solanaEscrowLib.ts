@@ -1,7 +1,7 @@
 import { keccak256 } from "viem";
 import idl from "../abi/input_settler_escrow.json";
 import { SOLANA_INPUT_SETTLER_ESCROW, SOLANA_POLYMER_ORACLE } from "../config";
-import type { MandateOutput, StandardOrder } from "@lifi/intent";
+import type { MandateOutput, SolanaStandardOrder } from "@lifi/intent";
 
 /** Convert a 0x-prefixed hex string (32 bytes) to a number[] */
 function hexToBytes32(hex: `0x${string}`): number[] {
@@ -16,15 +16,14 @@ function bigintToBeBytes32(n: bigint): number[] {
 /**
  * Open a Solana→EVM intent by calling input_settler_escrow.open() on Solana devnet.
  *
- * @param order           EVM-format StandardOrder from intent.ts
- *                        inputs[0] = [BigInt(bytes32SplMint), BigInt(amount)]
+ * @param order           SolanaStandardOrder from @lifi/intent
  * @param solanaPublicKey Base58-encoded Solana wallet public key (becomes order.user)
  * @param walletAdapter   Connected Solana wallet adapter (Phantom, Solflare, …)
  * @param connection      Solana Connection instance
  * @returns               Solana transaction signature string
  */
 export async function openSolanaEscrow(params: {
-	order: StandardOrder;
+	order: SolanaStandardOrder;
 	solanaPublicKey: string;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	walletAdapter: any; // WalletAdapter with signTransaction / signAllTransactions
@@ -42,11 +41,6 @@ export async function openSolanaEscrow(params: {
 	const userPubkey = new PublicKey(solanaPublicKey);
 	const inputSettlerProgramId = new PublicKey(SOLANA_INPUT_SETTLER_ESCROW);
 	const polymerProgramId = new PublicKey(SOLANA_POLYMER_ORACLE);
-
-	/** Recover a Solana PublicKey from a bigint (SPL mint stored as BigInt of its bytes32 hex) */
-	function pubkeyFromBigInt(n: bigint) {
-		return new PublicKey(Buffer.from(n.toString(16).padStart(64, "0"), "hex"));
-	}
 
 	// Wrap the wallet adapter as an Anchor-compatible wallet
 	const anchorWallet = {
@@ -75,10 +69,9 @@ export async function openSolanaEscrow(params: {
 		inputSettlerProgramId
 	);
 
-	// Extract input token from EVM-format order:
-	//   order.inputs[0] = [BigInt(bytes32SplMint), BigInt(amount)]
-	const inputMint = pubkeyFromBigInt(order.inputs[0][0]);
-	const inputAmount = new BN(order.inputs[0][1].toString());
+	// Extract input token from SolanaStandardOrder
+	const inputMint = new PublicKey(Buffer.from(order.input.token.slice(2), "hex"));
+	const inputAmount = new BN(order.input.amount.toString());
 
 	// Build Anchor-format order.
 	// Field names are camelCase here; Anchor's BorshCoder maps them to the IDL's snake_case names.

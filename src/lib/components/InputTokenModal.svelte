@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { clients, coinList, getChainName, type Token } from "$lib/config";
+	import { chainMap, clients, coinList, getChainName, type Token } from "$lib/config";
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import InlineMetaField from "$lib/components/ui/InlineMetaField.svelte";
@@ -66,8 +66,8 @@
 			const token = getTokenFor(key);
 			// If we can't find the token, then it is most likely because the user changed their token.
 			if (!token) continue;
-		if (!hasClient(token.chainId)) continue;
-		if (!isEnabled(key)) continue;
+			if (!hasClient(token.chainId) && !isChainAvailable(token.chainId)) continue;
+			if (!isEnabled(key)) continue;
 
 			if (inputValue === 0) continue;
 			inputTokens.push({ token, amount: toBigIntWithDecimals(inputValue, token.decimals) });
@@ -81,7 +81,8 @@
 	}
 
 	const hasClient = (chainId: number) => (getChainName(chainId) as string) in clients;
-	const isChainAvailable = (chainId: number) => chainId !== 11 || solanaWallet.connected;
+	const isChainAvailable = (chainId: number) =>
+		chainId !== chainMap.solanaDevnet.id || solanaWallet.connected;
 
 	const uniqueInputTokens = $derived([
 		...new Set(
@@ -221,7 +222,10 @@
 						{@const chainAvailable = isChainAvailable(tkn.chainId)}
 						<FieldRow columns={rowColumns} striped index={rowIndex}>
 							<div
-								class="truncate text-xs font-medium {evmChain ? 'text-gray-700' : 'text-gray-400'}"
+								class="truncate text-xs font-medium {evmChain ||
+								(tkn.chainId === chainMap.solanaDevnet.id && chainAvailable)
+									? 'text-gray-700'
+									: 'text-gray-400'}"
 							>
 								{getChainName(tkn.chainId)}
 							</div>

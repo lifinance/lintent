@@ -1,5 +1,5 @@
 {
-	"address": "HyfCubUzStNcbAhW94PHPwRMqz2FTo9ox5HXxu2o6Ygq",
+	"address": "5QngyaYhNscSebqV4DwYQhk333p5CMP8A9yyLX3pPyXC",
 	"metadata": {
 		"name": "input_settler_escrow",
 		"version": "0.0.0",
@@ -119,7 +119,7 @@
 				},
 				{
 					"name": "intents_protocol_program",
-					"address": "4SQaweUpT1LrRg1gh9sVEDL3Q4jZH3wxRi3qpz23SRpj"
+					"address": "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz"
 				},
 				{
 					"name": "token_program"
@@ -183,7 +183,7 @@
 				},
 				{
 					"name": "intents_protocol_program",
-					"address": "4SQaweUpT1LrRg1gh9sVEDL3Q4jZH3wxRi3qpz23SRpj"
+					"address": "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz"
 				},
 				{
 					"name": "system_program",

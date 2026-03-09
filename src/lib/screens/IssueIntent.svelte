@@ -4,9 +4,9 @@
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
-	import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
+	import { POLYMER_ALLOCATOR, chainMap, formatTokenAmount, getChainName } from "$lib/config";
 	import { isAddress } from "viem";
-	import { isValidSolanaAddress } from "@lifi/intent";
+	import { isValidSolanaAddress, solanaAddressToBytes32 } from "$lib/utils/solana";
 	import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
 	import { CompactLib } from "$lib/libraries/compactLib";
 	import store from "$lib/state.svelte";
@@ -42,6 +42,10 @@
 			inputTokens: store.inputTokens,
 			outputTokens: store.outputTokens,
 			verifier: store.verifier,
+			outputRecipient:
+				hasSolanaOutput && isValidSolanaAddress(store.solanaRecipient)
+					? solanaAddressToBytes32(store.solanaRecipient)
+					: undefined,
 			lock:
 				store.intentType === "compact"
 					? {
@@ -99,15 +103,26 @@
 	let balanceCheckWallet = $state(true);
 	$effect(() => {
 		balanceCheckWallet = true;
-		if (!store.balances[store.inputTokens[0].token.chainId]) {
-			balanceCheckWallet = false;
-			return;
-		}
 		for (let i = 0; i < store.inputTokens.length; ++i) {
 			const { token, amount } = store.inputTokens[i];
-			store.balances[token.chainId][token.address].then((b) => {
-				balanceCheckWallet = balanceCheckWallet && b >= amount;
-			});
+			if (token.chainId === chainMap.solanaDevnet.id) {
+				const solBal = store.solanaBalances.solanaDevnet?.[token.address];
+				if (!solBal) {
+					balanceCheckWallet = false;
+					continue;
+				}
+				solBal.then((b) => {
+					balanceCheckWallet = balanceCheckWallet && b >= amount;
+				});
+			} else {
+				if (!store.balances[token.chainId]) {
+					balanceCheckWallet = false;
+					continue;
+				}
+				store.balances[token.chainId][token.address].then((b) => {
+					balanceCheckWallet = balanceCheckWallet && b >= amount;
+				});
+			}
 		}
 	});
 	let balanceCheckCompact = $state(true);
@@ -163,8 +178,15 @@
 		return uniqueChains.length;
 	});
 
-	const hasEvmOutput = $derived(store.outputTokens.some(({ token }) => token.chainId !== 11));
-	const hasSolanaOutput = $derived(store.outputTokens.some(({ token }) => token.chainId === 11));
+	const hasEvmOutput = $derived(
+		store.outputTokens.some(({ token }) => token.chainId !== chainMap.solanaDevnet.id)
+	);
+	const hasSolanaOutput = $derived(
+		store.outputTokens.some(({ token }) => token.chainId === chainMap.solanaDevnet.id)
+	);
+	const hasSolanaInput = $derived(
+		store.inputTokens.some(({ token }) => token.chainId === chainMap.solanaDevnet.id)
+	);
 
 	const evmRecipientValid = $derived(
 		!hasEvmOutput ||
@@ -388,7 +410,7 @@
 						Enter Solana Recipient
 					{/if}
 				</button>
-			{:else if !allowanceCheck && !hasSolanaOutput}
+			{:else if !allowanceCheck && !hasSolanaOutput && !hasSolanaInput}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance

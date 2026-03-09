@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from "svelte";
 	import { tick } from "svelte";
-	import { orderToIntent } from "@lifi/intent";
+	import { orderToIntent, isSolanaOriginOrder } from "@lifi/intent";
 	import IntentListDetailRow from "$lib/components/IntentListDetailRow.svelte";
 	import {
 		buildBaseIntentRow,
@@ -87,7 +87,9 @@
 	onDestroy(() => clearInterval(clock));
 
 	const baseRows = $derived(
-		orderContainers.map((orderContainer) => buildBaseIntentRow(orderContainer))
+		orderContainers
+			.filter((oc) => !isSolanaOriginOrder(oc.order))
+			.map((orderContainer) => buildBaseIntentRow(orderContainer))
 	);
 	const rows = $derived(baseRows.map((row) => withTiming(row, nowSeconds)));
 
@@ -104,7 +106,9 @@
 	);
 
 	const selectedOrderId = $derived(
-		selectedOrder ? orderToIntent(selectedOrder).orderId() : undefined
+		selectedOrder && !isSolanaOriginOrder(selectedOrder.order)
+			? orderToIntent(selectedOrder).orderId()
+			: undefined
 	);
 </script>
 

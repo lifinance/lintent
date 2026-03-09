@@ -1,4 +1,5 @@
 import {
+	chainMap,
 	getChain,
 	getClient,
 	INPUT_SETTLER_COMPACT_LIFI,
@@ -20,10 +21,11 @@ import type {
 } from "@lifi/intent";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { Intent, IntentApi, StandardOrderIntent } from "@lifi/intent";
+import { Intent, IntentApi, SolanaIntent } from "@lifi/intent";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
-import { intentDeps } from "./coreDeps";
+import { intentDeps, solanaDeps } from "./coreDeps";
+import { solanaAddressToBytes32 } from "$lib/utils/solana";
 import { openSolanaEscrow } from "./solanaEscrowLib";
 
 function toCoreTokenContext(input: AppTokenContext): TokenContext {
@@ -200,41 +202,46 @@ export class IntentFactory {
 
 	openIntent(opts: AppCreateIntentOptions) {
 		return async () => {
-			const { inputTokens, account } = opts;
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
-
+			const { inputTokens, outputTokens, account } = opts;
 			const inputChain = inputTokens[0].token.chainId;
-			if (this.preHook) await this.preHook(inputChain);
 
 			let transactionHashes: string[];
 
-			if (inputChain === 11) {
+			if (inputChain === chainMap.solanaDevnet.id) {
 				if (!solanaWallet.adapter || !solanaWallet.publicKey) {
 					throw new Error("Solana wallet not connected");
 				}
-				if (!(intent instanceof StandardOrderIntent)) {
-					throw new Error("Solana intents must be single-chain");
-				}
+				const solanaOrderIntent = new SolanaIntent(
+					{
+						account: solanaAddressToBytes32(solanaWallet.publicKey),
+						inputToken: toCoreTokenContext(inputTokens[0]),
+						outputTokens: outputTokens.map(toCoreTokenContext),
+						verifier: opts.verifier,
+						exclusiveFor: opts.exclusiveFor
+					},
+					solanaDeps
+				).order();
 				transactionHashes = [
 					await openSolanaEscrow({
-						order: intent.asOrder() as import("@lifi/intent").StandardOrder,
+						order: solanaOrderIntent.asOrder(),
 						solanaPublicKey: solanaWallet.publicKey,
 						walletAdapter: solanaWallet.adapter,
 						connection: solanaDevnetConnection
 					})
 				];
 			} else {
+				if (this.preHook) await this.preHook(inputChain);
+				const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
 				transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
+				this.saveOrder({
+					order: intent.asOrder(),
+					inputSettler: store.inputSettler
+				});
 			}
 
 			console.log({ tsh: transactionHashes });
 
 			if (this.postHook) await this.postHook();
-
-			this.saveOrder({
-				order: intent.asOrder(),
-				inputSettler: store.inputSettler
-			});
 
 			return transactionHashes;
 		};

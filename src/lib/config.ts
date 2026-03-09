@@ -32,7 +32,7 @@ export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const
 
 // --- Solana addresses --- //
 const solanaDevnet = defineChain({
-	id: 11,
+	id: 1151111081099712,
 	name: "Solana Devnet",
 	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
 	rpcUrls: {
@@ -43,14 +43,14 @@ const solanaDevnet = defineChain({
 export const solanaDevnetConnection = new Connection("https://api.devnet.solana.com", "confirmed");
 
 // catalyst-intent-svm program IDs (devnet) — from Anchor.toml
-export const SOLANA_INTENTS_PROTOCOL = "4SQaweUpT1LrRg1gh9sVEDL3Q4jZH3wxRi3qpz23SRpj" as const;
-export const SOLANA_OUTPUT_SETTLER_SIMPLE = "8yt6Q3Gj8QCAqRVHQULckMf4rWSKQgN6SKVy9QTY5uWe" as const;
-export const SOLANA_INPUT_SETTLER_ESCROW = "HyfCubUzStNcbAhW94PHPwRMqz2FTo9ox5HXxu2o6Ygq" as const;
-export const SOLANA_POLYMER_ORACLE = "GjXkLKfMpz1MGDTFhKf31gXdcPAxPEFaEu85GmqQgLyL" as const;
+export const SOLANA_INTENTS_PROTOCOL = "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz" as const;
+export const SOLANA_OUTPUT_SETTLER_SIMPLE = "58CsNaufL383JL7J1jafGW4eWgeQFX5vSZssjsk4WKXd" as const;
+export const SOLANA_INPUT_SETTLER_ESCROW = "5QngyaYhNscSebqV4DwYQhk333p5CMP8A9yyLX3pPyXC" as const;
+export const SOLANA_POLYMER_ORACLE = "C2rAFLS6xQ78t18rK5s9madY9fztbhTaHwShgYtzonk7" as const;
 
 // PDA(seed: "output_settler_simple") of the SOLANA_OUTPUT_SETTLER_SIMPLE program
 export const SOLANA_OUTPUT_SETTLER_PDA =
-	"0xfef7041ed572ebef0bcb798166b921a7691e435b9e035e2236cc225e655bc237" as const;
+	"0xabb04f05c412a4892f8c93efa4eda9f360ba8b5c8342bed51207c7a4fdd036d6" as const;
 // --- Oracles --- //
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[ethereum.id]: "0x0000000000000000000000000000000000000000",
@@ -71,7 +71,7 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	// PDA(seed: "polymer") of the SOLANA_POLYMER_ORACLE program
-	[solanaDevnet.id]: "0xfd8c1179dcc56c06fe0e9363feadd964dd3fa13b75ce88f61dee3bfdade95af6"
+	[solanaDevnet.id]: "0xe48a6f95df84c28a030f60ba5b74e4a02922a4a5724c9633109f089b2287edfc"
 };
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;

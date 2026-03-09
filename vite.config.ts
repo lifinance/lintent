@@ -1,5 +1,6 @@
 import tailwindcss from "@tailwindcss/vite";
 import { sveltekit } from "@sveltejs/kit/vite";
+import inject from "@rollup/plugin-inject";
 import { defineConfig } from "vite";
 
 export default defineConfig({
@@ -13,6 +14,11 @@ export default defineConfig({
 	optimizeDeps: {
 		exclude: ["@electric-sql/pglite"],
 		include: ["buffer"]
+	},
+	build: {
+		rollupOptions: {
+			plugins: [inject({ Buffer: ["buffer", "Buffer"] })]
+		}
 	},
 	define: {
 		// Polyfill Buffer for Solana web3.js in the browser

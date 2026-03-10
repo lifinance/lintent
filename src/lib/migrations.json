@@ -1,44 +1,18 @@
 [
   {
     "sql": [
-      "CREATE TABLE \"intents\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"order_id\" text NOT NULL,\n\t\"intent_type\" text NOT NULL,\n\t\"data\" text NOT NULL,\n\t\"created_at\" integer NOT NULL\n);\n"
-    ],
-    "bps": true,
-    "folderMillis": 1770712231202,
-    "hash": "3ec46f3cc562c5204f9e841d2ea2086d8994c80253445074b646b07900b30a9f"
-  },
-  {
-    "sql": [
-      "CREATE TABLE \"fill_transactions\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"output_hash\" text NOT NULL,\n\t\"tx_hash\" text NOT NULL,\n\tCONSTRAINT \"fill_transactions_output_hash_unique\" UNIQUE(\"output_hash\")\n);\n"
-    ],
-    "bps": true,
-    "folderMillis": 1770803119280,
-    "hash": "f963c9a03076fc9754b51c2850ad42f5edfdf19fb018a0616db37d935907b165"
-  },
-  {
-    "sql": ["ALTER TABLE \"intents\" ALTER COLUMN \"created_at\" TYPE bigint;\n"],
-    "bps": true,
-    "folderMillis": 1770809000000,
-    "hash": "45484cce461ab6b6ac735465757bebec7d5bf488ed58c4288ebf1fd75d1881f5"
-  },
-  {
-    "sql": [
-      "CREATE UNIQUE INDEX IF NOT EXISTS \"intents_order_id_unique\" ON \"intents\" (\"order_id\");\n"
-    ],
-    "bps": true,
-    "folderMillis": 1770810000000,
-    "hash": "387946018137748e3a5dd66fca8a1da71ddabc4191a835a3254fad26c6b6d412"
-  },
-  {
-    "sql": [
-      "CREATE TABLE \"tokens\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"address\" text NOT NULL,\n\t\"name\" text NOT NULL,\n\t\"chain_id\" bigint NOT NULL,\n\t\"decimals\" bigint NOT NULL,\n\t\"is_manual\" boolean DEFAULT false NOT NULL,\n\t\"is_testnet\" boolean DEFAULT false NOT NULL\n);\n",
+      "DROP TABLE IF EXISTS \"transaction_receipts\";\n",
+      "\nDROP TABLE IF EXISTS \"tokens\";\n",
+      "\nDROP TABLE IF EXISTS \"intents\";\n",
+      "\nDROP TABLE IF EXISTS \"fill_transactions\";\n",
+      "\nCREATE TABLE \"fill_transactions\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"output_hash\" text NOT NULL,\n\t\"tx_hash\" text NOT NULL,\n\tCONSTRAINT \"fill_transactions_output_hash_unique\" UNIQUE(\"output_hash\")\n);\n",
+      "\nCREATE TABLE \"intents\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"order_id\" text NOT NULL,\n\t\"intent_type\" text NOT NULL,\n\t\"data\" text NOT NULL,\n\t\"created_at\" bigint NOT NULL,\n\tCONSTRAINT \"intents_order_id_unique\" UNIQUE(\"order_id\")\n);\n",
+      "\nCREATE TABLE \"tokens\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"address\" text NOT NULL,\n\t\"name\" text NOT NULL,\n\t\"chain_id\" bigint NOT NULL,\n\t\"decimals\" bigint NOT NULL,\n\t\"is_manual\" boolean DEFAULT false NOT NULL,\n\t\"is_testnet\" boolean DEFAULT false NOT NULL\n);\n",
       "\nCREATE TABLE \"transaction_receipts\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"chain_id\" bigint NOT NULL,\n\t\"tx_hash\" text NOT NULL,\n\t\"receipt\" text NOT NULL,\n\t\"created_at\" bigint NOT NULL\n);\n",
-      "\nALTER TABLE \"intents\" ALTER COLUMN \"created_at\" SET DATA TYPE bigint;",
-      "\nCREATE UNIQUE INDEX \"tokens_address_chain_idx\" ON \"tokens\" USING btree (\"address\",\"chain_id\");",
-      "\nALTER TABLE \"intents\" ADD CONSTRAINT \"intents_order_id_unique\" UNIQUE(\"order_id\");"
+      "\nCREATE UNIQUE INDEX \"tokens_address_chain_idx\" ON \"tokens\" USING btree (\"address\",\"chain_id\");\n"
     ],
     "bps": true,
-    "folderMillis": 1773066106972,
-    "hash": "486043322db64a03ff9040a7cf7062a1d452554261d63c9c406c782e1e45b76b"
+    "folderMillis": 1773159031946,
+    "hash": "b9ecf75ed8487a7746169ad49ce1564428a73e69f49e85cd702aaabbb03d72f6"
   }
 ]

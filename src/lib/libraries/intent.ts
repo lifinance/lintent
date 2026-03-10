@@ -19,6 +19,7 @@ import {
 	COMPACT,
 	getChainName,
 	getOracle,
+	SOLANA_OUTPUT_SETTLER_PDA,
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
@@ -29,7 +30,7 @@ import {
 } from "../config";
 import { ResetPeriod, toId } from "../utils/idLib";
 import { compact_type_hash, compactTypes } from "../utils/typedMessage";
-import { addressToBytes32 } from "../utils/convert";
+import { addressToBytes32, solanaAddressToBytes32 } from "../utils/convert";
 import { SETTLER_ESCROW_ABI } from "../abi/escrow";
 import type { TokenContext } from "$lib/state.svelte";
 import { MULTICHAIN_SETTLER_ESCROW_ABI } from "$lib/abi/multichain_escrow";
@@ -54,6 +55,8 @@ export type CompactLock = {
 };
 
 export type CreateIntentOptionsEscrow = {
+	recipient: string;
+	solanaRecipient?: string;
 	exclusiveFor: string;
 	inputTokens: TokenContext[];
 	outputTokens: TokenContext[];
@@ -63,6 +66,8 @@ export type CreateIntentOptionsEscrow = {
 };
 
 export type CreateIntentOptionsCompact = {
+	recipient: string;
+	solanaRecipient?: string;
 	exclusiveFor: string;
 	inputTokens: TokenContext[];
 	outputTokens: TokenContext[];
@@ -107,6 +112,8 @@ export class Intent {
 
 	// User facing order options
 	private user: () => `0x${string}`;
+	private recipient?: `0x${string}`;
+	private solanaRecipient?: `0x${string}`;
 	private inputs: TokenContext[];
 	private outputs: TokenContext[];
 	private verifier: Verifier;
@@ -122,11 +129,40 @@ export class Intent {
 		this.lock = opts.lock;
 
 		this.user = opts.account;
+		if (opts.recipient.trim().length > 0) {
+			this.recipient = this.normalizeEvmRecipient(opts.recipient);
+		}
+		if (opts.solanaRecipient && opts.solanaRecipient.trim().length > 0) {
+			this.solanaRecipient = this.normalizeSolanaRecipient(opts.solanaRecipient);
+		}
 		this.inputs = opts.inputTokens;
 		this.outputs = opts.outputTokens;
 		this.verifier = opts.verifier;
 
 		this.exclusiveFor = this.normalizeExclusiveFor(opts.exclusiveFor);
+	}
+
+	private normalizeEvmRecipient(recipient: string): `0x${string}` {
+		const trimmed = recipient.trim();
+		const normalized = trimmed.toLowerCase();
+		if (!/^0x[0-9a-f]{40}$/.test(normalized)) {
+			throw new Error(`EVM recipient not formatted correctly: ${recipient}`);
+		}
+		return normalized as `0x${string}`;
+	}
+
+	private normalizeSolanaRecipient(recipient: string): `0x${string}` {
+		return solanaAddressToBytes32(recipient.trim());
+	}
+
+	private getRecipientBytes32(chain: string): `0x${string}` {
+		if (chain === "solanaDevnet") {
+			if (!this.solanaRecipient)
+				throw new Error("Solana recipient is required for solanaDevnet outputs");
+			return this.solanaRecipient;
+		}
+		const evmRecipient = this.recipient ?? this.user();
+		return addressToBytes32(evmRecipient);
 	}
 
 	private normalizeExclusiveFor(exclusiveFor: string): `0x${string}` | undefined {
@@ -192,20 +228,24 @@ export class Intent {
 			);
 		}
 
-		const outputSettler = COIN_FILLER;
 		const sameChain = this.isSameChain();
 
 		return this.outputs.map(({ token, amount }) => {
+			const isSolana = token.chain === "solanaDevnet";
+			const outputSettler = isSolana ? SOLANA_OUTPUT_SETTLER_PDA : COIN_FILLER;
+			const settlerBytes32 = isSolana
+				? (outputSettler as `0x${string}`)
+				: addressToBytes32(outputSettler);
 			const outputOracle = sameChain
-				? addressToBytes32(outputSettler)
+				? settlerBytes32
 				: addressToBytes32(getOracle(this.verifier, token.chain)!);
 			return {
 				oracle: outputOracle,
-				settler: addressToBytes32(outputSettler),
+				settler: settlerBytes32,
 				chainId: BigInt(chainMap[token.chain].id),
 				token: addressToBytes32(token.address),
 				amount: amount,
-				recipient: addressToBytes32(this.user()),
+				recipient: this.getRecipientBytes32(token.chain),
 				callbackData: "0x",
 				context
 			};
@@ -589,7 +629,9 @@ export class MultichainOrderIntent {
 		const computedOrderId = this.orderId();
 		const onChainOrderIds = await Promise.all(
 			components.map(async (component) => {
-				const onChainId = await clients[getChainName(component.chainId)].readContract({
+				const onChainId = await clients[
+					getChainName(component.chainId) as keyof typeof clients
+				].readContract({
 					address: this.inputSettler,
 					abi: MULTICHAIN_SETTLER_COMPACT_ABI,
 					functionName: "orderIdentifier",

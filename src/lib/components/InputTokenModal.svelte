@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { chainMap, coinList, type Token } from "$lib/config";
+	import { chainMap, clients, coinList, type Token } from "$lib/config";
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import InlineMetaField from "$lib/components/ui/InlineMetaField.svelte";
@@ -7,6 +7,7 @@
 	import store, { type TokenContext } from "$lib/state.svelte";
 	import { toBigIntWithDecimals } from "$lib/utils/convert";
 	import { type InteropableAddress, getInteropableAddress } from "$lib/utils/interopableAddresses";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 
 	const v = (num: number | null) => (num ? num : 0);
 	const formatBalance = (value: bigint, decimals: number) =>
@@ -77,6 +78,9 @@
 		active = false;
 	}
 
+	const hasClient = (chain: string) => chain in clients;
+	const isChainAvailable = (chain: string) => chain !== "solanaDevnet" || solanaWallet.connected;
+
 	const uniqueInputTokens = $derived([
 		...new Set(
 			coinList(store.mainnet)
@@ -114,12 +118,16 @@
 			}
 			return 0;
 		}
-		const balancePromises = selectedIndices.map(
-			(i) =>
-				(store.intentType === "compact" ? store.compactBalances : store.balances)[tokens[i].chain][
-					tokens[i].address
-				]
-		);
+		const balancePromises = selectedIndices.map((i) => {
+			const token = tokens[i];
+			if (token.chain === "solanaDevnet") {
+				return store.solanaBalances.solanaDevnet?.[token.address] ?? Promise.resolve(0n);
+			}
+			if (!hasClient(token.chain)) return Promise.resolve(0n);
+			return (store.intentType === "compact" ? store.compactBalances : store.balances)[token.chain][
+				token.address
+			];
+		});
 		const balances = await Promise.all(balancePromises);
 
 		const goal = toBigIntWithDecimals(total, tokens[0].decimals);
@@ -211,29 +219,65 @@
 				<div>
 					{#each tokenSet as tkn, rowIndex}
 						{@const iaddr = iaddrFor(tkn)}
+						{@const evmChain = hasClient(tkn.chain)}
+						{@const chainAvailable = isChainAvailable(tkn.chain)}
 						<FieldRow columns={rowColumns} striped index={rowIndex}>
-							<div class="truncate text-xs font-medium text-gray-700">{tkn.chain}</div>
-							{#await (store.intentType === "compact" ? store.compactBalances : store.balances)[tkn.chain][tkn.address]}
+							<div class="truncate text-xs font-medium text-gray-700">
+								{tkn.chain}
+							</div>
+							{#if evmChain}
+								{#await (store.intentType === "compact" ? store.compactBalances : store.balances)[tkn.chain][tkn.address]}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="..."
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:then balance}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText={formatBalance(balance, tkn.decimals)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:catch _}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="err"
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{/await}
+							{:else if store.solanaBalances.solanaDevnet?.[tkn.address]}
+								{#await store.solanaBalances.solanaDevnet[tkn.address]}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="..."
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:then balance}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText={formatBalance(balance, tkn.decimals)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:catch _}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="err"
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{/await}
+							{:else}
 								<InlineMetaField
 									bind:value={inputs[iaddr]}
-									metaText="..."
-									disabled={!isEnabled(iaddr)}
+									metaText="—"
+									disabled={!isEnabled(iaddr) || !chainAvailable}
 								/>
-							{:then balance}
-								<InlineMetaField
-									bind:value={inputs[iaddr]}
-									metaText={formatBalance(balance, tkn.decimals)}
-									disabled={!isEnabled(iaddr)}
-								/>
-							{:catch _}
-								<InlineMetaField
-									bind:value={inputs[iaddr]}
-									metaText="err"
-									disabled={!isEnabled(iaddr)}
-								/>
-							{/await}
+							{/if}
 							<div class="flex justify-center">
-								<input type="checkbox" bind:checked={enabledByToken[iaddr]} />
+								<input
+									type="checkbox"
+									bind:checked={enabledByToken[iaddr]}
+									disabled={!chainAvailable}
+								/>
 							</div>
 						</FieldRow>
 					{/each}

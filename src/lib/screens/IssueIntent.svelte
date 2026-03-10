@@ -4,7 +4,9 @@
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
-	import { POLYMER_ALLOCATOR, formatTokenAmount, type chain } from "$lib/config";
+	import { POLYMER_ALLOCATOR, clients, formatTokenAmount, type chain } from "$lib/config";
+	import { isAddress } from "viem";
+	import { isValidSolanaAddress } from "$lib/utils/convert";
 	import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
 	import { CompactLib } from "$lib/libraries/compactLib";
 	import store from "$lib/state.svelte";
@@ -12,6 +14,7 @@
 	import OutputTokenModal from "$lib/components/OutputTokenModal.svelte";
 	import { ResetPeriod } from "$lib/utils/idLib";
 	import type { CreateIntentOptions } from "$lib/libraries/intent";
+	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
 
 	const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
 
@@ -31,6 +34,8 @@
 	let outputTokenSelectorActive = $state<boolean>(false);
 
 	const opts = $derived({
+		recipient: store.recipient,
+		solanaRecipient: store.solanaRecipient,
 		exclusiveFor: store.exclusiveFor,
 		inputTokens: store.inputTokens,
 		outputTokens: store.outputTokens,
@@ -83,15 +88,18 @@
 	let balanceCheckWallet = $state(true);
 	$effect(() => {
 		balanceCheckWallet = true;
-		if (!store.balances[store.inputTokens[0].token.chain]) {
-			balanceCheckWallet = false;
-			return;
-		}
 		for (let i = 0; i < store.inputTokens.length; ++i) {
 			const { token, amount } = store.inputTokens[i];
-			store.balances[token.chain][token.address].then((b) => {
-				balanceCheckWallet = balanceCheckWallet && b >= amount;
-			});
+			if (token.chain === "solanaDevnet") {
+				store.solanaBalances.solanaDevnet?.[token.address]?.then((b) => {
+					balanceCheckWallet = balanceCheckWallet && b >= amount;
+				});
+			} else {
+				if (!store.balances[token.chain]) continue;
+				store.balances[token.chain][token.address].then((b) => {
+					balanceCheckWallet = balanceCheckWallet && b >= amount;
+				});
+			}
 		}
 	});
 	let balanceCheckCompact = $state(true);
@@ -145,6 +153,27 @@
 		return uniqueChains.length;
 	});
 
+	const hasSolanaInput = $derived(
+		store.inputTokens.some(({ token }) => token.chain === "solanaDevnet")
+	);
+
+	const hasEvmOutput = $derived(store.outputTokens.some(({ token }) => token.chain in clients));
+	const hasSolanaOutput = $derived(
+		store.outputTokens.some(({ token }) => token.chain === "solanaDevnet")
+	);
+
+	const evmRecipientValid = $derived(
+		!hasEvmOutput ||
+			store.recipient.trim().length === 0 ||
+			isAddress(store.recipient, { strict: false })
+	);
+	const solanaRecipientValid = $derived(
+		!hasSolanaOutput ||
+			store.solanaRecipient.trim().length === 0 ||
+			isValidSolanaAddress(store.solanaRecipient)
+	);
+	const recipientValid = $derived(evmRecipientValid && solanaRecipientValid);
+
 	const sameChain = $derived.by(() => {
 		if (numInputChains > 1) return false;
 		const inputChain = store.inputTokens[0].token.chain;
@@ -186,6 +215,10 @@
 						inputTokens={store.inputTokens}
 						bind:outputTokens={store.outputTokens}
 						{account}
+						recipient={() =>
+							evmRecipientValid && store.recipient.length > 0
+								? (store.recipient as `0x${string}`)
+								: undefined}
 					></GetQuote>
 				</div>
 			{/snippet}
@@ -252,18 +285,58 @@
 
 		<SectionCard compact>
 			<div class="flex flex-col gap-2">
+				<div class="flex items-center gap-1.5">
+					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500"
+						>Solana Wallet</span
+					>
+					<SolanaWalletButton />
+				</div>
+				<div class="flex min-w-0 items-center gap-1">
+					<span
+						class="text-[11px] font-semibold whitespace-nowrap {hasEvmOutput
+							? 'text-gray-500'
+							: 'text-gray-300'}">EVM Recipient</span
+					>
+					<FormControl
+						type="text"
+						size="sm"
+						className="flex-1"
+						placeholder="0x... (defaults to connected wallet)"
+						disabled={!hasEvmOutput}
+						state={!hasEvmOutput
+							? "disabled"
+							: store.recipient.length > 0 && !evmRecipientValid
+								? "error"
+								: "default"}
+						bind:value={store.recipient}
+					/>
+				</div>
+				<div class="flex min-w-0 items-center gap-1">
+					<span
+						class="text-[11px] font-semibold whitespace-nowrap {hasSolanaOutput
+							? 'text-gray-500'
+							: 'text-gray-300'}">Solana Recipient</span
+					>
+					<FormControl
+						type="text"
+						size="sm"
+						className="flex-1"
+						placeholder="Base58 address..."
+						disabled={!hasSolanaOutput}
+						state={!hasSolanaOutput
+							? "disabled"
+							: store.solanaRecipient.length > 0 && !solanaRecipientValid
+								? "error"
+								: "default"}
+						bind:value={store.solanaRecipient}
+					/>
+				</div>
 				<div class="flex items-center gap-1">
 					<span class="text-[11px] font-semibold text-gray-500">Verifier</span>
-					{#if sameChain}
-						<FormControl as="select" size="sm" state="disabled" disabled>
-							<option selected disabled>Settler</option>
-						</FormControl>
-					{:else}
-						<FormControl as="select" id="verified-by" size="sm">
-							<option value="polymer" selected>Polymer</option>
-							<option value="wormhole" disabled>Wormhole</option>
-						</FormControl>
-					{/if}
+					<FormControl as="select" id="verified-by" size="sm">
+						<option value="polymer" selected>Polymer</option>
+						<option value="wormhole" disabled>Wormhole</option>
+					</FormControl>
 				</div>
 				<div class="flex min-w-0 items-center gap-1">
 					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500">Exclusive</span>
@@ -289,7 +362,21 @@
 		</SectionCard>
 
 		<div class="mt-2 flex justify-center">
-			{#if !allowanceCheck}
+			{#if !recipientValid}
+				<button
+					type="button"
+					class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+					disabled
+				>
+					{#if !evmRecipientValid && !solanaRecipientValid}
+						Fix Recipients
+					{:else if !evmRecipientValid}
+						Fix EVM Recipient
+					{:else}
+						Enter Solana Recipient
+					{/if}
+				</button>
+			{:else if !allowanceCheck && !hasSolanaInput}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance
@@ -308,7 +395,7 @@
 						>
 							Low Balance
 						</button>
-					{:else if store.intentType === "escrow"}
+					{:else if store.intentType === "escrow" || hasSolanaInput}
 						<AwaitButton buttonFunction={intentFactory.openIntent(opts)}>
 							{#snippet name()}
 								Execute Open

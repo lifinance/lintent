@@ -5,7 +5,7 @@ import zealWalletModule from "@web3-onboard/zeal";
 import coinbaseWalletModule from "@web3-onboard/coinbase";
 import walletConnectModule from "@web3-onboard/walletconnect";
 import { env } from "$env/dynamic/public";
-import { chainMap } from "../config";
+import { chainMap, clients } from "../config";
 
 const injected = injectedWalletsModule();
 const zealWalletSdk = zealWalletModule();
@@ -26,14 +26,14 @@ const wallets = [
 ];
 
 const getChains = () => {
-	return Object.values(chainMap).map((v) => {
-		return {
+	return Object.entries(chainMap)
+		.filter(([name]) => name in clients)
+		.map(([, v]) => ({
 			id: v.id,
 			token: v.nativeCurrency.symbol,
 			label: v.name,
 			rpcUrl: v.rpcUrls.default.http[0]
-		};
-	});
+		}));
 };
 
 const appMetadata = {

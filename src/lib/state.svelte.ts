@@ -10,13 +10,15 @@ import {
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
+	solanaDevnetConnection,
 	type availableAllocators,
 	type chain,
 	type Token,
 	type Verifier
 } from "./config";
-import { getAllowance, getBalance, getCompactBalance } from "./libraries/token";
+import { getAllowance, getBalance, getCompactBalance, getSolanaBalance } from "./libraries/token";
 import onboard from "./utils/web3-onboard";
+import solanaWallet from "./utils/solana-wallet.svelte";
 import { createWalletClient, custom } from "viem";
 import { browser } from "$app/environment";
 import { initDb, db } from "./db";
@@ -260,6 +262,24 @@ class Store {
 		});
 	});
 
+	solanaBalances = $derived.by(() => {
+		this.refreshEpoch;
+		const account = this.solanaPublicKey || undefined;
+		const resolved: Partial<Record<chain, Record<`0x${string}`, Promise<bigint>>>> = {};
+		if (!account) return resolved;
+		for (const token of coinList(this.mainnet)) {
+			if (token.chain !== "solanaDevnet") continue;
+			if (!resolved.solanaDevnet) resolved.solanaDevnet = {};
+			const key = `balance:${this.mainnet ? "mainnet" : "testnet"}:${token.chain}:${token.address}:${account}`;
+			resolved.solanaDevnet[token.address] = getOrFetchRpc(
+				key,
+				() => getSolanaBalance(account, token.address, solanaDevnetConnection),
+				{ ttlMs: 30_000 }
+			);
+		}
+		return resolved;
+	});
+
 	multichain = $derived([...new Set(this.inputTokens.map((i) => i.token.chain))].length > 1);
 
 	inputSettler = $derived.by(() => {
@@ -272,7 +292,11 @@ class Store {
 	intentType = $state<"escrow" | "compact">("escrow");
 	allocatorId = $state<availableAllocators>(ALWAYS_OK_ALLOCATOR);
 	verifier = $state<Verifier>("polymer");
+	recipient: string = $state("");
+	solanaRecipient: string = $state("");
 	exclusiveFor: string = $state("");
+
+	solanaPublicKey = $derived(solanaWallet.publicKey ?? "");
 	useExclusiveForQuoteRequest = $state(false);
 
 	invalidateWalletReadCache(scope: "all" | "balance" | "allowance" | "compact" = "all") {
@@ -376,11 +400,13 @@ class Store {
 		const { bucket, ttlMs, isMainnet, scopeKey, fetcher } = opts;
 		const resolved: Record<chain, Record<`0x${string}`, Promise<T>>> = {} as any;
 		for (const token of coinList(isMainnet)) {
+			const client = clients[token.chain as keyof typeof clients];
+			if (!client) continue;
 			if (!resolved[token.chain as chain]) resolved[token.chain] = {};
 			const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chain}:${token.address}:${scopeKey}`;
 			resolved[token.chain][token.address] = getOrFetchRpc(
 				key,
-				() => fetcher(token.address, clients[token.chain]),
+				() => fetcher(token.address, client),
 				{ ttlMs }
 			);
 		}

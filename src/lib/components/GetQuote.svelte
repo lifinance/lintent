@@ -10,6 +10,7 @@
 		inputTokens,
 		outputTokens = $bindable(),
 		account,
+		recipient,
 		mainnet
 	}: {
 		exclusiveFor: string;
@@ -17,6 +18,7 @@
 		inputTokens: TokenContext[];
 		outputTokens: TokenContext[];
 		account: () => `0x${string}`;
+		recipient: () => `0x${string}` | undefined;
 		mainnet: boolean;
 	} = $props();
 
@@ -33,6 +35,7 @@
 					)
 				: undefined;
 
+			const receiver = recipient() ?? account();
 			const response = await orderServer.getQuotes({
 				user: account(),
 				userChain: inputTokens[0].token.chain,
@@ -47,7 +50,7 @@
 				}),
 				outputs: outputTokens.map(({ token }) => {
 					return {
-						receiver: account(),
+						receiver: receiver,
 						asset: token.address,
 						chain: token.chain,
 						amount: 0n

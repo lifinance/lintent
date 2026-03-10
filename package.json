@@ -46,15 +46,21 @@
     "vite": "^7.1.1"
   },
   "dependencies": {
-    "@lifi/intent": "0.0.3-alpha.1",
+    "@base-org/account": "^2.5.1",
+    "@coinbase/wallet-sdk": "^4.3.6",
     "@electric-sql/pglite": "^0.3.15",
+    "@lifi/intent": "0.0.3-alpha.1",
     "@metamask/sdk": "^0.34.0",
+    "@safe-global/safe-apps-provider": "~0.18.6",
+    "@safe-global/safe-apps-sdk": "^9.1.0",
     "@sveltejs/adapter-cloudflare": "^7.0.3",
     "@wagmi/connectors": "^7.2.1",
     "@wagmi/core": "^3.4.0",
+    "@walletconnect/ethereum-provider": "^2.21.1",
     "axios": "^1.9.0",
     "base64-js": "^1.5.1",
     "drizzle-orm": "^0.45.1",
+    "porto": "~0.2.35",
     "rxjs": "^7.8.2",
     "viem": "~2.45.1",
     "wagmi": "^3.5.0"

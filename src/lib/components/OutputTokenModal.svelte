@@ -1,7 +1,7 @@
 <script lang="ts">
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
-	import { chainIdList, coinList, getChainName } from "$lib/config";
+	import { chainIdList, getChainName } from "$lib/config";
 	import type { AppTokenContext } from "$lib/appTypes";
 	import store from "$lib/state.svelte";
 	import { toBigIntWithDecimals } from "@lifi/intent";
@@ -25,16 +25,14 @@
 	);
 
 	function getTokensForChain(chainId: number) {
-		const coins = coinList(store.mainnet);
-		return coins.filter((v) => v.chainId === chainId);
+		return store.availableTokens.filter((v) => v.chainId === chainId);
 	}
 
 	function save() {
-		const coins = coinList(store.mainnet);
 		const nextOutputTokens = [];
 		for (const output of outputs) {
 			const { name, chainId, amount } = output;
-			const token = coins.find((v) => v.name == name && v.chainId === chainId);
+			const token = store.availableTokens.find((v) => v.name == name && v.chainId === chainId);
 			// Check if we found token.
 			if (!token) {
 				console.log(`Could not find ${name} on ${chainId}`);

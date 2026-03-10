@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { coinList, getChainName, type Token } from "$lib/config";
+	import { getChainName, type Token } from "$lib/config";
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import InlineMetaField from "$lib/components/ui/InlineMetaField.svelte";
@@ -79,17 +79,13 @@
 	}
 
 	const uniqueInputTokens = $derived([
-		...new Set(
-			coinList(store.mainnet)
-				.map((v) => v.name)
-				.filter((v) => v !== "eth")
-		)
+		...new Set(store.availableTokens.map((v) => v.name).filter((v) => v !== "eth"))
 	]);
 
 	// svelte-ignore state_referenced_locally
 	let selectedTokenName = $state<string>(currentInputTokens[0].token.name);
 	const tokenSet = $derived(
-		coinList(store.mainnet).filter((v) => v.name.toLowerCase() === selectedTokenName.toLowerCase())
+		store.availableTokens.filter((v) => v.name.toLowerCase() === selectedTokenName.toLowerCase())
 	);
 
 	let circuitBreaker = false;

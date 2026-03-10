@@ -1,4 +1,4 @@
-import { pgTable, text, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, bigint, boolean, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const intents = pgTable("intents", {
 	id: text("id").primaryKey(),
@@ -22,4 +22,18 @@ export const transactionReceipts = pgTable("transaction_receipts", {
 	createdAt: bigint("created_at", { mode: "number" }).notNull()
 });
 
-export const schema = { intents, fillTransactions, transactionReceipts };
+export const tokens = pgTable(
+	"tokens",
+	{
+		id: text("id").primaryKey(),
+		address: text("address").notNull(),
+		name: text("name").notNull(),
+		chainId: bigint("chain_id", { mode: "number" }).notNull(),
+		decimals: bigint("decimals", { mode: "number" }).notNull(),
+		isManual: boolean("is_manual").notNull().default(false),
+		isTestnet: boolean("is_testnet").notNull().default(false)
+	},
+	(table) => [uniqueIndex("tokens_address_chain_idx").on(table.address, table.chainId)]
+);
+
+export const schema = { intents, fillTransactions, transactionReceipts, tokens };

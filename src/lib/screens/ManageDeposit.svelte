@@ -3,8 +3,10 @@
 		ALWAYS_OK_ALLOCATOR,
 		POLYMER_ALLOCATOR,
 		type Token,
-		coinList,
-		printToken
+		chainList,
+		chainMap,
+		printToken,
+		getClient
 	} from "$lib/config";
 	import BalanceField from "$lib/components/BalanceField.svelte";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
@@ -14,6 +16,7 @@
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
 	import { CompactLib } from "$lib/libraries/compactLib";
 	import { toBigIntWithDecimals } from "@lifi/intent";
+	import { erc20Abi } from "viem";
 	import store from "$lib/state.svelte";
 
 	let {
@@ -33,7 +36,13 @@
 	let inputNumber = $state<number>(1);
 
 	let selectedTokenIndex = $state<number>(0);
-	const token = $derived<Token>(coinList(store.mainnet)[selectedTokenIndex]);
+	const token = $derived<Token>(
+		store.availableTokens[selectedTokenIndex] ?? store.availableTokens[0]
+	);
+
+	let newTokenAddress = $state<string>("");
+	let newTokenChainId = $state<number>(chainMap[chainList(store.mainnet)[0]].id);
+	let addTokenError = $state<string>("");
 
 	let allowance = $state(0n);
 	const inputAmount = $derived(toBigIntWithDecimals(inputNumber, token.decimals));
@@ -51,7 +60,7 @@
 
 <ScreenFrame
 	title="Assets Management"
-	description="Select input type for your intent and manage deposited tokens. When done, continue to the right. If you want to use TheCompact signatures, ensure your tokens are deposited before you continue."
+	description="Select input type for your intent and manage deposited tokens."
 >
 	<div class="space-y-2">
 		<SectionCard compact>
@@ -116,7 +125,7 @@
 							/>
 						{/if}
 						<FormControl as="select" id="inputToken" bind:value={selectedTokenIndex}>
-							{#each coinList(store.mainnet) as tkn, i}
+							{#each store.availableTokens as tkn, i}
 								<option value={i}>{printToken(tkn)}</option>
 							{/each}
 						</FormControl>
@@ -176,14 +185,83 @@
 					</div>
 				</div>
 			</SectionCard>
-		{:else}
-			<SectionCard title="Escrow">
-				<p>
-					The Escrow Input Settler does not have any asset management. Skip to the next step to
-					select which assets to use. In the future, this place will be updated to show your pending
-					intents.
-				</p>
-			</SectionCard>
 		{/if}
+		<SectionCard title="Tokens">
+			<div class="space-y-2">
+				<div class="space-y-1">
+					<p class="text-xs font-medium text-gray-600">Add Token</p>
+					<FormControl
+						type="text"
+						id="new-token-address"
+						placeholder="0x..."
+						bind:value={newTokenAddress}
+					/>
+					<FormControl as="select" id="new-token-chain" bind:value={newTokenChainId}>
+						{#each chainList(store.mainnet) as chainName}
+							<option value={chainMap[chainName].id}>{chainName}</option>
+						{/each}
+					</FormControl>
+					{#if addTokenError}
+						<p class="text-xs text-red-500">{addTokenError}</p>
+					{/if}
+					<AwaitButton
+						buttonFunction={async () => {
+							addTokenError = "";
+							if (!/^0x[0-9a-fA-F]{40}$/.test(newTokenAddress)) {
+								addTokenError = "Invalid address";
+								return;
+							}
+							try {
+								const client = getClient(newTokenChainId);
+								const addr = newTokenAddress as `0x${string}`;
+								const decimals = await client.readContract({
+									address: addr,
+									abi: erc20Abi,
+									functionName: "decimals"
+								});
+								const symbol = await client.readContract({
+									address: addr,
+									abi: erc20Abi,
+									functionName: "symbol"
+								});
+								await store.addCustomToken({
+									address: addr,
+									name: symbol.toLowerCase(),
+									chainId: newTokenChainId,
+									decimals: Number(decimals)
+								});
+								newTokenAddress = "";
+							} catch (e) {
+								addTokenError = e instanceof Error ? e.message : "Failed to fetch token";
+							}
+						}}
+					>
+						{#snippet name()}
+							Add
+						{/snippet}
+						{#snippet awaiting()}
+							Fetching...
+						{/snippet}
+					</AwaitButton>
+				</div>
+				<div class="space-y-1 border-t border-gray-100 pt-2">
+					{#each store.availableTokens as tkn}
+						{@const tokenKey = `${tkn.chainId}:${tkn.address.toLowerCase()}`}
+						{@const isManual = store.manualTokenKeys.has(tokenKey)}
+						<div class="flex items-center justify-between gap-1 text-xs">
+							<span class="font-medium">{tkn.name.toUpperCase()}</span>
+							<span class="text-gray-500">{printToken(tkn)}</span>
+							<span class="truncate font-mono text-gray-400">{tkn.address.slice(0, 8)}…</span>
+							{#if isManual}
+								<button
+									class="ml-1 cursor-pointer rounded border border-rose-200 bg-rose-50 px-1 text-rose-600 hover:bg-rose-100"
+									onclick={() => store.removeCustomToken(tkn.address, tkn.chainId)}>×</button
+								>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			</div>
+		</SectionCard>
 	</div>
 </ScreenFrame>

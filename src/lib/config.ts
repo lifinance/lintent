@@ -136,6 +136,12 @@ export const coinList = (mainnet: boolean) => {
 				decimals: 18
 			},
 			{
+				address: `0x82106347dDbB23cE44Cf4cE4053Ef1adf8b9323B`,
+				name: "wmton",
+				chainId: ethereum.id,
+				decimals: 18
+			},
+			{
 				address: `0x4200000000000000000000000000000000000006`,
 				name: "weth",
 				chainId: base.id,

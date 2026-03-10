@@ -9,6 +9,7 @@ import {
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
+	isChainIdTestnet,
 	type availableAllocators,
 	type Token,
 	type Verifier,
@@ -20,9 +21,10 @@ import { initDb, db } from "./db";
 import {
 	intents,
 	fillTransactions as fillTransactionsTable,
-	transactionReceipts as transactionReceiptsTable
+	transactionReceipts as transactionReceiptsTable,
+	tokens as tokensTable
 } from "./schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne, notInArray } from "drizzle-orm";
 import { orderToIntent } from "@lifi/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {
@@ -216,6 +218,8 @@ class Store {
 	walletClient = $state<WC>(undefined as unknown as WC);
 	_unwatchWalletConnection?: () => void;
 
+	availableTokens = $state<Token[]>([...(coinList(true) as readonly Token[])]);
+	manualTokenKeys = $state<Set<string>>(new Set());
 	inputTokens = $state<AppTokenContext[]>([]);
 	outputTokens = $state<AppTokenContext[]>([]);
 	fillTransactions = $state<{ [outputId: string]: `0x${string}` }>({});
@@ -361,6 +365,123 @@ class Store {
 		}
 	}
 
+	private async loadTokensFromDb(mainnet: boolean) {
+		if (!browser) return;
+		if (!db) await initDb();
+		if (!db) return;
+		const rows = await db!.select().from(tokensTable).where(eq(tokensTable.isTestnet, !mainnet));
+		this.availableTokens = rows.map((r) => ({
+			address: r.address as `0x${string}`,
+			name: r.name,
+			chainId: r.chainId,
+			decimals: r.decimals
+		}));
+		this.manualTokenKeys = new Set(
+			rows.filter((r) => r.isManual).map((r) => `${r.chainId}:${r.address.toLowerCase()}`)
+		);
+	}
+
+	async syncConfiguredTokens() {
+		if (!browser) return;
+		if (!db) await initDb();
+		if (!db) return;
+
+		const mainnetTokens = [...(coinList(true) as readonly Token[])];
+		const testnetTokens = [...(coinList(false) as readonly Token[])];
+		const allConfigured = [
+			...mainnetTokens.map((t) => ({ ...t, isTestnet: false })),
+			...testnetTokens.map((t) => ({ ...t, isTestnet: true }))
+		];
+
+		// Upsert all configured tokens
+		for (const t of allConfigured) {
+			const id = `${t.chainId}:${t.address.toLowerCase()}`;
+			try {
+				await db!
+					.insert(tokensTable)
+					.values({
+						id,
+						address: t.address,
+						name: t.name,
+						chainId: t.chainId,
+						decimals: t.decimals,
+						isManual: false,
+						isTestnet: t.isTestnet
+					})
+					.onConflictDoUpdate({
+						target: tokensTable.id,
+						set: { name: t.name, decimals: t.decimals, isTestnet: t.isTestnet, isManual: false }
+					});
+			} catch (_e) {
+				// ignore individual upsert errors
+			}
+		}
+
+		// Delete stale non-manual tokens not in current configured lists
+		const configuredIds = allConfigured.map((t) => `${t.chainId}:${t.address.toLowerCase()}`);
+		try {
+			await db!
+				.delete(tokensTable)
+				.where(and(eq(tokensTable.isManual, false), notInArray(tokensTable.id, configuredIds)));
+		} catch (_e) {
+			// ignore
+		}
+
+		await this.loadTokensFromDb(this.mainnet);
+	}
+
+	async addCustomToken(token: Token) {
+		if (!browser) return;
+		if (!db) await initDb();
+		if (!db) return;
+		const isTestnet = isChainIdTestnet(token.chainId);
+		const id = `${token.chainId}:${token.address.toLowerCase()}`;
+		try {
+			await db!
+				.insert(tokensTable)
+				.values({
+					id,
+					address: token.address,
+					name: token.name,
+					chainId: token.chainId,
+					decimals: token.decimals,
+					isManual: true,
+					isTestnet
+				})
+				.onConflictDoUpdate({
+					target: tokensTable.id,
+					set: { name: token.name, decimals: token.decimals, isManual: true }
+				});
+		} catch (_e) {
+			// fallback update
+			await db!
+				.update(tokensTable)
+				.set({ name: token.name, decimals: token.decimals, isManual: true })
+				.where(eq(tokensTable.id, id));
+		}
+		await this.loadTokensFromDb(this.mainnet);
+	}
+
+	async removeCustomToken(address: string, chainId: number) {
+		if (!browser) return;
+		if (!db) await initDb();
+		if (!db) return;
+		await db!
+			.delete(tokensTable)
+			.where(
+				and(
+					eq(tokensTable.address, address),
+					eq(tokensTable.chainId, chainId),
+					eq(tokensTable.isManual, true)
+				)
+			);
+		await this.loadTokensFromDb(this.mainnet);
+	}
+
+	async syncTokensForNetwork(mainnet: boolean) {
+		await this.loadTokensFromDb(mainnet);
+	}
+
 	async syncWalletClient() {
 		if (this.walletConnection.status !== "connected") {
 			this.walletClient = undefined as unknown as WC;
@@ -398,7 +519,7 @@ class Store {
 	}) {
 		const { bucket, ttlMs, isMainnet, scopeKey, fetcher } = opts;
 		const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
-		for (const token of coinList(isMainnet)) {
+		for (const token of this.availableTokens) {
 			if (!resolved[token.chainId]) resolved[token.chainId] = {};
 			const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${scopeKey}`;
 			resolved[token.chainId][token.address] = getOrFetchRpc(
@@ -413,8 +534,9 @@ class Store {
 	dbReady: Promise<void> | undefined;
 
 	constructor() {
-		this.inputTokens = [{ token: coinList(this.mainnet)[0], amount: 1000000n }];
-		this.outputTokens = [{ token: coinList(this.mainnet)[1], amount: 1000000n }];
+		this.availableTokens = [...(coinList(this.mainnet) as readonly Token[])];
+		this.inputTokens = [{ token: this.availableTokens[0], amount: 1000000n }];
+		this.outputTokens = [{ token: this.availableTokens[1], amount: 1000000n }];
 
 		if (browser) {
 			reconnectWallet()
@@ -440,7 +562,8 @@ class Store {
 					),
 					this.loadTransactionReceiptsFromDb().catch((e) =>
 						console.warn("loadTransactionReceiptsFromDb error", e)
-					)
+					),
+					this.syncConfiguredTokens().catch((e) => console.warn("syncConfiguredTokens error", e))
 				]).then(() => {})
 			: Promise.resolve();
 	}

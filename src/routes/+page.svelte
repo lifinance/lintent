@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { NoSignature, OrderContainer, Signature, StandardOrder } from "@lifi/intent";
-	import { coinList } from "$lib/config";
 	import { onDestroy } from "svelte";
 	import Introduction from "$lib/components/Introduction.svelte";
 	import { IntentApi } from "@lifi/intent";
@@ -29,8 +28,12 @@
 
 	$effect(() => {
 		store.mainnet;
-		store.inputTokens = [{ token: coinList(store.mainnet)[0], amount: 0n }];
-		store.outputTokens = [{ token: coinList(store.mainnet)[1], amount: 0n }];
+		store.syncTokensForNetwork(store.mainnet).then(() => {
+			store.inputTokens = [{ token: store.availableTokens[0], amount: 0n }];
+			store.outputTokens = [
+				{ token: store.availableTokens[1] ?? store.availableTokens[0], amount: 0n }
+			];
+		});
 	});
 
 	const intentApi = $derived(new IntentApi(store.mainnet));

@@ -1,34 +1,13 @@
 {
-	"version": "7",
-	"dialect": "postgresql",
-	"entries": [
-		{
-			"idx": 0,
-			"version": "7",
-			"when": 1770712231202,
-			"tag": "0000_absent_moonstone",
-			"breakpoints": true
-		},
-		{
-			"idx": 1,
-			"version": "7",
-			"when": 1770803119280,
-			"tag": "0001_nifty_mephisto",
-			"breakpoints": true
-		},
-		{
-			"idx": 2,
-			"version": "7",
-			"when": 1770809000000,
-			"tag": "0002_expand_intent_created_at",
-			"breakpoints": true
-		},
-		{
-			"idx": 3,
-			"version": "7",
-			"when": 1770810000000,
-			"tag": "0003_unique_intent_order_id",
-			"breakpoints": true
-		}
-	]
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1773159031946,
+      "tag": "0000_brief_corsair",
+      "breakpoints": true
+    }
+  ]
 }

@@ -1,99 +1,99 @@
 {
-	"id": "9f78f425-71cd-4f66-b756-5c8433118a62",
-	"prevId": "acb031ae-9317-47af-b9af-c685b7c17bda",
-	"version": "7",
-	"dialect": "postgresql",
-	"tables": {
-		"public.fill_transactions": {
-			"name": "fill_transactions",
-			"schema": "",
-			"columns": {
-				"id": {
-					"name": "id",
-					"type": "text",
-					"primaryKey": true,
-					"notNull": true
-				},
-				"output_hash": {
-					"name": "output_hash",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": true
-				},
-				"tx_hash": {
-					"name": "tx_hash",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": true
-				}
-			},
-			"indexes": {},
-			"foreignKeys": {},
-			"compositePrimaryKeys": {},
-			"uniqueConstraints": {
-				"fill_transactions_output_hash_unique": {
-					"name": "fill_transactions_output_hash_unique",
-					"nullsNotDistinct": false,
-					"columns": ["output_hash"]
-				}
-			},
-			"policies": {},
-			"checkConstraints": {},
-			"isRLSEnabled": false
-		},
-		"public.intents": {
-			"name": "intents",
-			"schema": "",
-			"columns": {
-				"id": {
-					"name": "id",
-					"type": "text",
-					"primaryKey": true,
-					"notNull": true
-				},
-				"order_id": {
-					"name": "order_id",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": true
-				},
-				"intent_type": {
-					"name": "intent_type",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": true
-				},
-				"data": {
-					"name": "data",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": true
-				},
-				"created_at": {
-					"name": "created_at",
-					"type": "integer",
-					"primaryKey": false,
-					"notNull": true
-				}
-			},
-			"indexes": {},
-			"foreignKeys": {},
-			"compositePrimaryKeys": {},
-			"uniqueConstraints": {},
-			"policies": {},
-			"checkConstraints": {},
-			"isRLSEnabled": false
-		}
-	},
-	"enums": {},
-	"schemas": {},
-	"sequences": {},
-	"roles": {},
-	"policies": {},
-	"views": {},
-	"_meta": {
-		"columns": {},
-		"schemas": {},
-		"tables": {}
-	}
+  "id": "9f78f425-71cd-4f66-b756-5c8433118a62",
+  "prevId": "acb031ae-9317-47af-b9af-c685b7c17bda",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.fill_transactions": {
+      "name": "fill_transactions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "output_hash": {
+          "name": "output_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tx_hash": {
+          "name": "tx_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "fill_transactions_output_hash_unique": {
+          "name": "fill_transactions_output_hash_unique",
+          "nullsNotDistinct": false,
+          "columns": ["output_hash"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.intents": {
+      "name": "intents",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "intent_type": {
+          "name": "intent_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "data": {
+          "name": "data",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
 }

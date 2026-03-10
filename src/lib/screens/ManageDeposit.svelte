@@ -52,7 +52,12 @@
       allowance = 0n;
       return;
     }
-    store.allowances[token.chainId][token.address].then((a) => {
+    const allowancePromise = store.allowances[token.chainId]?.[token.address];
+    if (!allowancePromise) {
+      allowance = 0n;
+      return;
+    }
+    allowancePromise.then((a) => {
       allowance = a;
     });
   });

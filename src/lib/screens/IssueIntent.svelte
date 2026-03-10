@@ -89,7 +89,12 @@
     }
     for (let i = 0; i < store.inputTokens.length; ++i) {
       const { token, amount } = store.inputTokens[i];
-      store.allowances[token.chainId][token.address].then((a) => {
+      const allowancePromise = store.allowances[token.chainId]?.[token.address];
+      if (!allowancePromise) {
+        allowanceCheck = false;
+        continue;
+      }
+      allowancePromise.then((a) => {
         allowanceCheck = allowanceCheck && a >= amount;
       });
     }
@@ -103,7 +108,12 @@
     }
     for (let i = 0; i < store.inputTokens.length; ++i) {
       const { token, amount } = store.inputTokens[i];
-      store.balances[token.chainId][token.address].then((b) => {
+      const balancePromise = store.balances[token.chainId]?.[token.address];
+      if (!balancePromise) {
+        balanceCheckWallet = false;
+        continue;
+      }
+      balancePromise.then((b) => {
         balanceCheckWallet = balanceCheckWallet && b >= amount;
       });
     }
@@ -117,7 +127,12 @@
     }
     for (let i = 0; i < store.inputTokens.length; ++i) {
       const { token, amount } = store.inputTokens[i];
-      store.compactBalances[token.chainId][token.address].then((b) => {
+      const compactBalancePromise = store.compactBalances[token.chainId]?.[token.address];
+      if (!compactBalancePromise) {
+        balanceCheckCompact = false;
+        continue;
+      }
+      compactBalancePromise.then((b) => {
         balanceCheckCompact = balanceCheckCompact && b >= amount;
       });
     }

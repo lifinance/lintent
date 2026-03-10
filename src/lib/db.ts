@@ -10,7 +10,7 @@ let initDbPromise: Promise<ReturnType<typeof drizzle> | undefined> | null = null
 
 async function migrateDb(instance: ReturnType<typeof drizzle>) {
   // dialect and session will appear to not exist...but they do on the pglite drizzle instance
-  // @ts-ignore
+  // @ts-expect-error pglite drizzle exposes migrate internals not present in the public type
   await instance.dialect.migrate(migrations, instance.session, {
     migrationsTable: "drizzle_migrations"
   } satisfies Omit<MigrationConfig, "migrationsFolder">);
@@ -26,11 +26,12 @@ export async function initDb() {
     const pglite = new PGlite("idb://orders");
 
     // Create a Drizzle instance over the opened SQLite-compatible database
-    db = drizzle(pglite);
+    const instance = drizzle(pglite);
 
     // Run migrations so tables are created on first load
-    await migrateDb(db);
+    await migrateDb(instance);
 
+    db = instance;
     return db;
   })().catch((error) => {
     initDbPromise = null;

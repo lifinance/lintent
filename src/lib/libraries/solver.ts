@@ -53,6 +53,7 @@ export class Solver {
 		args: {
 			orderContainer: OrderContainer;
 			outputs: MandateOutput[];
+			solverBytes32?: `0x${string}`; // override default addressToBytes32(account())
 		},
 		opts: {
 			preHook?: (chainId: number) => Promise<any>;
@@ -64,7 +65,8 @@ export class Solver {
 			const { preHook, postHook, account } = opts;
 			const {
 				orderContainer: { order, inputSettler },
-				outputs
+				outputs,
+				solverBytes32
 			} = args;
 			const orderId = orderToIntent({ order, inputSettler }).orderId();
 
@@ -122,7 +124,7 @@ export class Solver {
 				value,
 				abi: COIN_FILLER_ABI,
 				functionName: "fillOrderOutputs",
-				args: [orderId, outputs, order.fillDeadline, addressToBytes32(account())]
+				args: [orderId, outputs, order.fillDeadline, solverBytes32 ?? addressToBytes32(account())]
 			});
 			const fillReceipt = await getClient(outputChain.id).waitForTransactionReceipt({
 				hash: transactionHash

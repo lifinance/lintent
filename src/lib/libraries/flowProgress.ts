@@ -5,24 +5,27 @@ import {
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
-	getClient
+	getClient,
+	solanaDevnetConnection
 } from "$lib/config";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COMPACT_ABI } from "$lib/abi/compact";
-import { hashStruct, keccak256 } from "viem";
+import { hashStruct, keccak256, parseEventLogs } from "viem";
 import { compactTypes } from "@lifi/intent";
 import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
 import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
 import { orderToIntent } from "@lifi/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
+import { deriveAttestationPda } from "$lib/libraries/solanaValidateLib";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import store from "$lib/state.svelte";
 
 const PROGRESS_TTL_MS = 30_000;
 const OrderStatus_Claimed = 2;
 const OrderStatus_Refunded = 3;
+const SOLANA_DEVNET_CHAIN_ID = 1151111081099712n;
 
 export type FlowCheckState = {
 	allFilled: boolean;
@@ -91,6 +94,52 @@ async function isOutputValidatedOnChain(
 		store
 			.saveTransactionReceipt(output.chainId, fillTransactionHash, receipt)
 			.catch((error) => console.warn("saveTransactionReceipt error", error));
+	}
+
+	if (inputChain === SOLANA_DEVNET_CHAIN_ID) {
+		return getOrFetchRpc(
+			`progress:solana-proven:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`,
+			async () => {
+				const outputClient = getClient(output.chainId);
+				const logs = parseEventLogs({
+					abi: COIN_FILLER_ABI,
+					eventName: "OutputFilled",
+					logs: (receipt as { logs: unknown[] }).logs
+				});
+				const expectedHash = hashStruct({
+					types: compactTypes,
+					primaryType: "MandateOutput",
+					data: output
+				});
+				const matchingLog = logs.find((log) => {
+					const logOutputHash = hashStruct({
+						types: compactTypes,
+						primaryType: "MandateOutput",
+						data: log.args.output
+					});
+					return logOutputHash === expectedHash;
+				});
+				if (!matchingLog) return false;
+				const solverBytes32 = matchingLog.args.solver as `0x${string}`;
+				const fillTimestamp =
+					typeof matchingLog.args.timestamp === "number"
+						? matchingLog.args.timestamp
+						: Number(matchingLog.args.timestamp);
+				const attestationPda = await deriveAttestationPda({
+					evmChainId: output.chainId,
+					output,
+					proofOutput: matchingLog.args.output as MandateOutput,
+					orderId,
+					fillTimestamp,
+					solverBytes32,
+					emittingContract: matchingLog.address as `0x${string}`
+				});
+				const { PublicKey } = await import("@solana/web3.js");
+				const info = await solanaDevnetConnection.getAccountInfo(new PublicKey(attestationPda));
+				return info !== null;
+			},
+			{ ttlMs: PROGRESS_TTL_MS }
+		);
 	}
 
 	const block = await getOrFetchRpc(

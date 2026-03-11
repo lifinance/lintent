@@ -1,0 +1,392 @@
+{
+	"address": "C2rAFLS6xQ78t18rK5s9madY9fztbhTaHwShgYtzonk7",
+	"metadata": {
+		"name": "polymer",
+		"version": "0.0.0",
+		"spec": "0.1.0"
+	},
+	"instructions": [
+		{
+			"name": "initialize",
+			"docs": [
+				"Initializes the `Polymer` program. Creates \"Polymer\" PDA and sets the `polymer_prover_id`.",
+				"\"Polymer\" PDA is used sign and attest for the messages received."
+			],
+			"discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+			"accounts": [
+				{
+					"name": "deployer",
+					"writable": true,
+					"signer": true
+				},
+				{
+					"name": "chain_id"
+				},
+				{
+					"name": "oracle_polymer",
+					"writable": true,
+					"pda": {
+						"seeds": [
+							{
+								"kind": "const",
+								"value": [112, 111, 108, 121, 109, 101, 114]
+							}
+						]
+					}
+				},
+				{
+					"name": "intents_protocol_program",
+					"address": "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz"
+				},
+				{
+					"name": "system_program",
+					"address": "11111111111111111111111111111111"
+				}
+			],
+			"args": [
+				{
+					"name": "polymer_prover_id",
+					"type": "pubkey"
+				}
+			]
+		},
+		{
+			"name": "receive",
+			"docs": [
+				"Receive attestation proofs of output settlers from a remote oracle and register them",
+				"locally by creating attestation accounts."
+			],
+			"discriminator": [86, 17, 255, 171, 17, 17, 187, 219],
+			"accounts": [
+				{
+					"name": "signer",
+					"writable": true,
+					"signer": true
+				},
+				{
+					"name": "oracle_polymer",
+					"pda": {
+						"seeds": [
+							{
+								"kind": "const",
+								"value": [112, 111, 108, 121, 109, 101, 114]
+							}
+						]
+					}
+				},
+				{
+					"name": "polymer_prover_program"
+				},
+				{
+					"name": "chain_mapping"
+				},
+				{
+					"name": "cache_account",
+					"docs": ["This is the same PDA that was automatically created during load_proof"],
+					"writable": true
+				},
+				{
+					"name": "internal",
+					"writable": true
+				},
+				{
+					"name": "result_account",
+					"writable": true
+				},
+				{
+					"name": "intents_protocol_program",
+					"address": "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz"
+				},
+				{
+					"name": "system_program",
+					"address": "11111111111111111111111111111111"
+				}
+			],
+			"args": [
+				{
+					"name": "proofs",
+					"type": {
+						"vec": "bytes"
+					}
+				}
+			]
+		},
+		{
+			"name": "set_chain_mapping",
+			"docs": [
+				"Configure the `protocol_chain_id` that corresponds to the given Polymer chain identifier.",
+				"chain_id is the real chain identifier used by the oracle implementation.",
+				"Can only be called by the owner of the PolymerOracle.",
+				"Each mapping may only be set once."
+			],
+			"discriminator": [174, 145, 44, 171, 203, 101, 230, 130],
+			"accounts": [
+				{
+					"name": "signer",
+					"writable": true,
+					"signer": true
+				},
+				{
+					"name": "oracle_polymer",
+					"pda": {
+						"seeds": [
+							{
+								"kind": "const",
+								"value": [112, 111, 108, 121, 109, 101, 114]
+							}
+						]
+					}
+				},
+				{
+					"name": "chain_mapping",
+					"writable": true
+				},
+				{
+					"name": "intents_protocol_program",
+					"address": "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz"
+				},
+				{
+					"name": "system_program",
+					"address": "11111111111111111111111111111111"
+				}
+			],
+			"args": [
+				{
+					"name": "protocol_chain_id",
+					"type": "u128"
+				},
+				{
+					"name": "chain_id",
+					"type": "u128"
+				}
+			]
+		},
+		{
+			"name": "submit",
+			"docs": [
+				"Checks the fill descriptions and the local attestations.",
+				"Emits log in the form of `Prove: program: {0x...}, Application: {0x...}, PayloadHash: {0x...}`."
+			],
+			"discriminator": [88, 166, 102, 181, 162, 127, 170, 48],
+			"accounts": [
+				{
+					"name": "submitter",
+					"writable": true,
+					"signer": true
+				},
+				{
+					"name": "oracle_polymer",
+					"pda": {
+						"seeds": [
+							{
+								"kind": "const",
+								"value": [112, 111, 108, 121, 109, 101, 114]
+							}
+						]
+					}
+				},
+				{
+					"name": "intents_protocol_program",
+					"address": "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz"
+				}
+			],
+			"args": [
+				{
+					"name": "source",
+					"type": "pubkey"
+				},
+				{
+					"name": "fill_descriptions",
+					"type": {
+						"vec": "bytes"
+					}
+				}
+			]
+		}
+	],
+	"accounts": [
+		{
+			"name": "ChainId",
+			"discriminator": [203, 146, 201, 161, 230, 71, 157, 218]
+		},
+		{
+			"name": "ChainMapping",
+			"discriminator": [81, 78, 77, 209, 44, 206, 85, 169]
+		},
+		{
+			"name": "OraclePolymer",
+			"discriminator": [30, 219, 153, 176, 126, 163, 80, 138]
+		}
+	],
+	"errors": [
+		{
+			"code": 6000,
+			"name": "InvalidChainId",
+			"msg": "Invalid chain id"
+		},
+		{
+			"code": 6001,
+			"name": "InvalidProof",
+			"msg": "Invalid proof"
+		},
+		{
+			"code": 6002,
+			"name": "Unauthorized",
+			"msg": "Unauthorized mapping creation"
+		},
+		{
+			"code": 6003,
+			"name": "CouldNotDecodeSolver",
+			"msg": "Could not decode solver"
+		},
+		{
+			"code": 6004,
+			"name": "CouldNotDecodeTimestamp",
+			"msg": "Could not decode timestamp"
+		},
+		{
+			"code": 6005,
+			"name": "CouldNotDecodeMandateOutputFieldsTuple",
+			"msg": "Could not decode mandate output fields tuple"
+		},
+		{
+			"code": 6006,
+			"name": "CouldNotDecodeOracle",
+			"msg": "Could not decode oracle"
+		},
+		{
+			"code": 6007,
+			"name": "CouldNotDecodeSettler",
+			"msg": "Could not decode settler"
+		},
+		{
+			"code": 6008,
+			"name": "CouldNotDecodeChainId",
+			"msg": "Could not decode chain id"
+		},
+		{
+			"code": 6009,
+			"name": "CouldNotDecodeToken",
+			"msg": "Could not decode token"
+		},
+		{
+			"code": 6010,
+			"name": "CouldNotDecodeAmount",
+			"msg": "Could not decode amount"
+		},
+		{
+			"code": 6011,
+			"name": "CouldNotDecodeRecipient",
+			"msg": "Could not decode recipient"
+		},
+		{
+			"code": 6012,
+			"name": "CouldNotDecodeCallbackData",
+			"msg": "Could not decode callback data"
+		},
+		{
+			"code": 6013,
+			"name": "CouldNotDecodeContext",
+			"msg": "Could not decode context"
+		},
+		{
+			"code": 6014,
+			"name": "CouldNotDecodeFinalAmount",
+			"msg": "Could not decode final amount"
+		},
+		{
+			"code": 6015,
+			"name": "CouldNotConvertU256ToU64",
+			"msg": "Could not convert u128 to u64"
+		},
+		{
+			"code": 6016,
+			"name": "CouldNotConvertU256ToU128",
+			"msg": "Could not convert u256 to u128"
+		},
+		{
+			"code": 6017,
+			"name": "CouldNotConvertU256ToU32",
+			"msg": "Could not convert u256 to u32"
+		},
+		{
+			"code": 6018,
+			"name": "NoAttestationsProvided",
+			"msg": "No attestations provided"
+		},
+		{
+			"code": 6019,
+			"name": "NotCorrectEncodedTypes",
+			"msg": "Not correct encoded types"
+		}
+	],
+	"types": [
+		{
+			"name": "ChainId",
+			"docs": ["Type used to store the chain id of the chain."],
+			"type": {
+				"kind": "struct",
+				"fields": [
+					{
+						"name": "chain_id",
+						"type": "u128"
+					},
+					{
+						"name": "bump",
+						"type": "u8"
+					}
+				]
+			}
+		},
+		{
+			"name": "ChainMapping",
+			"docs": [
+				"Type used to map a protocol chain id to a real chain id.",
+				"The protocol chain id is given as seed."
+			],
+			"type": {
+				"kind": "struct",
+				"fields": [
+					{
+						"name": "chain_id",
+						"type": "u128"
+					},
+					{
+						"name": "bump",
+						"type": "u8"
+					}
+				]
+			}
+		},
+		{
+			"name": "OraclePolymer",
+			"docs": [
+				"The PDA to be created that will sign the attestations",
+				"`polymer_prover_id` is the program id of the polymer prover program.",
+				"`owner` is the owner of the PolymerOracle. The only address to create mappings.",
+				"`bump` is the bump of this account to be reused."
+			],
+			"type": {
+				"kind": "struct",
+				"fields": [
+					{
+						"name": "polymer_prover_id",
+						"type": "pubkey"
+					},
+					{
+						"name": "owner",
+						"type": "pubkey"
+					},
+					{
+						"name": "chain_id",
+						"type": "u128"
+					},
+					{
+						"name": "bump",
+						"type": "u8"
+					}
+				]
+			}
+		}
+	]
+}

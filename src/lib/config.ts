@@ -51,6 +51,7 @@ const solanaMainnet = defineChain({
 
 const _solanaDevnetConn = new Connection("https://api.devnet.solana.com", "confirmed");
 const _solanaMainnetConn = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+export const solanaDevnetConnection = _solanaDevnetConn;
 
 export function getSolanaConnection(chainId: number | bigint): Connection {
 	return Number(chainId) === solanaMainnet.id ? _solanaMainnetConn : _solanaDevnetConn;

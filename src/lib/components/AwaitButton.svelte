@@ -5,6 +5,7 @@
 		name,
 		awaiting,
 		buttonFunction,
+		disabled = false,
 		size = "md",
 		variant = "default",
 		fullWidth = false,
@@ -15,6 +16,7 @@
 		name: Snippet;
 		awaiting: Snippet;
 		buttonFunction: () => Promise<unknown>;
+		disabled?: boolean;
 		size?: "sm" | "md";
 		variant?: "default" | "success" | "warning" | "muted";
 		fullWidth?: boolean;
@@ -48,6 +50,7 @@
 	];
 	let buttonPromise: Promise<unknown> | undefined = $state();
 	const run = () => {
+		if (disabled) return;
 		buttonPromise = buttonFunction().catch((error) => {
 			console.error("AwaitButton action failed", error);
 			throw error;
@@ -67,7 +70,10 @@
 	<button
 		onclick={run}
 		type="button"
-		class={[...defaultBase, ...baseClass, ...defaultHover, ...hoverClass]}
+		class={disabled
+			? [...defaultBase, ...baseClass, ...defaultLazy, ...lazyClass]
+			: [...defaultBase, ...baseClass, ...defaultHover, ...hoverClass]}
+		{disabled}
 	>
 		{@render name()}
 	</button>
@@ -75,7 +81,10 @@
 	<button
 		onclick={run}
 		type="button"
-		class={[...defaultBase, ...baseClass, ...defaultHover, ...hoverClass]}
+		class={disabled
+			? [...defaultBase, ...baseClass, ...defaultLazy, ...lazyClass]
+			: [...defaultBase, ...baseClass, ...defaultHover, ...hoverClass]}
+		{disabled}
 	>
 		{@render name()}
 	</button>

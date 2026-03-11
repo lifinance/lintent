@@ -18,14 +18,21 @@ import type {
 	NoSignature,
 	OrderContainer,
 	Signature,
-	StandardOrder
+	StandardOrder,
+	SolanaStandardOrder
 } from "@lifi/intent";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { Intent, IntentApi, SolanaIntent, solanaOrderToStandardOrder } from "@lifi/intent";
+import {
+	Intent,
+	IntentApi,
+	SolanaStandardOrderIntent,
+	StandardOrderIntent,
+	MultichainOrderIntent
+} from "@lifi/intent";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
-import { intentDeps, solanaDeps } from "./coreDeps";
+import { intentDeps } from "./coreDeps";
 import { solanaAddressToBytes32 } from "$lib/utils/solana";
 import { openSolanaEscrow } from "./solanaEscrowLib";
 
@@ -103,7 +110,7 @@ export class IntentFactory {
 	}
 
 	private saveOrder(options: {
-		order: StandardOrder | MultichainOrder;
+		order: StandardOrder | SolanaStandardOrder | MultichainOrder;
 		inputSettler: `0x${string}`;
 		sponsorSignature?: Signature | NoSignature;
 		allocatorSignature?: Signature | NoSignature;
@@ -131,7 +138,9 @@ export class IntentFactory {
 			const { account, inputTokens } = opts;
 			const inputChain = inputTokens[0].token.chainId;
 			if (this.preHook) await this.preHook(inputChain);
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
+			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order() as
+				| StandardOrderIntent
+				| MultichainOrderIntent;
 
 			const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
 
@@ -169,7 +178,10 @@ export class IntentFactory {
 	compactDepositAndRegister(opts: AppCreateIntentOptions) {
 		return async () => {
 			const { inputTokens, account } = opts;
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).singlechain();
+			const intent = new Intent(
+				toCoreCreateIntentOptions(opts),
+				intentDeps
+			).singlechain() as StandardOrderIntent;
 
 			if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
@@ -212,31 +224,42 @@ export class IntentFactory {
 				if (!solanaWallet.adapter || !solanaWallet.publicKey) {
 					throw new Error("Solana wallet not connected");
 				}
-				const solanaOrderIntent = new SolanaIntent(
+				// outputRecipient: Solana recipient for Solana outputs, EVM wallet for EVM outputs
+				const outputRecipient = opts.outputRecipient ?? account();
+				const solanaOrderIntent = new Intent(
 					{
-						account: solanaAddressToBytes32(solanaWallet.publicKey),
-						inputToken: toCoreTokenContext(inputTokens[0]),
+						exclusiveFor: opts.exclusiveFor,
+						inputTokens: [toCoreTokenContext(inputTokens[0])],
 						outputTokens: outputTokens.map(toCoreTokenContext),
 						verifier: opts.verifier,
-						exclusiveFor: opts.exclusiveFor
-					},
-					solanaDeps
-				).order();
+						account: solanaAddressToBytes32(solanaWallet.publicKey),
+						outputRecipient,
+						lock: { type: "solanaEscrow" }
+					} as any, // CreateIntentOptions doesn't expose solanaEscrow lock type
+					intentDeps
+				).singlechain() as SolanaStandardOrderIntent;
+				// fillDeadline must be strictly < expires (Solana program requirement)
+				const solanaOrder = {
+					...solanaOrderIntent.asOrder(),
+					fillDeadline: solanaOrderIntent.asOrder().expires - 1
+				};
 				transactionHashes = [
 					await openSolanaEscrow({
-						order: solanaOrderIntent.asOrder(),
+						order: solanaOrder,
 						solanaPublicKey: solanaWallet.publicKey,
 						walletAdapter: solanaWallet.adapter,
 						connection: solanaDevnetConnection
 					})
 				];
 				this.saveOrder({
-					order: solanaOrderToStandardOrder(solanaOrderIntent.asOrder()),
+					order: solanaOrder,
 					inputSettler: solanaAddressToBytes32(SOLANA_INPUT_SETTLER_ESCROW)
 				});
 			} else {
 				if (this.preHook) await this.preHook(inputChain);
-				const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
+				const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order() as
+					| StandardOrderIntent
+					| MultichainOrderIntent;
 				transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
 				this.saveOrder({
 					order: intent.asOrder(),

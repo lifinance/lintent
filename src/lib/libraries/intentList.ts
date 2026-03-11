@@ -9,7 +9,12 @@ import {
 } from "../config";
 import { orderToIntent } from "@lifi/intent";
 import { bytes32ToAddress, idToToken } from "@lifi/intent";
-import type { OrderContainer, StandardOrder, MultichainOrder } from "@lifi/intent";
+import type {
+	OrderContainer,
+	StandardOrder,
+	SolanaStandardOrder,
+	MultichainOrder
+} from "@lifi/intent";
 import { validateOrderContainerWithReason } from "@lifi/intent";
 import { orderValidationDeps } from "./coreDeps";
 
@@ -95,8 +100,17 @@ function summarizeOutput(chainId: bigint, token: `0x${string}`, amount: bigint):
 	return `${amountText} ${coin.name.toUpperCase()} on ${chainName}`;
 }
 
-function getInputs(order: StandardOrder | MultichainOrder) {
+function getInputs(order: StandardOrder | SolanaStandardOrder | MultichainOrder) {
 	if ("originChainId" in order) {
+		if ("input" in order) {
+			// SolanaStandardOrder — single input with bytes32 token address
+			return [
+				{
+					key: `s-0-${order.input.token}`,
+					text: summarizeOutput(order.originChainId, order.input.token, order.input.amount)
+				}
+			];
+		}
 		return order.inputs.map((input, index) => ({
 			key: `s-${index}-${input[0].toString()}`,
 			text: summarizeInput(order.originChainId, input[0], input[1])
@@ -109,14 +123,14 @@ function getInputs(order: StandardOrder | MultichainOrder) {
 	}));
 }
 
-function getOutputs(order: StandardOrder | MultichainOrder) {
+function getOutputs(order: StandardOrder | SolanaStandardOrder | MultichainOrder) {
 	return order.outputs.map((output, index) => ({
 		key: `o-${index}-${output.token}`,
 		text: summarizeOutput(output.chainId, output.token, output.amount)
 	}));
 }
 
-function getChainScope(order: StandardOrder | MultichainOrder): ChainScope {
+function getChainScope(order: StandardOrder | SolanaStandardOrder | MultichainOrder): ChainScope {
 	if (!("originChainId" in order)) return "multichain";
 	const isSameChain = order.outputs.every((output) => output.chainId === order.originChainId);
 	return isSameChain ? "samechain" : "singlechain";

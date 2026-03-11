@@ -6,7 +6,7 @@ import axios from "axios";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { orderToIntent } from "@lifi/intent";
+import { orderToIntent, StandardOrderIntent, MultichainOrderIntent } from "@lifi/intent";
 import { compactTypes } from "@lifi/intent";
 import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
@@ -313,7 +313,7 @@ export class Solver {
 			const intent = orderToIntent({
 				inputSettler,
 				order
-			});
+			}) as StandardOrderIntent | MultichainOrderIntent;
 			if (fillTransactionHashes.length !== order.outputs.length) {
 				throw new Error(
 					`Fill transaction hash count (${fillTransactionHashes.length}) does not match output count (${order.outputs.length}).`

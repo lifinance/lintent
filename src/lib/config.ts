@@ -388,6 +388,8 @@ export function getCoin(
 		// check chain first.
 		if (token.chainId === chainId) {
 			if (name === undefined) {
+				// Exact match first (handles full bytes32 Solana token addresses)
+				if (address?.toLowerCase() === token.address.toLowerCase()) return token;
 				if (concatedAddress?.toLowerCase() === token.address.toLowerCase()) return token;
 			}
 			if (name?.toLowerCase() === token.name.toLowerCase()) return token;

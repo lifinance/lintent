@@ -7,7 +7,7 @@ import {
 	SOLANA_OUTPUT_SETTLER_PDA,
 	WORMHOLE_ORACLE
 } from "$lib/config";
-import type { IntentDeps, OrderContainerValidationDeps, SolanaIntentDeps } from "@lifi/intent";
+import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
 
 function isNonZeroAddress(value: string | undefined): value is `0x${string}` {
 	return !!value && value.toLowerCase() !== "0x0000000000000000000000000000000000000000";
@@ -27,11 +27,6 @@ export const intentDeps: IntentDeps = {
 		if (chainId === BigInt(chainMap.solanaDevnet.id)) return SOLANA_OUTPUT_SETTLER_PDA;
 		return undefined;
 	}
-};
-
-export const solanaDeps: SolanaIntentDeps = {
-	inputOracle: POLYMER_ORACLE[chainMap.solanaDevnet.id]!,
-	getOracle: intentDeps.getOracle
 };
 
 export const orderValidationDeps: OrderContainerValidationDeps = {
@@ -60,6 +55,6 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
 		return allowed;
 	},
 	allowedOutputSettlers() {
-		return [COIN_FILLER];
+		return [COIN_FILLER, SOLANA_OUTPUT_SETTLER_PDA];
 	}
 };

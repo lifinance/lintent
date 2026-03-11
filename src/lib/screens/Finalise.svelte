@@ -45,6 +45,7 @@
 	const getInputsForChain = (container: OrderContainer, inputChain: bigint): [bigint, bigint][] => {
 		const { order } = container;
 		if ("originChainId" in order) {
+			if (!("inputs" in order)) return []; // SolanaStandardOrder — no [bigint, bigint][] inputs
 			return order.originChainId === inputChain ? order.inputs : [];
 		}
 		return order.inputs.find((chainInput) => chainInput.chainId === inputChain)?.inputs ?? [];
@@ -109,7 +110,12 @@
 			inputSettler === MULTICHAIN_INPUT_SETTLER_COMPACT
 		) {
 			// Check claim status
-			const flattenedInputs = "originChainId" in order ? order.inputs : order.inputs[0]?.inputs;
+			const flattenedInputs =
+				"originChainId" in order && "inputs" in order
+					? order.inputs
+					: "inputs" in order
+						? order.inputs[0]?.inputs
+						: [];
 			if (!flattenedInputs || flattenedInputs.length === 0) return false;
 
 			const [token, allocator, resetPeriod, scope] = await inputChainClient.readContract({

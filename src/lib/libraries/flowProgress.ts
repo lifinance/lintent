@@ -26,6 +26,7 @@ import store from "$lib/state.svelte";
 const PROGRESS_TTL_MS = 30_000;
 const OrderStatus_Claimed = 2;
 const OrderStatus_Refunded = 3;
+const SOLANA_DEVNET_CHAIN_ID = 1151111081099712n;
 
 export type FlowCheckState = {
 	allFilled: boolean;

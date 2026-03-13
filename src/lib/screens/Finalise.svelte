@@ -332,7 +332,12 @@
 									Await fills
 								</button>
 							{:else if isSolanaChain(inputChain)}
-								<AwaitButton buttonFunction={solanaClaimFn(orderContainer)}>
+								<AwaitButton
+									buttonFunction={async () => {
+										await solanaClaimFn(orderContainer)();
+										await postHookRefreshValidate();
+									}}
+								>
 									{#snippet name()}
 										Claim
 									{/snippet}

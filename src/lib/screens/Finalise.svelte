@@ -99,13 +99,14 @@
 	async function isClaimed(chainId: bigint, container: OrderContainer, _: any) {
 		const { order, inputSettler } = container;
 
-		// Solana→EVM: order_context PDA is closed after finalise
+		// Solana→EVM: order_context PDA is closed after finalise.
+		// Derive the PDA via the canonical borsh encoding (matching the open instruction).
 		if (isSolanaChain(chainId)) {
 			const { PublicKey } = await import("@solana/web3.js");
 			const conn = getSolanaConnection(chainId);
-			const orderContextPda = await deriveOrderContextPda(order as SolanaStandardOrder, conn);
+			const orderContextPda = await deriveOrderContextPda(order as SolanaStandardOrder);
 			const info = await conn.getAccountInfo(new PublicKey(orderContextPda));
-			return info === null; // null = closed = finalised
+			return info === null;
 		}
 
 		const inputChainClient = getClient(chainId);

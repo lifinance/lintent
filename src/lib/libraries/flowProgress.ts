@@ -19,10 +19,14 @@ import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
 import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
 import { orderToIntent } from "@lifi/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
-import { deriveAttestationPda } from "$lib/libraries/solanaValidateLib";
+import {
+	deriveAttestationPda,
+	encodeCommonPayload,
+	encodeFillDescription
+} from "$lib/libraries/solanaValidateLib";
 import { isSolanaSubmittedFillRecord } from "$lib/libraries/solanaFillLib";
-import { encodeCommonPayload, encodeFillDescription } from "$lib/libraries/solanaValidateLib";
-import type { MandateOutput, OrderContainer } from "@lifi/intent";
+import { deriveOrderContextPda } from "$lib/libraries/solanaFinaliseLib";
+import type { MandateOutput, OrderContainer, SolanaStandardOrder } from "@lifi/intent";
 import store from "$lib/state.svelte";
 
 const PROGRESS_TTL_MS = 30_000;
@@ -211,9 +215,24 @@ async function isOutputValidatedOnChain(
 
 async function isInputChainFinalised(chainId: bigint, container: OrderContainer) {
 	const { order, inputSettler } = container;
-	const inputChainClient = getClient(chainId);
 	const intent = orderToIntent(container);
 	const orderId = intent.orderId();
+
+	if (isSolanaChain(chainId)) {
+		return getOrFetchRpc(
+			`progress:finalised:solana:${orderId}:${chainId.toString()}`,
+			async () => {
+				const { PublicKey } = await import("@solana/web3.js");
+				const conn = getSolanaConnection(chainId);
+				const pdaBase58 = await deriveOrderContextPda(order as SolanaStandardOrder);
+				const info = await conn.getAccountInfo(new PublicKey(pdaBase58));
+				return info === null;
+			},
+			{ ttlMs: PROGRESS_TTL_MS }
+		);
+	}
+
+	const inputChainClient = getClient(chainId);
 
 	if (
 		inputSettler === INPUT_SETTLER_ESCROW_LIFI ||

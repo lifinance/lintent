@@ -154,7 +154,12 @@ async function isInputChainFinalised(chainId: bigint, container: OrderContainer)
 		inputSettler === INPUT_SETTLER_COMPACT_LIFI ||
 		inputSettler === MULTICHAIN_INPUT_SETTLER_COMPACT
 	) {
-		const flattenedInputs = "originChainId" in order ? order.inputs : order.inputs[0]?.inputs;
+		const flattenedInputs =
+			"originChainId" in order && "inputs" in order
+				? order.inputs
+				: "inputs" in order
+					? order.inputs[0]?.inputs
+					: [];
 		if (!flattenedInputs || flattenedInputs.length === 0) return false;
 
 		return getOrFetchRpc(

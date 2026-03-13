@@ -1,8 +1,10 @@
 import {
+	chainMap,
 	COIN_FILLER,
 	INPUT_SETTLER_COMPACT_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
 	POLYMER_ORACLE,
+	SOLANA_PDAS,
 	WORMHOLE_ORACLE
 } from "$lib/config";
 import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
@@ -19,6 +21,11 @@ export const intentDeps: IntentDeps = {
 		if (verifier === "wormhole") {
 			return WORMHOLE_ORACLE[key];
 		}
+		return undefined;
+	},
+	getSettler(chainId) {
+		if (chainId === BigInt(chainMap.solanaDevnet.id)) return SOLANA_PDAS.devnet.OUTPUT_SETTLER;
+		if (chainId === BigInt(chainMap.solanaMainnet.id)) return SOLANA_PDAS.mainnet.OUTPUT_SETTLER;
 		return undefined;
 	}
 };
@@ -49,6 +56,6 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
 		return allowed;
 	},
 	allowedOutputSettlers() {
-		return [COIN_FILLER];
+		return [COIN_FILLER, SOLANA_PDAS.devnet.OUTPUT_SETTLER, SOLANA_PDAS.mainnet.OUTPUT_SETTLER];
 	}
 };

@@ -23,7 +23,7 @@ export async function initDb() {
 
 	initDbPromise = (async () => {
 		// Open a PGLite database; this will persist to IndexedDB in the browser
-		const pglite = new PGlite("idb://orders");
+		const pglite = new PGlite("idb://orders-v2");
 
 		// Create a Drizzle instance over the opened SQLite-compatible database
 		db = drizzle(pglite);

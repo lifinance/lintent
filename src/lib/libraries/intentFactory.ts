@@ -1,11 +1,15 @@
 import {
 	getChain,
 	getClient,
+	getSolanaConnection,
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
+	isSolanaChain,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
+	SOLANA_INPUT_SETTLER_ESCROW,
 	type WC
 } from "$lib/config";
+import solanaWallet from "$lib/utils/solana-wallet.svelte";
 import { maxUint256 } from "viem";
 import type {
 	CreateIntentOptions,
@@ -14,15 +18,23 @@ import type {
 	NoSignature,
 	OrderContainer,
 	Signature,
-	StandardOrder
+	StandardOrder,
+	SolanaStandardOrder
 } from "@lifi/intent";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { Intent } from "@lifi/intent";
-import { IntentApi } from "@lifi/intent";
+import {
+	Intent,
+	IntentApi,
+	SolanaStandardOrderIntent,
+	StandardOrderIntent,
+	MultichainOrderIntent
+} from "@lifi/intent";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
 import { intentDeps } from "./coreDeps";
+import { solanaAddressToBytes32 } from "$lib/utils/solana";
+import { openSolanaEscrow } from "./solanaEscrowLib";
 
 function toCoreTokenContext(input: AppTokenContext): TokenContext {
 	return {
@@ -47,6 +59,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 			account,
 			lock: {
 				type: "compact",
+				chain: "evm",
 				resetPeriod: opts.lock.resetPeriod,
 				allocatorId: opts.lock.allocatorId
 			}
@@ -60,7 +73,8 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 		verifier: opts.verifier,
 		account,
 		lock: {
-			type: "escrow"
+			type: "escrow",
+			chain: "evm"
 		}
 	};
 }
@@ -98,7 +112,7 @@ export class IntentFactory {
 	}
 
 	private saveOrder(options: {
-		order: StandardOrder | MultichainOrder;
+		order: StandardOrder | SolanaStandardOrder | MultichainOrder;
 		inputSettler: `0x${string}`;
 		sponsorSignature?: Signature | NoSignature;
 		allocatorSignature?: Signature | NoSignature;
@@ -126,7 +140,9 @@ export class IntentFactory {
 			const { account, inputTokens } = opts;
 			const inputChain = inputTokens[0].token.chainId;
 			if (this.preHook) await this.preHook(inputChain);
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
+			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order() as
+				| StandardOrderIntent
+				| MultichainOrderIntent;
 
 			const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
 
@@ -164,7 +180,10 @@ export class IntentFactory {
 	compactDepositAndRegister(opts: AppCreateIntentOptions) {
 		return async () => {
 			const { inputTokens, account } = opts;
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).singlechain();
+			const intent = new Intent(
+				toCoreCreateIntentOptions(opts),
+				intentDeps
+			).singlechain() as StandardOrderIntent;
 
 			if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
@@ -198,28 +217,61 @@ export class IntentFactory {
 
 	openIntent(opts: AppCreateIntentOptions) {
 		return async () => {
-			const { inputTokens, account } = opts;
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
-
+			const { inputTokens, outputTokens, account } = opts;
 			const inputChain = inputTokens[0].token.chainId;
-			if (this.preHook) await this.preHook(inputChain);
 
-			// Execute the open.
-			const transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
+			let transactionHashes: string[];
+
+			if (isSolanaChain(inputChain)) {
+				if (!solanaWallet.adapter || !solanaWallet.publicKey) {
+					throw new Error("Solana wallet not connected");
+				}
+				// outputRecipient: Solana recipient for Solana outputs, EVM wallet for EVM outputs
+				const outputRecipient = opts.outputRecipient ?? account();
+				const solanaOrderIntent = new Intent(
+					{
+						exclusiveFor: opts.exclusiveFor,
+						inputTokens: [toCoreTokenContext(inputTokens[0])],
+						outputTokens: outputTokens.map(toCoreTokenContext),
+						verifier: opts.verifier,
+						account: solanaAddressToBytes32(solanaWallet.publicKey),
+						outputRecipient,
+						lock: { type: "escrow", chain: "solana" }
+					},
+					intentDeps
+				).singlechain() as SolanaStandardOrderIntent;
+				// fillDeadline must be strictly < expires (Solana program requirement)
+				const solanaOrder = {
+					...solanaOrderIntent.asOrder(),
+					fillDeadline: solanaOrderIntent.asOrder().expires - 1
+				};
+				transactionHashes = [
+					await openSolanaEscrow({
+						order: solanaOrder,
+						solanaPublicKey: solanaWallet.publicKey,
+						walletAdapter: solanaWallet.adapter,
+						connection: getSolanaConnection(inputChain)
+					})
+				];
+				this.saveOrder({
+					order: solanaOrder,
+					inputSettler: solanaAddressToBytes32(SOLANA_INPUT_SETTLER_ESCROW)
+				});
+			} else {
+				if (this.preHook) await this.preHook(inputChain);
+				const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order() as
+					| StandardOrderIntent
+					| MultichainOrderIntent;
+				transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
+				this.saveOrder({
+					order: intent.asOrder(),
+					inputSettler: store.inputSettler
+				});
+			}
+
 			console.log({ tsh: transactionHashes });
 
-			// for (const hash of transactionHashes) {
-			// 	await clients[inputChain].waitForTransactionReceipt({
-			// 		hash: await hash
-			// 	});
-			// }
-
 			if (this.postHook) await this.postHook();
-
-			this.saveOrder({
-				order: intent.asOrder(),
-				inputSettler: store.inputSettler
-			});
 
 			return transactionHashes;
 		};

@@ -85,6 +85,8 @@
 		const orderId = orderToIntent(orderContainer).orderId();
 		if (autoScrolledOrderId === orderId) return;
 
+		fillStatuses = {};
+
 		const outputs = sortOutputsByChain(orderContainer).flatMap(([, chainOutputs]) => chainOutputs);
 		if (outputs.length === 0) return;
 

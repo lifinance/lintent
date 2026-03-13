@@ -84,6 +84,32 @@ export const POLYMER_ORACLE_ABI = [
 		stateMutability: "nonpayable"
 	},
 	{
+		type: "function",
+		name: "receiveSolanaMessage",
+		inputs: [
+			{
+				name: "proofs",
+				type: "bytes[]",
+				internalType: "bytes[]"
+			}
+		],
+		outputs: [],
+		stateMutability: "nonpayable"
+	},
+	{
+		type: "function",
+		name: "receiveSolanaMessage",
+		inputs: [
+			{
+				name: "proof",
+				type: "bytes",
+				internalType: "bytes"
+			}
+		],
+		outputs: [],
+		stateMutability: "nonpayable"
+	},
+	{
 		type: "event",
 		name: "OutputProven",
 		inputs: [
@@ -126,6 +152,11 @@ export const POLYMER_ORACLE_ABI = [
 	},
 	{
 		type: "error",
+		name: "InvalidSolanaMessage",
+		inputs: []
+	},
+	{
+		type: "error",
 		name: "NotDivisible",
 		inputs: [
 			{
@@ -144,6 +175,27 @@ export const POLYMER_ORACLE_ABI = [
 		type: "error",
 		name: "NotProven",
 		inputs: []
+	},
+	{
+		type: "error",
+		name: "NotSolanaMessage",
+		inputs: []
+	},
+	{
+		type: "error",
+		name: "SolanaProgramIdMismatch",
+		inputs: [
+			{
+				name: "returnedProgramId",
+				type: "bytes32",
+				internalType: "bytes32"
+			},
+			{
+				name: "messageProgramId",
+				type: "bytes32",
+				internalType: "bytes32"
+			}
+		]
 	},
 	{
 		type: "error",

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		chainMap,
 		formatTokenAmount,
 		getChainName,
 		getClient,
@@ -28,7 +29,7 @@
 	import { orderToIntent } from "@lifi/intent";
 	import { compactTypes } from "@lifi/intent";
 
-	const SOLANA_DEVNET_CHAIN_ID = 1151111081099712n;
+	const SOLANA_DEVNET_CHAIN_ID = BigInt(chainMap.solanaDevnet.id);
 
 	// This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 

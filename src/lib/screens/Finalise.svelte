@@ -11,6 +11,7 @@
 	import { finaliseSolanaEscrow, deriveOrderContextPda } from "$lib/libraries/solanaFinaliseLib";
 	import type { MandateOutput, OrderContainer, SolanaStandardOrder } from "@lifi/intent";
 	import {
+		chainMap,
 		COMPACT,
 		formatTokenAmount,
 		getChainName,
@@ -32,7 +33,7 @@
 	import store from "$lib/state.svelte";
 	import { orderToIntent } from "@lifi/intent";
 
-	const SOLANA_DEVNET_CHAIN_ID = 1151111081099712n;
+	const SOLANA_DEVNET_CHAIN_ID = BigInt(chainMap.solanaDevnet.id);
 
 	let {
 		orderContainer,

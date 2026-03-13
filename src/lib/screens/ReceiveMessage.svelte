@@ -30,8 +30,6 @@
 	import { orderToIntent, SolanaStandardOrderIntent } from "@lifi/intent";
 	import { compactTypes } from "@lifi/intent";
 
-	const SOLANA_DEVNET_CHAIN_ID = BigInt(chainMap.solanaDevnet.id);
-
 	// This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 
 	let {

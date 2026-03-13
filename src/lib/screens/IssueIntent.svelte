@@ -4,7 +4,7 @@
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
-	import { POLYMER_ALLOCATOR, chainMap, formatTokenAmount, getChainName } from "$lib/config";
+	import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName, isSolanaChain } from "$lib/config";
 	import { isAddress } from "viem";
 	import { isValidSolanaAddress, solanaAddressToBytes32 } from "$lib/utils/solana";
 	import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
@@ -106,8 +106,8 @@
 		balanceCheckWallet = true;
 		for (let i = 0; i < store.inputTokens.length; ++i) {
 			const { token, amount } = store.inputTokens[i];
-			if (token.chainId === chainMap.solanaDevnet.id) {
-				const solBal = store.solanaBalances.solanaDevnet?.[token.address];
+			if (isSolanaChain(token.chainId)) {
+				const solBal = store.solanaBalances[token.chainId]?.[token.address];
 				if (!solBal) {
 					balanceCheckWallet = false;
 					continue;
@@ -180,13 +180,13 @@
 	});
 
 	const hasEvmOutput = $derived(
-		store.outputTokens.some(({ token }) => token.chainId !== chainMap.solanaDevnet.id)
+		store.outputTokens.some(({ token }) => !isSolanaChain(token.chainId))
 	);
 	const hasSolanaOutput = $derived(
-		store.outputTokens.some(({ token }) => token.chainId === chainMap.solanaDevnet.id)
+		store.outputTokens.some(({ token }) => isSolanaChain(token.chainId))
 	);
 	const hasSolanaInput = $derived(
-		store.inputTokens.some(({ token }) => token.chainId === chainMap.solanaDevnet.id)
+		store.inputTokens.some(({ token }) => isSolanaChain(token.chainId))
 	);
 
 	const evmRecipientValid = $derived(

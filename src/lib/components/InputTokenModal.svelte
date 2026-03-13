@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { chainMap, clients, coinList, getChainName, type Token } from "$lib/config";
+	import { clients, coinList, getChainName, isSolanaChain, type Token } from "$lib/config";
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import InlineMetaField from "$lib/components/ui/InlineMetaField.svelte";
@@ -81,8 +81,7 @@
 	}
 
 	const hasClient = (chainId: number) => (getChainName(chainId) as string) in clients;
-	const isChainAvailable = (chainId: number) =>
-		chainId !== chainMap.solanaDevnet.id || solanaWallet.connected;
+	const isChainAvailable = (chainId: number) => !isSolanaChain(chainId) || solanaWallet.connected;
 
 	const uniqueInputTokens = $derived([
 		...new Set(
@@ -223,7 +222,7 @@
 						<FieldRow columns={rowColumns} striped index={rowIndex}>
 							<div
 								class="truncate text-xs font-medium {evmChain ||
-								(tkn.chainId === chainMap.solanaDevnet.id && chainAvailable)
+								(isSolanaChain(tkn.chainId) && chainAvailable)
 									? 'text-gray-700'
 									: 'text-gray-400'}"
 							>
@@ -249,8 +248,8 @@
 										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{/await}
-							{:else if store.solanaBalances.solanaDevnet?.[tkn.address]}
-								{#await store.solanaBalances.solanaDevnet[tkn.address]}
+							{:else if store.solanaBalances[tkn.chainId]?.[tkn.address]}
+								{#await store.solanaBalances[tkn.chainId]![tkn.address]}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText="..."

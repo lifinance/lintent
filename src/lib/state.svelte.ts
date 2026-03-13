@@ -2,7 +2,6 @@ import type { OrderContainer } from "@lifi/intent";
 import type { AppTokenContext } from "./appTypes";
 import {
 	ALWAYS_OK_ALLOCATOR,
-	chainMap,
 	clientsById,
 	coinList,
 	COMPACT,
@@ -10,7 +9,8 @@ import {
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
-	solanaDevnetConnection,
+	getSolanaConnection,
+	isSolanaChain,
 	type availableAllocators,
 	type Token,
 	type Verifier,
@@ -266,15 +266,16 @@ class Store {
 	solanaBalances = $derived.by(() => {
 		this.refreshEpoch;
 		const account = this.solanaPublicKey || undefined;
-		const resolved: Partial<Record<string, Record<`0x${string}`, Promise<bigint>>>> = {};
+		const resolved: Partial<Record<number, Record<`0x${string}`, Promise<bigint>>>> = {};
 		if (!account) return resolved;
 		for (const token of coinList(this.mainnet)) {
-			if (token.chainId !== chainMap.solanaDevnet.id) continue;
-			if (!resolved.solanaDevnet) resolved.solanaDevnet = {};
-			const key = `balance:${this.mainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${account}`;
-			resolved.solanaDevnet[token.address] = getOrFetchRpc(
+			if (!isSolanaChain(token.chainId)) continue;
+			const cid = token.chainId;
+			if (!resolved[cid]) resolved[cid] = {};
+			const key = `balance:${this.mainnet ? "mainnet" : "testnet"}:${cid}:${token.address}:${account}`;
+			resolved[cid]![token.address] = getOrFetchRpc(
 				key,
-				() => getSolanaBalance(account, token.address, solanaDevnetConnection),
+				() => getSolanaBalance(account, token.address, getSolanaConnection(cid)),
 				{ ttlMs: 30_000 }
 			);
 		}

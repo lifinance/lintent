@@ -1,12 +1,12 @@
 import {
-	chainMap,
 	getChain,
 	getClient,
+	getSolanaConnection,
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
+	isSolanaChain,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
 	SOLANA_INPUT_SETTLER_ESCROW,
-	solanaDevnetConnection,
 	type WC
 } from "$lib/config";
 import solanaWallet from "$lib/utils/solana-wallet.svelte";
@@ -222,7 +222,7 @@ export class IntentFactory {
 
 			let transactionHashes: string[];
 
-			if (inputChain === chainMap.solanaDevnet.id) {
+			if (isSolanaChain(inputChain)) {
 				if (!solanaWallet.adapter || !solanaWallet.publicKey) {
 					throw new Error("Solana wallet not connected");
 				}
@@ -250,7 +250,7 @@ export class IntentFactory {
 						order: solanaOrder,
 						solanaPublicKey: solanaWallet.publicKey,
 						walletAdapter: solanaWallet.adapter,
-						connection: solanaDevnetConnection
+						connection: getSolanaConnection(inputChain)
 					})
 				];
 				this.saveOrder({

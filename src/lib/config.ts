@@ -40,8 +40,6 @@ const solanaDevnet = defineChain({
 	},
 	testnet: true
 });
-export const solanaDevnetConnection = new Connection("https://api.devnet.solana.com", "confirmed");
-
 const solanaMainnet = defineChain({
 	id: 1151111081099710,
 	name: "Solana",
@@ -50,10 +48,18 @@ const solanaMainnet = defineChain({
 		default: { http: ["https://api.mainnet-beta.solana.com"] }
 	}
 });
-export const solanaMainnetConnection = new Connection(
-	"https://api.mainnet-beta.solana.com",
-	"confirmed"
-);
+
+const _solanaDevnetConn = new Connection("https://api.devnet.solana.com", "confirmed");
+const _solanaMainnetConn = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+
+export function getSolanaConnection(chainId: number | bigint): Connection {
+	return Number(chainId) === solanaMainnet.id ? _solanaMainnetConn : _solanaDevnetConn;
+}
+
+export function isSolanaChain(chainId: number | bigint): boolean {
+	const key = Number(chainId);
+	return key === solanaDevnet.id || key === solanaMainnet.id;
+}
 
 // catalyst-intent-svm program IDs, keyed by network
 export const SOLANA_PROGRAMS = {

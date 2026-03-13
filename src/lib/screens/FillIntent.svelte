@@ -3,6 +3,7 @@
 	import { bytes32ToAddress } from "@lifi/intent";
 	import { getOutputHash } from "@lifi/intent";
 	import type { MandateOutput, OrderContainer } from "@lifi/intent";
+	import { solanaAddressToBytes32, isValidSolanaAddress } from "$lib/utils/solana";
 	import { Solver } from "$lib/libraries/solver";
 	import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
@@ -28,6 +29,10 @@
 		postHook: () => Promise<any>;
 		account: () => `0x${string}`;
 	} = $props();
+
+	// Solana→EVM: order has no `inputs` field (SolanaStandardOrder)
+	const isSolanaToEvm = $derived(!("inputs" in orderContainer.order));
+	let solanaSolverAddress = $state("");
 
 	let refreshValidation = $state(0);
 	let autoScrolledOrderId = $state<`0x${string}` | null>(null);
@@ -80,6 +85,8 @@
 		const orderId = orderToIntent(orderContainer).orderId();
 		if (autoScrolledOrderId === orderId) return;
 
+		fillStatuses = {};
+
 		const outputs = sortOutputsByChain(orderContainer).flatMap(([, chainOutputs]) => chainOutputs);
 		if (outputs.length === 0) return;
 
@@ -123,6 +130,21 @@
 	description="Fill each chain once and continue to the right. If you refreshed the page provide your fill tx hash in the input box."
 >
 	<div class="space-y-2">
+		{#if isSolanaToEvm}
+			<SectionCard compact>
+				<div class="flex flex-col gap-1 px-1 py-1">
+					<label class="text-xs text-gray-500" for="solana-solver-address"
+						>Solana Solver Address (your Solana pubkey — used to receive the claim)</label
+					>
+					<input
+						id="solana-solver-address"
+						class="rounded border px-2 py-1 text-xs"
+						bind:value={solanaSolverAddress}
+						placeholder="Base58 Solana address..."
+					/>
+				</div>
+			</SectionCard>
+		{/if}
 		{#each sortOutputsByChain(orderContainer) as chainIdAndOutputs}
 			<SectionCard compact>
 				<ChainActionRow chainLabel={getChainName(chainIdAndOutputs[0])}>
@@ -148,7 +170,11 @@
 												store.walletClient,
 												{
 													orderContainer,
-													outputs: chainIdAndOutputs[1]
+													outputs: chainIdAndOutputs[1],
+													solverBytes32:
+														isSolanaToEvm && isValidSolanaAddress(solanaSolverAddress)
+															? solanaAddressToBytes32(solanaSolverAddress)
+															: undefined
 												},
 												{
 													preHook,

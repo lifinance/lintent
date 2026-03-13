@@ -1,13 +1,13 @@
 import {
 	BYTES32_ZERO,
-	chainMap,
 	COMPACT,
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
 	getClient,
-	solanaDevnetConnection
+	getSolanaConnection,
+	isSolanaChain
 } from "$lib/config";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
@@ -26,7 +26,6 @@ import store from "$lib/state.svelte";
 const PROGRESS_TTL_MS = 30_000;
 const OrderStatus_Claimed = 2;
 const OrderStatus_Refunded = 3;
-const SOLANA_DEVNET_CHAIN_ID = BigInt(chainMap.solanaDevnet.id);
 
 export type FlowCheckState = {
 	allFilled: boolean;
@@ -97,7 +96,7 @@ async function isOutputValidatedOnChain(
 			.catch((error) => console.warn("saveTransactionReceipt error", error));
 	}
 
-	if (inputChain === SOLANA_DEVNET_CHAIN_ID) {
+	if (isSolanaChain(inputChain)) {
 		return getOrFetchRpc(
 			`progress:solana-proven:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`,
 			async () => {
@@ -136,7 +135,9 @@ async function isOutputValidatedOnChain(
 					emittingContract: matchingLog.address as `0x${string}`
 				});
 				const { PublicKey } = await import("@solana/web3.js");
-				const info = await solanaDevnetConnection.getAccountInfo(new PublicKey(attestationPda));
+				const info = await getSolanaConnection(inputChain).getAccountInfo(
+					new PublicKey(attestationPda)
+				);
 				return info !== null;
 			},
 			{ ttlMs: PROGRESS_TTL_MS }

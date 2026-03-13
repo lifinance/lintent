@@ -21,7 +21,8 @@
 		INPUT_SETTLER_ESCROW_LIFI,
 		MULTICHAIN_INPUT_SETTLER_COMPACT,
 		MULTICHAIN_INPUT_SETTLER_ESCROW,
-		solanaDevnetConnection
+		getSolanaConnection,
+		isSolanaChain
 	} from "$lib/config";
 	import { COMPACT_ABI } from "$lib/abi/compact";
 	import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
@@ -32,8 +33,6 @@
 	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 	import store from "$lib/state.svelte";
 	import { orderToIntent } from "@lifi/intent";
-
-	const SOLANA_DEVNET_CHAIN_ID = BigInt(chainMap.solanaDevnet.id);
 
 	let {
 		orderContainer,
@@ -99,13 +98,11 @@
 		const { order, inputSettler } = container;
 
 		// Solana→EVM: order_context PDA is closed after finalise
-		if (chainId === SOLANA_DEVNET_CHAIN_ID) {
+		if (isSolanaChain(chainId)) {
 			const { PublicKey } = await import("@solana/web3.js");
-			const orderContextPda = await deriveOrderContextPda(
-				order as SolanaStandardOrder,
-				solanaDevnetConnection
-			);
-			const info = await solanaDevnetConnection.getAccountInfo(new PublicKey(orderContextPda));
+			const conn = getSolanaConnection(chainId);
+			const orderContextPda = await deriveOrderContextPda(order as SolanaStandardOrder, conn);
+			const info = await conn.getAccountInfo(new PublicKey(orderContextPda));
 			return info === null; // null = closed = finalised
 		}
 
@@ -251,7 +248,9 @@
 				attestationPdas,
 				solanaPublicKey: solanaWallet.publicKey,
 				walletAdapter: solanaWallet.adapter,
-				connection: solanaDevnetConnection
+				connection: getSolanaConnection(
+					store.mainnet ? chainMap.solanaMainnet.id : chainMap.solanaDevnet.id
+				)
 			});
 		};
 	}
@@ -319,7 +318,7 @@
 							>
 								Finalised
 							</button>
-						{:else if inputChain === SOLANA_DEVNET_CHAIN_ID && !solanaWallet.connected}
+						{:else if inputChain === isSolanaChain(inputChain) && !solanaWallet.connected}
 							<SolanaWalletButton />
 						{:else}
 							{@const fillTransactionHashes = fillTransactionHashesFor(orderContainer)}
@@ -332,7 +331,7 @@
 								>
 									Await fills
 								</button>
-							{:else if inputChain === SOLANA_DEVNET_CHAIN_ID}
+							{:else if inputChain === isSolanaChain(inputChain)}
 								<AwaitButton buttonFunction={solanaClaimFn(orderContainer)}>
 									{#snippet name()}
 										Claim
@@ -368,7 +367,7 @@
 						{/if}
 					{/snippet}
 					{#snippet chips()}
-						{#if inputChain === SOLANA_DEVNET_CHAIN_ID}
+						{#if inputChain === isSolanaChain(inputChain)}
 							{@const solanaOrder = orderContainer.order as SolanaStandardOrder}
 							<TokenAmountChip
 								amountText={formatTokenAmount(

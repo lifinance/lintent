@@ -59,6 +59,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 			account,
 			lock: {
 				type: "compact",
+				chain: "evm",
 				resetPeriod: opts.lock.resetPeriod,
 				allocatorId: opts.lock.allocatorId
 			}
@@ -72,7 +73,8 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 		verifier: opts.verifier,
 		account,
 		lock: {
-			type: "escrow"
+			type: "escrow",
+			chain: "evm"
 		}
 	};
 }
@@ -234,8 +236,8 @@ export class IntentFactory {
 						verifier: opts.verifier,
 						account: solanaAddressToBytes32(solanaWallet.publicKey),
 						outputRecipient,
-						lock: { type: "solanaEscrow" }
-					} as any, // CreateIntentOptions doesn't expose solanaEscrow lock type
+						lock: { type: "escrow", chain: "solana" }
+					},
 					intentDeps
 				).singlechain() as SolanaStandardOrderIntent;
 				// fillDeadline must be strictly < expires (Solana program requirement)

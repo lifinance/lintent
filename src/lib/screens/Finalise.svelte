@@ -85,8 +85,10 @@
 	const fillTransactionHashesFor = (container: OrderContainer) =>
 		container.order.outputs.map((output) => store.fillTransactions[outputKey(output)]);
 
-	const isValidFillTxHash = (hash: unknown): hash is `0x${string}` =>
-		typeof hash === "string" && hash.startsWith("0x") && hash.length === 66;
+	const hasClaimFillReference = (inputChain: bigint, hash: unknown): hash is string =>
+		isSolanaChain(inputChain)
+			? typeof hash === "string" && hash.startsWith("0x") && hash.length === 66
+			: typeof hash === "string" && hash.length > 0;
 
 	// Order status enum
 	const OrderStatus_None = 0;
@@ -322,7 +324,9 @@
 							<SolanaWalletButton />
 						{:else}
 							{@const fillTransactionHashes = fillTransactionHashesFor(orderContainer)}
-							{@const canClaim = fillTransactionHashes.every((hash) => isValidFillTxHash(hash))}
+							{@const canClaim = fillTransactionHashes.every((hash) =>
+								hasClaimFillReference(inputChain, hash)
+							)}
 							{#if !canClaim}
 								<button
 									type="button"

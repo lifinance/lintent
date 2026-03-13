@@ -110,12 +110,12 @@ class Store {
 		if (!db) await initDb();
 		if (!db) return;
 		const rows = await db!.select().from(fillTransactionsTable);
-		const loaded: { [outputId: string]: `0x${string}` } = {};
-		for (const row of rows) loaded[row.outputHash] = row.txHash as `0x${string}`;
+		const loaded: { [outputId: string]: string } = {};
+		for (const row of rows) loaded[row.outputHash] = row.txHash;
 		this.fillTransactions = loaded;
 	}
 
-	async saveFillTransaction(outputHash: string, txHash: `0x${string}`) {
+	async saveFillTransaction(outputHash: string, txHash: string) {
 		if (!browser) return;
 		if (!db) await initDb();
 		if (!db) return;
@@ -149,7 +149,7 @@ class Store {
 		this.transactionReceipts = loaded;
 	}
 
-	async saveTransactionReceipt(chainId: number | bigint, txHash: `0x${string}`, receipt: unknown) {
+	async saveTransactionReceipt(chainId: number | bigint, txHash: string, receipt: unknown) {
 		if (!browser) return;
 		if (!db) await initDb();
 		if (!db) return;
@@ -188,7 +188,7 @@ class Store {
 		this.transactionReceipts[`${chainIdNumber}:${txHash}`] = serializedReceipt;
 	}
 
-	getTransactionReceipt(chainId: number | bigint, txHash: `0x${string}`) {
+	getTransactionReceipt(chainId: number | bigint, txHash: string) {
 		const serialized = this.transactionReceipts[`${Number(chainId)}:${txHash}`];
 		if (!serialized) return undefined;
 		try {
@@ -214,7 +214,7 @@ class Store {
 
 	inputTokens = $state<AppTokenContext[]>([]);
 	outputTokens = $state<AppTokenContext[]>([]);
-	fillTransactions = $state<{ [outputId: string]: `0x${string}` }>({});
+	fillTransactions = $state<{ [outputId: string]: string }>({});
 	transactionReceipts = $state<Record<string, string>>({});
 
 	refreshEpoch = $state(0);

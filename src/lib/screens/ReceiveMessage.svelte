@@ -5,7 +5,8 @@
 		getChainName,
 		getClient,
 		getCoin,
-		solanaDevnetConnection
+		getSolanaConnection,
+		isSolanaChain
 	} from "$lib/config";
 	import { addressToBytes32 } from "@lifi/intent";
 	import { encodeMandateOutput } from "@lifi/intent";
@@ -28,8 +29,6 @@
 	import store from "$lib/state.svelte";
 	import { orderToIntent } from "@lifi/intent";
 	import { compactTypes } from "@lifi/intent";
-
-	const SOLANA_DEVNET_CHAIN_ID = BigInt(chainMap.solanaDevnet.id);
 
 	// This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 
@@ -94,7 +93,8 @@
 	async function isValidatedSolana(
 		orderId: `0x${string}`,
 		output: MandateOutput,
-		fillTransactionHash: `0x${string}`
+		fillTransactionHash: `0x${string}`,
+		chainId: bigint
 	): Promise<boolean> {
 		try {
 			const { PublicKey } = await import("@solana/web3.js");
@@ -133,7 +133,7 @@
 				solverBytes32,
 				emittingContract: matchingLog.address as `0x${string}`
 			});
-			const info = await solanaDevnetConnection.getAccountInfo(new PublicKey(attestationPda));
+			const info = await getSolanaConnection(chainId).getAccountInfo(new PublicKey(attestationPda));
 			return info !== null;
 		} catch {
 			return false;
@@ -157,8 +157,8 @@
 			return false;
 
 		// Solana input chain: check attestation PDA on Solana
-		if (chainId === SOLANA_DEVNET_CHAIN_ID) {
-			return isValidatedSolana(orderId, output, fillTransactionHash);
+		if (isSolanaChain(chainId)) {
+			return isValidatedSolana(orderId, output, fillTransactionHash, chainId);
 		}
 
 		const { order } = orderContainer;
@@ -234,7 +234,9 @@
 				mainnet: store.mainnet,
 				solanaPublicKey: solanaWallet.publicKey,
 				walletAdapter: solanaWallet.adapter,
-				connection: solanaDevnetConnection
+				connection: getSolanaConnection(
+					store.mainnet ? chainMap.solanaMainnet.id : chainMap.solanaDevnet.id
+				)
 			});
 			markOutputValidated(output);
 			await postHookRefreshValidate();

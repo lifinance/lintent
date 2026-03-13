@@ -104,7 +104,7 @@ async function isOutputValidatedOnChain(
 				const logs = parseEventLogs({
 					abi: COIN_FILLER_ABI,
 					eventName: "OutputFilled",
-					logs: (receipt as { logs: unknown[] }).logs
+					logs: (receipt as unknown as { logs: any[] }).logs
 				});
 				const expectedHash = hashStruct({
 					types: compactTypes,

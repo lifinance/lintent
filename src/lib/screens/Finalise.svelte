@@ -318,7 +318,7 @@
 							>
 								Finalised
 							</button>
-						{:else if inputChain === isSolanaChain(inputChain) && !solanaWallet.connected}
+						{:else if isSolanaChain(inputChain) && !solanaWallet.connected}
 							<SolanaWalletButton />
 						{:else}
 							{@const fillTransactionHashes = fillTransactionHashesFor(orderContainer)}
@@ -331,7 +331,7 @@
 								>
 									Await fills
 								</button>
-							{:else if inputChain === isSolanaChain(inputChain)}
+							{:else if isSolanaChain(inputChain)}
 								<AwaitButton buttonFunction={solanaClaimFn(orderContainer)}>
 									{#snippet name()}
 										Claim
@@ -367,7 +367,7 @@
 						{/if}
 					{/snippet}
 					{#snippet chips()}
-						{#if inputChain === isSolanaChain(inputChain)}
+						{#if isSolanaChain(inputChain)}
 							{@const solanaOrder = orderContainer.order as SolanaStandardOrder}
 							<TokenAmountChip
 								amountText={formatTokenAmount(

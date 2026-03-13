@@ -1,5 +1,6 @@
 import {
 	BYTES32_ZERO,
+	chainMap,
 	COMPACT,
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
@@ -25,7 +26,7 @@ import store from "$lib/state.svelte";
 const PROGRESS_TTL_MS = 30_000;
 const OrderStatus_Claimed = 2;
 const OrderStatus_Refunded = 3;
-const SOLANA_DEVNET_CHAIN_ID = 1151111081099712n;
+const SOLANA_DEVNET_CHAIN_ID = BigInt(chainMap.solanaDevnet.id);
 
 export type FlowCheckState = {
 	allFilled: boolean;

@@ -1,6 +1,5 @@
 import axios from "axios";
 import { keccak256 } from "viem";
-import { BinaryWriter } from "borsh";
 import idl from "../abi/polymer_oracle.json";
 import { SOLANA_INTENTS_PROTOCOL, SOLANA_POLYMER_ORACLE } from "../config";
 import type { MandateOutput } from "@lifi/intent";
@@ -9,9 +8,10 @@ const POLYMER_PROVER_PROGRAM = "CdvSq48QUukYuMczgZAVNZrwcHNshBdtqrjW26sQiGPs";
 
 /** Convert a bigint to a 16-byte little-endian Buffer (u128 LE) */
 function u128ToLeBytes(n: bigint): Buffer {
-	const writer = new BinaryWriter();
-	writer.writeU128(n);
-	return Buffer.from(writer.toArray());
+	const buf = Buffer.alloc(16);
+	buf.writeBigUInt64LE(n & 0xffffffffffffffffn, 0);
+	buf.writeBigUInt64LE(n >> 64n, 8);
+	return buf;
 }
 
 function normalizeBytes32Hex(value: `0x${string}`): Buffer {

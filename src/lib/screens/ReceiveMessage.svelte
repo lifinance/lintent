@@ -189,10 +189,20 @@
 	/**
 	 * Returns a button function for submitting a Polymer proof to the Solana oracle (Solana→EVM).
 	 */
-	function solanaValidateButtonFn(output: MandateOutput, fillTransactionHash: `0x${string}`) {
+	function solanaValidateButtonFn(output: MandateOutput) {
 		return async () => {
 			if (!solanaWallet.connected || !solanaWallet.publicKey) {
 				throw new Error("Connect your Solana wallet first");
+			}
+			const fillTransactionHash = store.fillTransactions[outputKey(output)];
+			if (
+				!fillTransactionHash ||
+				!fillTransactionHash.startsWith("0x") ||
+				fillTransactionHash.length !== 66
+			) {
+				throw new Error(
+					"Fill transaction hash not available. Please wait for the fill to be recorded."
+				);
 			}
 			const outputClient = getClient(output.chainId);
 			const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
@@ -360,7 +370,7 @@
 									buttonFunction={status
 										? async () => {}
 										: isSolanaToEvm
-											? solanaValidateButtonFn(output, fillTxHash as `0x${string}`)
+											? solanaValidateButtonFn(output)
 											: Solver.validate(
 													store.walletClient,
 													{

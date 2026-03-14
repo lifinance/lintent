@@ -12,9 +12,9 @@ function hexToBytes32(hex: `0x${string}`): number[] {
 	return Array.from(Buffer.from(hex.slice(2), "hex"));
 }
 
-/** Convert a bigint to a 32-byte big-endian number[] */
-function bigintToBeBytes32(n: bigint): number[] {
-	return Array.from(Buffer.from(n.toString(16).padStart(64, "0"), "hex"));
+/** Convert a bigint (or string/number coercible to bigint) to a 32-byte big-endian number[] */
+function bigintToBeBytes32(n: bigint | string | number): number[] {
+	return Array.from(Buffer.from(BigInt(n).toString(16).padStart(64, "0"), "hex"));
 }
 
 /**

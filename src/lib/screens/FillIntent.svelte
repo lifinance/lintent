@@ -1,12 +1,22 @@
 <script lang="ts">
-	import { BYTES32_ZERO, formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
-	import { bytes32ToAddress } from "@lifi/intent";
+	import {
+		BYTES32_ZERO,
+		formatTokenAmount,
+		getChainName,
+		getClient,
+		getCoin,
+		chainMap,
+		getSolanaConnection
+	} from "$lib/config";
+	import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
 	import { getOutputHash } from "@lifi/intent";
 	import type { MandateOutput, OrderContainer } from "@lifi/intent";
 	import { solanaAddressToBytes32, isValidSolanaAddress } from "$lib/utils/solana";
 	import { Solver } from "$lib/libraries/solver";
+	import { fillAndSubmitSolanaOutput } from "$lib/libraries/solanaFillLib";
 	import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
+	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
 	import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
@@ -14,7 +24,8 @@
 	import store from "$lib/state.svelte";
 	import { orderToIntent } from "@lifi/intent";
 	import { compactTypes } from "@lifi/intent";
-	import { hashStruct } from "viem";
+	import { hashStruct, isAddress } from "viem";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 
 	let {
 		scroll,
@@ -33,17 +44,27 @@
 	// Solana→EVM: order has no `inputs` field (SolanaStandardOrder)
 	const isSolanaToEvm = $derived(!("inputs" in orderContainer.order));
 	let solanaSolverAddress = $state("");
+	let proposedSolverAddress = $state("");
+	const hasSolanaOutput = $derived(
+		orderContainer.order.outputs.some(
+			(output) => output.chainId === BigInt(chainMap.solanaDevnet.id)
+		)
+	);
 
 	let refreshValidation = $state(0);
 	let autoScrolledOrderId = $state<`0x${string}` | null>(null);
 	let fillRun = 0;
-	let fillStatuses = $state<Record<string, `0x${string}`>>({});
+	let fillStatuses = $state<Record<string, string>>({});
 	const postHookScroll = async () => {
 		await postHook();
 		refreshValidation += 1;
 	};
 
 	async function isFilled(orderId: `0x${string}`, output: MandateOutput, _?: any) {
+		if (output.chainId === BigInt(chainMap.solanaDevnet.id)) {
+			const savedTx = store.fillTransactions[fillKey(orderId, output)];
+			return savedTx ? savedTx : BYTES32_ZERO;
+		}
 		const outputHash = getOutputHash(output);
 		const outputClient = getClient(output.chainId);
 		const result = await outputClient.readContract({
@@ -78,6 +99,8 @@
 			types: compactTypes,
 			primaryType: "MandateOutput"
 		});
+	const fillKey = (orderId: `0x${string}`, output: MandateOutput) =>
+		`${orderId}:${outputKey(output)}`;
 
 	$effect(() => {
 		refreshValidation;
@@ -96,7 +119,7 @@
 		)
 			.then((entries) => {
 				if (currentRun !== fillRun) return;
-				const nextStatuses: Record<string, `0x${string}`> = {};
+				const nextStatuses: Record<string, string> = {};
 				for (const [key, status] of entries) nextStatuses[key] = status;
 				fillStatuses = nextStatuses;
 				if (!entries.every(([, result]) => result !== BYTES32_ZERO)) return;
@@ -106,21 +129,56 @@
 			.catch((e) => console.warn("auto-scroll fill check failed", e));
 	});
 
-	const fillWrapper = (outputs: MandateOutput[], func: ReturnType<typeof Solver.fill>) => {
+	const fillWrapper = (
+		outputs: MandateOutput[],
+		orderId: `0x${string}`,
+		func: ReturnType<typeof Solver.fill>
+	) => {
 		return async () => {
 			const result = await func();
 
 			for (const output of outputs) {
-				const outputHash = hashStruct({
-					data: output,
-					types: compactTypes,
-					primaryType: "MandateOutput"
-				});
-				store.fillTransactions[outputHash] = result;
+				const key = fillKey(orderId, output);
+				store.fillTransactions[key] = result;
 				store
-					.saveFillTransaction(outputHash, result)
+					.saveFillTransaction(key, result)
 					.catch((e) => console.warn("saveFillTransaction error", e));
 			}
+			await postHookScroll();
+		};
+	};
+
+	const solanaFillWrapper = (outputs: MandateOutput[]) => {
+		return async () => {
+			if (!solanaWallet.connected || !solanaWallet.publicKey || !solanaWallet.adapter) {
+				throw new Error("Connect your Solana wallet first");
+			}
+			const proposedSolver =
+				proposedSolverAddress.trim().length > 0 ? proposedSolverAddress.trim() : account();
+			if (!isAddress(proposedSolver, { strict: false })) {
+				throw new Error("Enter a valid EVM proposed solver address");
+			}
+			const orderId = orderToIntent(orderContainer).orderId();
+			for (const output of outputs) {
+				const key = fillKey(orderId, output);
+				const record = await fillAndSubmitSolanaOutput({
+					orderId,
+					output,
+					fillDeadline: Number(orderContainer.order.fillDeadline),
+					solverBytes32: addressToBytes32(proposedSolver as `0x${string}`),
+					solanaPublicKey: solanaWallet.publicKey,
+					walletAdapter: solanaWallet.adapter,
+					connection: getSolanaConnection(output.chainId)
+				});
+				store.fillTransactions[key] = record.submitSignature;
+				store.transactionReceipts[`${Number(output.chainId)}:${record.submitSignature}`] =
+					JSON.stringify(record);
+				await Promise.all([
+					store.saveFillTransaction(key, record.submitSignature),
+					store.saveTransactionReceipt(output.chainId, record.submitSignature, record)
+				]).catch((e) => console.warn("persist solana fill error", e));
+			}
+			await postHookScroll();
 		};
 	};
 </script>
@@ -144,14 +202,31 @@
 					/>
 				</div>
 			</SectionCard>
+		{:else if hasSolanaOutput}
+			<SectionCard compact>
+				<div class="flex flex-col gap-1 px-1 py-1">
+					<label class="text-xs text-gray-500" for="evm-proposed-solver-address"
+						>Proposed Solver Address (EVM address used for final claim; defaults to connected
+						wallet)</label
+					>
+					<input
+						id="evm-proposed-solver-address"
+						class="rounded border px-2 py-1 text-xs"
+						bind:value={proposedSolverAddress}
+						placeholder={account()}
+					/>
+				</div>
+			</SectionCard>
 		{/if}
 		{#each sortOutputsByChain(orderContainer) as chainIdAndOutputs}
 			<SectionCard compact>
 				<ChainActionRow chainLabel={getChainName(chainIdAndOutputs[0])}>
 					{#snippet action()}
+						{@const orderId = orderToIntent(orderContainer).orderId()}
 						{@const chainStatuses = chainIdAndOutputs[1].map(
 							(output) => fillStatuses[outputKey(output)]
 						)}
+						{@const isSolanaOutputChain = chainIdAndOutputs[0] === BigInt(chainMap.solanaDevnet.id)}
 						{#if chainStatuses.some((status) => status === undefined)}
 							<button
 								type="button"
@@ -160,29 +235,41 @@
 							>
 								Fill
 							</button>
+						{:else if isSolanaToEvm && !isValidSolanaAddress(solanaSolverAddress)}
+							<button
+								type="button"
+								class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+								disabled
+							>
+								Enter solver address
+							</button>
+						{:else if isSolanaOutputChain && !solanaWallet.connected}
+							<SolanaWalletButton />
 						{:else}
 							<AwaitButton
 								variant={chainStatuses.every((v) => v == BYTES32_ZERO) ? "default" : "muted"}
 								buttonFunction={chainStatuses.every((v) => v == BYTES32_ZERO)
-									? fillWrapper(
-											chainIdAndOutputs[1],
-											Solver.fill(
-												store.walletClient,
-												{
-													orderContainer,
-													outputs: chainIdAndOutputs[1],
-													solverBytes32:
-														isSolanaToEvm && isValidSolanaAddress(solanaSolverAddress)
-															? solanaAddressToBytes32(solanaSolverAddress)
-															: undefined
-												},
-												{
-													preHook,
-													postHook: postHookScroll,
-													account
-												}
+									? isSolanaOutputChain
+										? solanaFillWrapper(chainIdAndOutputs[1])
+										: fillWrapper(
+												chainIdAndOutputs[1],
+												orderId,
+												Solver.fill(
+													store.walletClient,
+													{
+														orderContainer,
+														outputs: chainIdAndOutputs[1],
+														solverBytes32:
+															isSolanaToEvm && isValidSolanaAddress(solanaSolverAddress)
+																? solanaAddressToBytes32(solanaSolverAddress)
+																: undefined
+													},
+													{
+														preHook,
+														account
+													}
+												)
 											)
-										)
 									: async () => {}}
 							>
 								{#snippet name()}

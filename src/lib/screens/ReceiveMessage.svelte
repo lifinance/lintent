@@ -19,6 +19,8 @@
 		submitProofToSolanaOracle,
 		deriveAttestationPda
 	} from "$lib/libraries/solanaValidateLib";
+	import { encodeCommonPayload, encodeFillDescription } from "$lib/libraries/solanaValidateLib";
+	import { isSolanaSubmittedFillRecord } from "$lib/libraries/solanaFillLib";
 	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
 	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
@@ -63,8 +65,14 @@
 			types: compactTypes,
 			primaryType: "MandateOutput"
 		});
+	const fillKey = (output: MandateOutput) =>
+		`${orderToIntent(orderContainer).orderId()}:${outputKey(output)}`;
 	const validationKey = (inputChain: bigint, output: MandateOutput) =>
 		`${inputChain.toString()}:${outputKey(output)}`;
+	const hasFillReference = (output: MandateOutput, txRef: string | undefined): txRef is string =>
+		isSolanaChain(output.chainId)
+			? typeof txRef === "string" && txRef.length > 0
+			: typeof txRef === "string" && txRef.startsWith("0x") && txRef.length === 66;
 
 	function markOutputValidated(output: MandateOutput) {
 		const intent = orderToIntent(orderContainer);
@@ -145,26 +153,41 @@
 		chainId: bigint,
 		orderContainer: OrderContainer,
 		output: MandateOutput,
-		fillTransactionHash: `0x${string}`,
+		fillTransactionHash: string,
 		_?: any
 	) {
 		if (!fillTransactionHash) return false;
-		if (
-			!fillTransactionHash ||
-			!fillTransactionHash.startsWith("0x") ||
-			fillTransactionHash.length != 66
-		)
-			return false;
 
 		// Solana input chain: check attestation PDA on Solana
 		if (isSolanaChain(chainId)) {
-			return isValidatedSolana(orderId, output, fillTransactionHash, chainId);
+			if (!fillTransactionHash.startsWith("0x") || fillTransactionHash.length !== 66) return false;
+			return isValidatedSolana(orderId, output, fillTransactionHash as `0x${string}`, chainId);
+		}
+
+		if (isSolanaChain(output.chainId)) {
+			const record = store.getTransactionReceipt(output.chainId, fillTransactionHash);
+			if (!isSolanaSubmittedFillRecord(record)) return false;
+			const outputHash = keccak256(
+				encodeFillDescription(
+					record.solverBytes32,
+					orderId,
+					record.fillTimestamp,
+					encodeCommonPayload(output)
+				)
+			);
+			const sourceChainClient = getClient(chainId);
+			return await sourceChainClient.readContract({
+				address: orderContainer.order.inputOracle,
+				abi: POLYMER_ORACLE_ABI,
+				functionName: "isProven",
+				args: [output.chainId, output.oracle, output.settler, outputHash]
+			});
 		}
 
 		const { order } = orderContainer;
 		const outputClient = getClient(output.chainId);
 		const transactionReceipt = await outputClient.getTransactionReceipt({
-			hash: fillTransactionHash
+			hash: fillTransactionHash as `0x${string}`
 		});
 		const blockHashOfFill = transactionReceipt.blockHash;
 		const block = await outputClient.getBlock({
@@ -189,13 +212,25 @@
 	/**
 	 * Returns a button function for submitting a Polymer proof to the Solana oracle (Solana→EVM).
 	 */
-	function solanaValidateButtonFn(output: MandateOutput, fillTransactionHash: `0x${string}`) {
+	function solanaValidateButtonFn(output: MandateOutput) {
 		return async () => {
 			if (!solanaWallet.connected || !solanaWallet.publicKey) {
 				throw new Error("Connect your Solana wallet first");
 			}
+			const fillTransactionHash = store.fillTransactions[fillKey(output)];
+			if (
+				!fillTransactionHash ||
+				!fillTransactionHash.startsWith("0x") ||
+				fillTransactionHash.length !== 66
+			) {
+				throw new Error(
+					"Fill transaction hash not available. Please wait for the fill to be recorded."
+				);
+			}
 			const outputClient = getClient(output.chainId);
-			const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
+			const receipt = await outputClient.getTransactionReceipt({
+				hash: fillTransactionHash as `0x${string}`
+			});
 			const logs = parseEventLogs({
 				abi: COIN_FILLER_ABI,
 				eventName: "OutputFilled",
@@ -272,21 +307,10 @@
 		const inputChains = intent.inputChains();
 		const outputs = orderContainer.order.outputs;
 		const fillTxHashes = outputs.map((output) => {
-			return store.fillTransactions[
-				hashStruct({
-					data: output,
-					types: compactTypes,
-					primaryType: "MandateOutput"
-				})
-			];
+			return store.fillTransactions[fillKey(output)];
 		});
 
-		if (
-			fillTxHashes.some(
-				(fillTxHash) => !fillTxHash || !fillTxHash.startsWith("0x") || fillTxHash.length !== 66
-			)
-		)
-			return;
+		if (outputs.some((output, index) => !hasFillReference(output, fillTxHashes[index]))) return;
 
 		const currentRun = ++validationRun;
 		const pairs = inputChains.flatMap((inputChain) =>
@@ -298,7 +322,7 @@
 						inputChain,
 						orderContainer,
 						output,
-						fillTxHashes[outputIndex] as `0x${string}`,
+						fillTxHashes[outputIndex] as string,
 						refreshValidation
 					)
 			}))
@@ -348,10 +372,7 @@
 							{:else if isSolanaToEvm && !solanaWallet.connected}
 								<SolanaWalletButton />
 							{:else}
-								{@const fillTxHash =
-									store.fillTransactions[
-										hashStruct({ data: output, types: compactTypes, primaryType: "MandateOutput" })
-									]}
+								{@const fillTxHash = store.fillTransactions[fillKey(output)]}
 								<AwaitButton
 									size="sm"
 									variant={status ? "success" : "warning"}
@@ -360,7 +381,7 @@
 									buttonFunction={status
 										? async () => {}
 										: isSolanaToEvm
-											? solanaValidateButtonFn(output, fillTxHash as `0x${string}`)
+											? solanaValidateButtonFn(output)
 											: Solver.validate(
 													store.walletClient,
 													{

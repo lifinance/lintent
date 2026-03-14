@@ -19,8 +19,14 @@ import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
 import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
 import { orderToIntent } from "@lifi/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
-import { deriveAttestationPda } from "$lib/libraries/solanaValidateLib";
-import type { MandateOutput, OrderContainer } from "@lifi/intent";
+import {
+	deriveAttestationPda,
+	encodeCommonPayload,
+	encodeFillDescription
+} from "$lib/libraries/solanaValidateLib";
+import { isSolanaSubmittedFillRecord } from "$lib/libraries/solanaFillLib";
+import { deriveOrderContextPda } from "$lib/libraries/solanaFinaliseLib";
+import type { MandateOutput, OrderContainer, SolanaStandardOrder } from "@lifi/intent";
 import store from "$lib/state.svelte";
 
 const PROGRESS_TTL_MS = 30_000;
@@ -41,12 +47,15 @@ export function getOutputStorageKey(output: MandateOutput) {
 	});
 }
 
-function isValidHash(hash: string | undefined): hash is `0x${string}` {
-	return !!hash && hash.startsWith("0x") && hash.length === 66;
+function hasFillReference(hash: string | undefined): hash is string {
+	return typeof hash === "string" && hash.length > 0;
 }
 
 async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
 	const outputKey = getOutputStorageKey(output);
+	if (isSolanaChain(output.chainId)) {
+		return Boolean(store.fillTransactions[outputKey]);
+	}
 	return getOrFetchRpc(
 		`progress:filled:${orderId}:${outputKey}`,
 		async () => {
@@ -69,19 +78,46 @@ async function isOutputValidatedOnChain(
 	inputChain: bigint,
 	orderContainer: OrderContainer,
 	output: MandateOutput,
-	fillTransactionHash: `0x${string}`
+	fillTransactionHash: string
 ) {
 	const outputKey = getOutputStorageKey(output);
-	const cachedReceipt = store.getTransactionReceipt(output.chainId, fillTransactionHash);
+	if (isSolanaChain(output.chainId)) {
+		const record = store.getTransactionReceipt(output.chainId, fillTransactionHash);
+		if (!isSolanaSubmittedFillRecord(record)) return false;
+		const outputHash = keccak256(
+			encodeFillDescription(
+				record.solverBytes32,
+				orderId,
+				record.fillTimestamp,
+				encodeCommonPayload(output)
+			)
+		);
+		return getOrFetchRpc(
+			`progress:solana-proven-evm:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`,
+			async () => {
+				const sourceChainClient = getClient(inputChain);
+				return sourceChainClient.readContract({
+					address: orderContainer.order.inputOracle,
+					abi: POLYMER_ORACLE_ABI,
+					functionName: "isProven",
+					args: [output.chainId, output.oracle, output.settler, outputHash]
+				});
+			},
+			{ ttlMs: PROGRESS_TTL_MS }
+		);
+	}
+
+	const evmFillTransactionHash = fillTransactionHash as `0x${string}`;
+	const cachedReceipt = store.getTransactionReceipt(output.chainId, evmFillTransactionHash);
 	const receipt = (
 		cachedReceipt
 			? cachedReceipt
 			: await getOrFetchRpc(
-					`progress:receipt:${output.chainId.toString()}:${fillTransactionHash}`,
+					`progress:receipt:${output.chainId.toString()}:${evmFillTransactionHash}`,
 					async () => {
 						const outputClient = getClient(output.chainId);
 						return outputClient.getTransactionReceipt({
-							hash: fillTransactionHash
+							hash: evmFillTransactionHash
 						});
 					},
 					{ ttlMs: PROGRESS_TTL_MS }
@@ -89,10 +125,11 @@ async function isOutputValidatedOnChain(
 	) as {
 		blockHash: `0x${string}`;
 		from: `0x${string}`;
+		logs: unknown[];
 	};
 	if (!cachedReceipt) {
 		store
-			.saveTransactionReceipt(output.chainId, fillTransactionHash, receipt)
+			.saveTransactionReceipt(output.chainId, evmFillTransactionHash, receipt)
 			.catch((error) => console.warn("saveTransactionReceipt error", error));
 	}
 
@@ -104,7 +141,7 @@ async function isOutputValidatedOnChain(
 				const logs = parseEventLogs({
 					abi: COIN_FILLER_ABI,
 					eventName: "OutputFilled",
-					logs: (receipt as unknown as { logs: any[] }).logs
+					logs: receipt.logs as never
 				});
 				const expectedHash = hashStruct({
 					types: compactTypes,
@@ -178,9 +215,24 @@ async function isOutputValidatedOnChain(
 
 async function isInputChainFinalised(chainId: bigint, container: OrderContainer) {
 	const { order, inputSettler } = container;
-	const inputChainClient = getClient(chainId);
 	const intent = orderToIntent(container);
 	const orderId = intent.orderId();
+
+	if (isSolanaChain(chainId)) {
+		return getOrFetchRpc(
+			`progress:finalised:solana:${orderId}:${chainId.toString()}`,
+			async () => {
+				const { PublicKey } = await import("@solana/web3.js");
+				const conn = getSolanaConnection(chainId);
+				const pdaBase58 = await deriveOrderContextPda(order as SolanaStandardOrder);
+				const info = await conn.getAccountInfo(new PublicKey(pdaBase58));
+				return info === null;
+			},
+			{ ttlMs: PROGRESS_TTL_MS }
+		);
+	}
+
+	const inputChainClient = getClient(chainId);
 
 	if (
 		inputSettler === INPUT_SETTLER_ESCROW_LIFI ||
@@ -238,7 +290,7 @@ async function isInputChainFinalised(chainId: bigint, container: OrderContainer)
 
 export async function getOrderProgressChecks(
 	orderContainer: OrderContainer,
-	fillTransactions: Record<string, `0x${string}`>
+	fillTransactions: Record<string, string>
 ): Promise<FlowCheckState> {
 	try {
 		const intent = orderToIntent(orderContainer);
@@ -257,7 +309,7 @@ export async function getOrderProgressChecks(
 				inputChains.flatMap((inputChain) =>
 					outputs.map(async (output) => {
 						const fillHash = fillTransactions[getOutputStorageKey(output)];
-						if (!isValidHash(fillHash)) return false;
+						if (!hasFillReference(fillHash)) return false;
 						return isOutputValidatedOnChain(orderId, inputChain, orderContainer, output, fillHash);
 					})
 				)

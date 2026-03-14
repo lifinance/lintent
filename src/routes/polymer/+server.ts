@@ -18,28 +18,49 @@ function getPolymerKey(mainnet: boolean) {
 }
 
 export const POST: RequestHandler = async ({ request }) => {
-	const { srcChainId, srcBlockNumber, globalLogIndex, polymerIndex, mainnet } =
-		await request.json();
-	console.log({ srcChainId, srcBlockNumber, globalLogIndex, polymerIndex, mainnet });
+	const {
+		srcChainId,
+		srcBlockNumber,
+		globalLogIndex,
+		txSignature,
+		programID,
+		polymerIndex,
+		mainnet
+	} = await request.json();
+	console.log({
+		srcChainId,
+		srcBlockNumber,
+		globalLogIndex,
+		txSignature,
+		programID,
+		polymerIndex,
+		mainnet
+	});
 
 	const POLYMER_URL = getPolymerUrl(mainnet ?? true);
 	const PRIVATE_POLYMER_ZONE_API_KEY = getPolymerKey(mainnet ?? true);
 
 	let polymerRequestIndex = polymerIndex;
 	if (!polymerRequestIndex) {
+		const proofParams =
+			txSignature && programID
+				? {
+						srcChainId,
+						txSignature,
+						programID
+					}
+				: {
+						srcChainId,
+						srcBlockNumber,
+						globalLogIndex
+					};
 		const requestProof = await axios.post(
 			POLYMER_URL,
 			{
 				jsonrpc: "2.0",
 				id: 1,
 				method: "polymer_requestProof",
-				params: [
-					{
-						srcChainId,
-						srcBlockNumber,
-						globalLogIndex
-					}
-				]
+				params: [proofParams]
 			},
 			{
 				headers: {

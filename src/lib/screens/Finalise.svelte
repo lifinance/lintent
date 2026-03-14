@@ -82,11 +82,17 @@
 			primaryType: "MandateOutput"
 		});
 
-	const fillTransactionHashesFor = (container: OrderContainer) =>
-		container.order.outputs.map((output) => store.fillTransactions[outputKey(output)]);
+	const fillTransactionHashesFor = (container: OrderContainer) => {
+		const orderId = orderToIntent(container).orderId();
+		return container.order.outputs.map(
+			(output) => store.fillTransactions[`${orderId}:${outputKey(output)}`]
+		);
+	};
 
-	const isValidFillTxHash = (hash: unknown): hash is `0x${string}` =>
-		typeof hash === "string" && hash.startsWith("0x") && hash.length === 66;
+	const hasClaimFillReference = (inputChain: bigint, hash: unknown): hash is string =>
+		isSolanaChain(inputChain)
+			? typeof hash === "string" && hash.startsWith("0x") && hash.length === 66
+			: typeof hash === "string" && hash.length > 0;
 
 	// Order status enum
 	const OrderStatus_None = 0;
@@ -97,13 +103,14 @@
 	async function isClaimed(chainId: bigint, container: OrderContainer, _: any) {
 		const { order, inputSettler } = container;
 
-		// Solana→EVM: order_context PDA is closed after finalise
+		// Solana→EVM: order_context PDA is closed after finalise.
+		// Derive the PDA via the canonical borsh encoding (matching the open instruction).
 		if (isSolanaChain(chainId)) {
 			const { PublicKey } = await import("@solana/web3.js");
 			const conn = getSolanaConnection(chainId);
-			const orderContextPda = await deriveOrderContextPda(order as SolanaStandardOrder, conn);
+			const orderContextPda = await deriveOrderContextPda(order as SolanaStandardOrder);
 			const info = await conn.getAccountInfo(new PublicKey(orderContextPda));
-			return info === null; // null = closed = finalised
+			return info === null;
 		}
 
 		const inputChainClient = getClient(chainId);
@@ -167,10 +174,7 @@
 
 			// Collect fill tx hashes for all outputs
 			const fillTxHashes = outputs.map(
-				(output) =>
-					store.fillTransactions[
-						hashStruct({ data: output, types: compactTypes, primaryType: "MandateOutput" })
-					]
+				(output) => store.fillTransactions[`${orderId}:${outputKey(output)}`]
 			);
 			if (fillTxHashes.some((h) => !h || !h.startsWith("0x") || h.length !== 66)) {
 				throw new Error("Missing fill transaction hashes");
@@ -322,7 +326,9 @@
 							<SolanaWalletButton />
 						{:else}
 							{@const fillTransactionHashes = fillTransactionHashesFor(orderContainer)}
-							{@const canClaim = fillTransactionHashes.every((hash) => isValidFillTxHash(hash))}
+							{@const canClaim = fillTransactionHashes.every((hash) =>
+								hasClaimFillReference(inputChain, hash)
+							)}
 							{#if !canClaim}
 								<button
 									type="button"

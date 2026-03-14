@@ -7,10 +7,11 @@ import type { MandateOutput } from "@lifi/intent";
 const POLYMER_PROVER_PROGRAM = "CdvSq48QUukYuMczgZAVNZrwcHNshBdtqrjW26sQiGPs";
 
 /** Convert a bigint to a 16-byte little-endian Buffer (u128 LE) */
-function u128ToLeBytes(n: bigint): Buffer {
+function u128ToLeBytes(n: bigint | string | number): Buffer {
+	const value = BigInt(n);
 	const buf = Buffer.alloc(16);
-	buf.writeBigUInt64LE(n & 0xffffffffffffffffn, 0);
-	buf.writeBigUInt64LE(n >> 64n, 8);
+	buf.writeBigUInt64LE(value & 0xffffffffffffffffn, 0);
+	buf.writeBigUInt64LE(value >> 64n, 8);
 	return buf;
 }
 
@@ -239,7 +240,7 @@ export async function submitProofToSolanaOracle(params: {
 	// Increase compute budget for chained CPI into IntentsProtocol
 	const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 });
 
-	return await program.methods
+	const methodBuilder = program.methods
 		.receive([proofBytes] as any)
 		.accounts({
 			signer: signerPubkey,
@@ -253,6 +254,30 @@ export async function submitProofToSolanaOracle(params: {
 			systemProgram: SystemProgram.programId
 		} as any)
 		.remainingAccounts([{ pubkey: attestationPda, isWritable: true, isSigner: false }])
-		.preInstructions([computeIx])
-		.rpc({ commitment: "confirmed" });
+		.preInstructions([computeIx]);
+
+	// Pre-simulate without wallet signing to verify the proof is accepted on-chain.
+	// The Polymer prover on Solana can take a few minutes after the proof is "complete"
+	// in the API before it's finalised on-chain. Simulating first avoids showing the
+	// Phantom dialog for a transaction that would fail, causing "Unexpected error".
+	for (const delayMs of [0, 10_000, 20_000, 40_000, 60_000]) {
+		if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+		const tx = await methodBuilder.transaction();
+		tx.feePayer = signerPubkey;
+		tx.recentBlockhash = (await params.connection.getLatestBlockhash()).blockhash;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const simResult = await (params.connection as any).simulateTransaction(tx);
+		if (!simResult.value.err) break;
+		if (delayMs === 60_000) {
+			throw new Error(
+				`Polymer proof not yet accepted by the Solana prover. Please try again in a few minutes. (${JSON.stringify(simResult.value.err)})`
+			);
+		}
+		console.warn(
+			`Proof simulation failed, retrying in ${(delayMs + 10_000) / 1000}s…`,
+			simResult.value.err
+		);
+	}
+
+	return await methodBuilder.rpc({ commitment: "confirmed" });
 }

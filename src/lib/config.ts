@@ -109,18 +109,18 @@ export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[base.id]: "0x0000000000000000000000000000000000000000"
 };
 export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
-	[ethereum.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	[arbitrum.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	[base.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	[megaeth.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	[katana.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	[polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	[bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	[ethereum.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+	[arbitrum.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+	[base.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+	[megaeth.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+	[katana.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+	[polygon.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+	[bsc.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
 	// testnet
-	[sepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	[baseSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	[arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
+	[sepolia.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+	[baseSepolia.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+	[arbitrumSepolia.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+	[optimismSepolia.id]: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
 	[solanaDevnet.id]: SOLANA_PDAS.devnet.POLYMER_ORACLE,
 	[solanaMainnet.id]: SOLANA_PDAS.mainnet.POLYMER_ORACLE
 };

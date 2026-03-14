@@ -5,7 +5,7 @@ export const CHAIN_ID_ETHEREUM = 1n;
 export const CHAIN_ID_ARBITRUM = 42161n;
 export const CHAIN_ID_BASE = 8453n;
 
-export const TEST_POLYMER_ORACLE: `0x${string}` = "0x0000003E06000007A224AeE90052fA6bb46d43C9";
+export const TEST_POLYMER_ORACLE: `0x${string}` = "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36";
 
 export const TEST_USER: `0x${string}` = "0x1111111111111111111111111111111111111111";
 export const TEST_NOW_SECONDS = 1_700_000_000;

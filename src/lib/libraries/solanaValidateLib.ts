@@ -266,9 +266,7 @@ export async function submitProofToSolanaOracle(params: {
 		tx.feePayer = signerPubkey;
 		tx.recentBlockhash = (await params.connection.getLatestBlockhash()).blockhash;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const simResult = await (params.connection as any).simulateTransaction(tx, {
-			sigVerify: false
-		});
+		const simResult = await (params.connection as any).simulateTransaction(tx);
 		if (!simResult.value.err) break;
 		if (delayMs === 60_000) {
 			throw new Error(

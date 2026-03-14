@@ -65,6 +65,8 @@
 			types: compactTypes,
 			primaryType: "MandateOutput"
 		});
+	const fillKey = (output: MandateOutput) =>
+		`${orderToIntent(orderContainer).orderId()}:${outputKey(output)}`;
 	const validationKey = (inputChain: bigint, output: MandateOutput) =>
 		`${inputChain.toString()}:${outputKey(output)}`;
 	const hasFillReference = (output: MandateOutput, txRef: string | undefined): txRef is string =>
@@ -215,7 +217,7 @@
 			if (!solanaWallet.connected || !solanaWallet.publicKey) {
 				throw new Error("Connect your Solana wallet first");
 			}
-			const fillTransactionHash = store.fillTransactions[outputKey(output)];
+			const fillTransactionHash = store.fillTransactions[fillKey(output)];
 			if (
 				!fillTransactionHash ||
 				!fillTransactionHash.startsWith("0x") ||
@@ -226,7 +228,9 @@
 				);
 			}
 			const outputClient = getClient(output.chainId);
-			const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
+			const receipt = await outputClient.getTransactionReceipt({
+				hash: fillTransactionHash as `0x${string}`
+			});
 			const logs = parseEventLogs({
 				abi: COIN_FILLER_ABI,
 				eventName: "OutputFilled",
@@ -303,13 +307,7 @@
 		const inputChains = intent.inputChains();
 		const outputs = orderContainer.order.outputs;
 		const fillTxHashes = outputs.map((output) => {
-			return store.fillTransactions[
-				hashStruct({
-					data: output,
-					types: compactTypes,
-					primaryType: "MandateOutput"
-				})
-			];
+			return store.fillTransactions[fillKey(output)];
 		});
 
 		if (outputs.some((output, index) => !hasFillReference(output, fillTxHashes[index]))) return;
@@ -374,10 +372,7 @@
 							{:else if isSolanaToEvm && !solanaWallet.connected}
 								<SolanaWalletButton />
 							{:else}
-								{@const fillTxHash =
-									store.fillTransactions[
-										hashStruct({ data: output, types: compactTypes, primaryType: "MandateOutput" })
-									]}
+								{@const fillTxHash = store.fillTransactions[fillKey(output)]}
 								<AwaitButton
 									size="sm"
 									variant={status ? "success" : "warning"}

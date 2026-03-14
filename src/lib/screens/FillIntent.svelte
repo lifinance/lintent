@@ -62,7 +62,7 @@
 
 	async function isFilled(orderId: `0x${string}`, output: MandateOutput, _?: any) {
 		if (output.chainId === BigInt(chainMap.solanaDevnet.id)) {
-			const savedTx = store.fillTransactions[outputKey(output)];
+			const savedTx = store.fillTransactions[fillKey(orderId, output)];
 			return savedTx ? savedTx : BYTES32_ZERO;
 		}
 		const outputHash = getOutputHash(output);
@@ -99,6 +99,8 @@
 			types: compactTypes,
 			primaryType: "MandateOutput"
 		});
+	const fillKey = (orderId: `0x${string}`, output: MandateOutput) =>
+		`${orderId}:${outputKey(output)}`;
 
 	$effect(() => {
 		refreshValidation;
@@ -127,19 +129,19 @@
 			.catch((e) => console.warn("auto-scroll fill check failed", e));
 	});
 
-	const fillWrapper = (outputs: MandateOutput[], func: ReturnType<typeof Solver.fill>) => {
+	const fillWrapper = (
+		outputs: MandateOutput[],
+		orderId: `0x${string}`,
+		func: ReturnType<typeof Solver.fill>
+	) => {
 		return async () => {
 			const result = await func();
 
 			for (const output of outputs) {
-				const outputHash = hashStruct({
-					data: output,
-					types: compactTypes,
-					primaryType: "MandateOutput"
-				});
-				store.fillTransactions[outputHash] = result;
+				const key = fillKey(orderId, output);
+				store.fillTransactions[key] = result;
 				store
-					.saveFillTransaction(outputHash, result)
+					.saveFillTransaction(key, result)
 					.catch((e) => console.warn("saveFillTransaction error", e));
 			}
 			await postHookScroll();
@@ -158,7 +160,7 @@
 			}
 			const orderId = orderToIntent(orderContainer).orderId();
 			for (const output of outputs) {
-				const outputHash = outputKey(output);
+				const key = fillKey(orderId, output);
 				const record = await fillAndSubmitSolanaOutput({
 					orderId,
 					output,
@@ -168,11 +170,11 @@
 					walletAdapter: solanaWallet.adapter,
 					connection: getSolanaConnection(output.chainId)
 				});
-				store.fillTransactions[outputHash] = record.submitSignature;
+				store.fillTransactions[key] = record.submitSignature;
 				store.transactionReceipts[`${Number(output.chainId)}:${record.submitSignature}`] =
 					JSON.stringify(record);
 				await Promise.all([
-					store.saveFillTransaction(outputHash, record.submitSignature),
+					store.saveFillTransaction(key, record.submitSignature),
 					store.saveTransactionReceipt(output.chainId, record.submitSignature, record)
 				]).catch((e) => console.warn("persist solana fill error", e));
 			}
@@ -220,6 +222,7 @@
 			<SectionCard compact>
 				<ChainActionRow chainLabel={getChainName(chainIdAndOutputs[0])}>
 					{#snippet action()}
+						{@const orderId = orderToIntent(orderContainer).orderId()}
 						{@const chainStatuses = chainIdAndOutputs[1].map(
 							(output) => fillStatuses[outputKey(output)]
 						)}
@@ -232,7 +235,6 @@
 							>
 								Fill
 							</button>
-<<<<<<< HEAD
 						{:else if isSolanaToEvm && !isValidSolanaAddress(solanaSolverAddress)}
 							<button
 								type="button"
@@ -251,6 +253,7 @@
 										? solanaFillWrapper(chainIdAndOutputs[1])
 										: fillWrapper(
 												chainIdAndOutputs[1],
+												orderId,
 												Solver.fill(
 													store.walletClient,
 													{

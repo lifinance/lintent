@@ -82,8 +82,12 @@
 			primaryType: "MandateOutput"
 		});
 
-	const fillTransactionHashesFor = (container: OrderContainer) =>
-		container.order.outputs.map((output) => store.fillTransactions[outputKey(output)]);
+	const fillTransactionHashesFor = (container: OrderContainer) => {
+		const orderId = orderToIntent(container).orderId();
+		return container.order.outputs.map(
+			(output) => store.fillTransactions[`${orderId}:${outputKey(output)}`]
+		);
+	};
 
 	const hasClaimFillReference = (inputChain: bigint, hash: unknown): hash is string =>
 		isSolanaChain(inputChain)
@@ -170,10 +174,7 @@
 
 			// Collect fill tx hashes for all outputs
 			const fillTxHashes = outputs.map(
-				(output) =>
-					store.fillTransactions[
-						hashStruct({ data: output, types: compactTypes, primaryType: "MandateOutput" })
-					]
+				(output) => store.fillTransactions[`${orderId}:${outputKey(output)}`]
 			);
 			if (fillTxHashes.some((h) => !h || !h.startsWith("0x") || h.length !== 66)) {
 				throw new Error("Missing fill transaction hashes");

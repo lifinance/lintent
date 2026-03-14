@@ -58,6 +58,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 			outputTokens: opts.outputTokens.map(toCoreTokenContext),
 			verifier: opts.verifier,
 			account,
+			outputRecipient: opts.outputRecipient,
 			lock: {
 				type: "compact",
 				resetPeriod: opts.lock.resetPeriod,
@@ -72,6 +73,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 		outputTokens: opts.outputTokens.map(toCoreTokenContext),
 		verifier: opts.verifier,
 		account,
+		outputRecipient: opts.outputRecipient,
 		lock: {
 			type: "escrow"
 		}

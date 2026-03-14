@@ -6,11 +6,12 @@ import type { MandateOutput } from "@lifi/intent";
 
 const POLYMER_PROVER_PROGRAM = "CdvSq48QUukYuMczgZAVNZrwcHNshBdtqrjW26sQiGPs";
 
-/** Convert a bigint to a 16-byte little-endian Buffer (u128 LE) */
-function u128ToLeBytes(n: bigint): Buffer {
+/** Convert a bigint (or number) to a 16-byte little-endian Buffer (u128 LE) */
+function u128ToLeBytes(n: bigint | number): Buffer {
+	const v = BigInt(n);
 	const buf = Buffer.alloc(16);
-	buf.writeBigUInt64LE(n & 0xffffffffffffffffn, 0);
-	buf.writeBigUInt64LE(n >> 64n, 8);
+	buf.writeBigUInt64LE(v & 0xffffffffffffffffn, 0);
+	buf.writeBigUInt64LE(v >> 64n, 8);
 	return buf;
 }
 

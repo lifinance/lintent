@@ -121,6 +121,7 @@
 					.saveFillTransaction(outputHash, result)
 					.catch((e) => console.warn("saveFillTransaction error", e));
 			}
+			await postHookScroll();
 		};
 	};
 </script>
@@ -160,6 +161,14 @@
 							>
 								Fill
 							</button>
+						{:else if isSolanaToEvm && !isValidSolanaAddress(solanaSolverAddress)}
+							<button
+								type="button"
+								class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+								disabled
+							>
+								Enter solver address
+							</button>
 						{:else}
 							<AwaitButton
 								variant={chainStatuses.every((v) => v == BYTES32_ZERO) ? "default" : "muted"}
@@ -178,7 +187,6 @@
 												},
 												{
 													preHook,
-													postHook: postHookScroll,
 													account
 												}
 											)

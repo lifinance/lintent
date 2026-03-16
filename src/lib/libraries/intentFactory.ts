@@ -42,7 +42,8 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
 			address: input.token.address,
 			name: input.token.name,
 			chainId: BigInt(input.token.chainId),
-			decimals: input.token.decimals
+			decimals: input.token.decimals,
+			chain: isSolanaChain(input.token.chainId) ? "solana" : "eip155"
 		},
 		amount: input.amount
 	};
@@ -59,7 +60,6 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 			account,
 			lock: {
 				type: "compact",
-				chain: "evm",
 				resetPeriod: opts.lock.resetPeriod,
 				allocatorId: opts.lock.allocatorId
 			}
@@ -73,8 +73,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 		verifier: opts.verifier,
 		account,
 		lock: {
-			type: "escrow",
-			chain: "evm"
+			type: "escrow"
 		}
 	};
 }
@@ -236,7 +235,7 @@ export class IntentFactory {
 						verifier: opts.verifier,
 						account: solanaAddressToBytes32(solanaWallet.publicKey),
 						outputRecipient,
-						lock: { type: "escrow", chain: "solana" }
+						lock: { type: "escrow" }
 					},
 					intentDeps
 				).singlechain() as SolanaStandardOrderIntent;

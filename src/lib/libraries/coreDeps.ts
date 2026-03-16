@@ -1,5 +1,4 @@
 import {
-	chainMap,
 	COIN_FILLER,
 	INPUT_SETTLER_COMPACT_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
@@ -21,11 +20,6 @@ export const intentDeps: IntentDeps = {
 		if (verifier === "wormhole") {
 			return WORMHOLE_ORACLE[key];
 		}
-		return undefined;
-	},
-	getSettler(chainId) {
-		if (chainId === BigInt(chainMap.solanaDevnet.id)) return SOLANA_PDAS.devnet.OUTPUT_SETTLER;
-		if (chainId === BigInt(chainMap.solanaMainnet.id)) return SOLANA_PDAS.mainnet.OUTPUT_SETTLER;
 		return undefined;
 	}
 };

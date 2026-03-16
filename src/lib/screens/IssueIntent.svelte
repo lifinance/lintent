@@ -50,11 +50,10 @@
 				store.intentType === "compact"
 					? {
 							type: "compact",
-							chain: "evm",
 							allocatorId: store.allocatorId,
 							resetPeriod: ResetPeriod.OneDay
 						}
-					: { type: "escrow", chain: "evm" },
+					: { type: "escrow" },
 			account
 		})
 	);

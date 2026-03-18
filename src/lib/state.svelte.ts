@@ -37,6 +37,27 @@ import {
 } from "./utils/wagmi";
 import { switchWalletChain } from "./utils/walletClientRuntime";
 
+const BIGINT_KEYS = new Set([
+	"nonce",
+	"originChainId",
+	"chainId",
+	"amount",
+	"chainIdField",
+	"chainIndex"
+]);
+
+function bigintReviver(key: string, value: unknown): unknown {
+	if (typeof value !== "string" || value.length === 0 || !/^\d+$/.test(value)) {
+		return value;
+	}
+	if (BIGINT_KEYS.has(key)) return BigInt(value);
+	// Values inside `inputs` arrays are [bigint, bigint] tuples — array indices "0","1"
+	if (key === "0" || key === "1") {
+		if (value.length > 15) return BigInt(value);
+	}
+	return value;
+}
+
 class Store {
 	mainnet = $state<boolean>(true);
 	orders = $state<OrderContainer[]>([]);
@@ -46,7 +67,7 @@ class Store {
 		if (!db) await initDb();
 		if (!db) return;
 		const rows = await db!.select().from(intents);
-		this.orders = rows.map((r: any) => JSON.parse(r.data) as OrderContainer);
+		this.orders = rows.map((r: any) => JSON.parse(r.data, bigintReviver) as OrderContainer);
 	}
 
 	async saveOrderToDb(order: OrderContainer) {
@@ -192,7 +213,7 @@ class Store {
 		const serialized = this.transactionReceipts[`${Number(chainId)}:${txHash}`];
 		if (!serialized) return undefined;
 		try {
-			return JSON.parse(serialized) as unknown;
+			return JSON.parse(serialized, bigintReviver) as unknown;
 		} catch (error) {
 			console.warn("parse cached transaction receipt failed", {
 				chainId: Number(chainId),

@@ -260,6 +260,7 @@ export async function submitProofToSolanaOracle(params: {
 	// The Polymer prover on Solana can take a few minutes after the proof is "complete"
 	// in the API before it's finalised on-chain. Simulating first avoids showing the
 	// Phantom dialog for a transaction that would fail, causing "Unexpected error".
+	const loopStartMs = Date.now();
 	for (const delayMs of [0, 10_000, 20_000, 40_000, 60_000]) {
 		if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
 		const tx = await methodBuilder.transaction();
@@ -279,5 +280,50 @@ export async function submitProofToSolanaOracle(params: {
 		);
 	}
 
-	return await methodBuilder.rpc({ commitment: "confirmed" });
+	// Wait until at least FINALIZATION_WAIT_MS have elapsed since the simulation loop
+	// started. Solana's "finalized" commitment requires ~32 slots (~13–16 s) after
+	// "confirmed", so once this threshold is met the Polymer prover state is present on
+	// ALL RPC nodes — including the one Phantom uses for its pre-signing simulation.
+	// Without this wait, Phantom's pre-signing simulation sees stale state and shows
+	// "Unexpected error" immediately after fill, even though our RPC simulation passed.
+	const FINALIZATION_WAIT_MS = 5_000;
+	const elapsedMs = Date.now() - loopStartMs;
+	if (elapsedMs < FINALIZATION_WAIT_MS) {
+		await new Promise((r) => setTimeout(r, FINALIZATION_WAIT_MS - elapsedMs));
+	}
+
+	// Send manually with skipPreflight to avoid state drift between our
+	// simulation, Phantom's internal simulation, and the node's preflight.
+	for (let attempt = 0; attempt < 3; attempt++) {
+		try {
+			const finalTx = await methodBuilder.transaction();
+			finalTx.feePayer = signerPubkey;
+			const { blockhash, lastValidBlockHeight } =
+				await params.connection.getLatestBlockhash("confirmed");
+			finalTx.recentBlockhash = blockhash;
+
+			const signedTx = await anchorWallet.signTransaction(finalTx);
+			const txId = await params.connection.sendRawTransaction(signedTx.serialize(), {
+				skipPreflight: true,
+				maxRetries: 3
+			});
+			await params.connection.confirmTransaction(
+				{ signature: txId, blockhash, lastValidBlockHeight },
+				"confirmed"
+			);
+			return txId;
+		} catch (err) {
+			if (attempt === 2) throw err;
+			console.warn(`Proof submission attempt ${attempt + 1} failed, retrying…`, err);
+			await new Promise((r) => setTimeout(r, 3000));
+			const retryTx = await methodBuilder.transaction();
+			retryTx.feePayer = signerPubkey;
+			retryTx.recentBlockhash = (await params.connection.getLatestBlockhash()).blockhash;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const sim = await (params.connection as any).simulateTransaction(retryTx);
+			if (sim.value.err) throw err;
+		}
+	}
+
+	throw new Error("Proof submission failed after all retry attempts.");
 }

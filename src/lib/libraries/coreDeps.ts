@@ -1,11 +1,15 @@
 import {
 	COIN_FILLER,
 	INPUT_SETTLER_COMPACT_LIFI,
+	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
+	MULTICHAIN_INPUT_SETTLER_ESCROW,
 	POLYMER_ORACLE,
+	SOLANA_INPUT_SETTLER_ESCROW,
 	SOLANA_PDAS,
 	WORMHOLE_ORACLE
 } from "$lib/config";
+import { solanaAddressToBytes32 } from "$lib/utils/solana";
 import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
 
 function isNonZeroAddress(value: string | undefined): value is `0x${string}` {
@@ -25,7 +29,13 @@ export const intentDeps: IntentDeps = {
 };
 
 export const orderValidationDeps: OrderContainerValidationDeps = {
-	inputSettlers: [INPUT_SETTLER_COMPACT_LIFI, MULTICHAIN_INPUT_SETTLER_COMPACT],
+	inputSettlers: [
+		INPUT_SETTLER_COMPACT_LIFI,
+		INPUT_SETTLER_ESCROW_LIFI,
+		MULTICHAIN_INPUT_SETTLER_COMPACT,
+		MULTICHAIN_INPUT_SETTLER_ESCROW,
+		solanaAddressToBytes32(SOLANA_INPUT_SETTLER_ESCROW)
+	],
 	allowedInputOracles({ chainId, sameChainFill }) {
 		const key = Number(chainId);
 		if (!Number.isFinite(key)) return undefined;

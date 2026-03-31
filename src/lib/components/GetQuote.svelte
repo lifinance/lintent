@@ -10,7 +10,8 @@
     inputTokens,
     outputTokens = $bindable(),
     account,
-    mainnet
+    mainnet,
+    useProductionApi
   }: {
     exclusiveFor: string;
     useExclusiveForQuoteRequest?: boolean;
@@ -18,12 +19,13 @@
     outputTokens: AppTokenContext[];
     account: () => `0x${string}`;
     mainnet: boolean;
+    useProductionApi: boolean | null;
   } = $props();
 
   const toRawAddress = (value: string): `0x${string}` | undefined =>
     isAddress(value, { strict: false }) ? (value as `0x${string}`) : undefined;
 
-  const intentApi = $derived(new IntentApi(mainnet));
+  const intentApi = $derived(new IntentApi(useProductionApi ?? mainnet));
 
   async function getQuoteAndSet() {
     try {

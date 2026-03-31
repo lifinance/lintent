@@ -69,18 +69,38 @@
 >
   <div class="space-y-2">
     <SectionCard compact>
-      <div class="flex items-center justify-between gap-2">
-        <h2 class="text-sm font-medium text-gray-700">Network</h2>
-        <SegmentedControl
-          testIdPrefix="network"
-          size="sm"
-          options={[
-            { label: "Testnet", value: "testnet" },
-            { label: "Mainnet", value: "mainnet" }
-          ]}
-          value={store.mainnet ? "mainnet" : "testnet"}
-          onChange={(v) => (store.mainnet = v === "mainnet")}
-        />
+      <div class="flex flex-col gap-2">
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-sm font-medium text-gray-700">Network</h2>
+          <SegmentedControl
+            testIdPrefix="network"
+            size="sm"
+            options={[
+              { label: "Testnet", value: "testnet" },
+              { label: "Mainnet", value: "mainnet" }
+            ]}
+            value={store.mainnet ? "mainnet" : "testnet"}
+            onChange={(v) => (store.mainnet = v === "mainnet")}
+          />
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-sm font-medium text-gray-700">Intent API</h2>
+          <SegmentedControl
+            testIdPrefix="api-env"
+            size="sm"
+            options={[
+              { label: "Default", value: "auto" },
+              { label: "Staging", value: "staging" },
+              { label: "Production", value: "production" }
+            ]}
+            value={store.useProductionApi === null
+              ? "auto"
+              : store.useProductionApi
+                ? "production"
+                : "staging"}
+            onChange={(v) => (store.useProductionApi = v === "auto" ? null : v === "production")}
+          />
+        </div>
       </div>
     </SectionCard>
     <SectionCard compact>

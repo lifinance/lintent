@@ -111,14 +111,15 @@ export class IntentFactory {
 
   constructor(options: {
     mainnet: boolean;
+    useProductionApi?: boolean | null;
     walletClient: WC;
     preHook?: (chainId: number) => Promise<any>;
     postHook?: () => Promise<any>;
     ordersPointer?: OrderContainer[];
   }) {
-    const { mainnet, walletClient, preHook, postHook, ordersPointer } = options;
+    const { mainnet, useProductionApi, walletClient, preHook, postHook, ordersPointer } = options;
     this.mainnet = mainnet;
-    this.intentApi = new IntentApi(mainnet);
+    this.intentApi = new IntentApi(useProductionApi ?? mainnet);
     this.walletClient = walletClient;
 
     this.preHook = preHook;

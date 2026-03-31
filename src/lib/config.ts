@@ -293,7 +293,7 @@ export const coinList = (mainnet: boolean) => {
         decimals: 18
       },
       {
-        address: `0x3600000000000000000000000000000000000006`,
+        address: `0x3600000000000000000000000000000000000000`,
         name: "usdc",
         chainId: arcTestnet.id,
         decimals: 6

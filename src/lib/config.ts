@@ -42,10 +42,11 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   // testnet
-  [sepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-  [baseSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-  [arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-  [optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00"
+  [sepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
+  [baseSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
+  [arbitrumSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
+  [optimismSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
+  [arcTestnet.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
 };
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;

@@ -199,12 +199,8 @@ export async function getOrderProgressChecks(
 		);
 		const allFilled = outputs.length > 0 && filledStates.every(Boolean);
 
-		// Solana source orders don't use the EVM validation/finalisation flow
-		if (intent instanceof SolanaStandardOrderIntent) {
-			return { allFilled, allValidated: false, allFinalised: false };
-		}
-
-		const inputChains = intent.inputChains();
+		const inputChains =
+			intent instanceof SolanaStandardOrderIntent ? [intent.inputChain()] : intent.inputChains();
 
 		let allValidated = false;
 		if (allFilled && inputChains.length > 0) {

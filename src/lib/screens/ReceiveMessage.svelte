@@ -120,8 +120,16 @@
 		const orderId = intent.orderId();
 		if (autoScrolledOrderId === orderId) return;
 
-		// Solana source orders don't use the EVM oracle validation flow
-		if (intent instanceof SolanaStandardOrderIntent) return;
+		if (intent instanceof SolanaStandardOrderIntent) {
+			// Initialize statuses to false so buttons are rendered (Solana-specific validate logic handles the click)
+			const inputChain = intent.inputChain();
+			const nextStatuses: Record<string, boolean> = {};
+			for (const output of orderContainer.order.outputs) {
+				nextStatuses[validationKey(inputChain, output)] = false;
+			}
+			validationStatuses = nextStatuses;
+			return;
+		}
 
 		const inputChains = intent.inputChains();
 		const outputs = orderContainer.order.outputs;

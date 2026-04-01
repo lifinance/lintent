@@ -43,7 +43,7 @@
 	let claimStatusRun = 0;
 	const inputChains = $derived.by(() => {
 		const intent = orderToIntent(orderContainer);
-		if (intent instanceof SolanaStandardOrderIntent) return [] as bigint[];
+		if (intent instanceof SolanaStandardOrderIntent) return [intent.inputChain()];
 		return intent.inputChains();
 	});
 	const getInputsForChain = (container: OrderContainer, inputChain: bigint): [bigint, bigint][] => {

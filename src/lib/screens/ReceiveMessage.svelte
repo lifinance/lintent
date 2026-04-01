@@ -76,7 +76,16 @@
 		const orderId = intent.orderId();
 		const nextStatuses = { ...validationStatuses };
 		if (intent instanceof SolanaStandardOrderIntent) {
+			const inputChain = intent.inputChain();
+			nextStatuses[validationKey(inputChain, output)] = true;
 			validationStatuses = nextStatuses;
+			const allValidated = orderContainer.order.outputs.every(
+				(candidate) => nextStatuses[validationKey(inputChain, candidate)] === true
+			);
+			if (allValidated) {
+				autoScrolledOrderId = orderId;
+				scroll(5)();
+			}
 			return;
 		}
 		const chains = intent.inputChains();

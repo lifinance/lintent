@@ -15,7 +15,7 @@ import { hashStruct, keccak256 } from "viem";
 import { compactTypes } from "@lifi/intent";
 import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
 import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
-import { orderToIntent } from "@lifi/intent";
+import { orderToIntent, SolanaStandardOrderIntent } from "@lifi/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import store from "$lib/state.svelte";
@@ -192,13 +192,19 @@ export async function getOrderProgressChecks(
 	try {
 		const intent = orderToIntent(orderContainer);
 		const orderId = intent.orderId();
-		const inputChains = intent.inputChains();
 		const outputs = orderContainer.order.outputs;
 
 		const filledStates = await Promise.all(
 			outputs.map((output) => isOutputFilled(orderId, output))
 		);
 		const allFilled = outputs.length > 0 && filledStates.every(Boolean);
+
+		// Solana source orders don't use the EVM validation/finalisation flow
+		if (intent instanceof SolanaStandardOrderIntent) {
+			return { allFilled, allValidated: false, allFinalised: false };
+		}
+
+		const inputChains = intent.inputChains();
 
 		let allValidated = false;
 		if (allFilled && inputChains.length > 0) {

@@ -117,10 +117,10 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
 	[bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
 	// testnet
-	[sepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	[baseSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	[arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
+	[sepolia.id]: "0xa056B481CD36eE61b0C417403A1d48aF481378b3",
+	[baseSepolia.id]: "0xa056B481CD36eE61b0C417403A1d48aF481378b3",
+	[arbitrumSepolia.id]: "0xa056B481CD36eE61b0C417403A1d48aF481378b3",
+	[optimismSepolia.id]: "0xa056B481CD36eE61b0C417403A1d48aF481378b3",
 	[solanaDevnet.id]: SOLANA_PDAS.devnet.POLYMER_ORACLE,
 	[solanaMainnet.id]: SOLANA_PDAS.mainnet.POLYMER_ORACLE
 };

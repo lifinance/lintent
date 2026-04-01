@@ -17,7 +17,7 @@ const baseRow: BaseIntentRow = {
 			originChainId: 8453n,
 			expires: Math.floor(Date.now() / 1000) + 3600,
 			fillDeadline: Math.floor(Date.now() / 1000) + 3600,
-			inputOracle: "0xe68b03ff7277fbe1a9c5d1f9c5ec30a220e3cb36",
+			inputOracle: "0xa056B481CD36eE61b0C417403A1d48aF481378b3",
 			inputs: [[1n, 1n]],
 			outputs: [
 				{

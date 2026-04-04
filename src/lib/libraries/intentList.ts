@@ -2,12 +2,13 @@ import {
 	formatTokenAmount,
 	getChainName,
 	getCoin,
+	isSolanaChain,
 	INPUT_SETTLER_ESCROW_LIFI,
 	INPUT_SETTLER_COMPACT_LIFI,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
 	MULTICHAIN_INPUT_SETTLER_COMPACT
 } from "../config";
-import { orderToIntent } from "@lifi/intent";
+import { orderToIntent, StandardSolanaIntent } from "@lifi/intent";
 import { bytes32ToAddress, idToToken } from "@lifi/intent";
 import type { OrderContainer, StandardOrder, MultichainOrder } from "@lifi/intent";
 import { validateOrderContainerWithReason } from "@lifi/intent";
@@ -75,7 +76,10 @@ function shortAddress(value: string, start = 6, end = 4) {
 }
 
 function summarizeInput(chainId: bigint, tokenId: bigint, amount: bigint): string {
-	const tokenAddress = idToToken(tokenId);
+	// For Solana, tokenId is a raw 32-byte mint address; idToToken would truncate it to 20 bytes.
+	const tokenAddress = isSolanaChain(chainId)
+		? (`0x${tokenId.toString(16).padStart(64, "0")}` as `0x${string}`)
+		: idToToken(tokenId);
 	const chainName = safeChainName(chainId);
 	if (!chainName) {
 		return `${amount.toString()} ${shortAddress(tokenAddress)} on chain-${chainId.toString()}`;
@@ -201,7 +205,13 @@ function getContextDetails(orderContainer: OrderContainer): ContextDetails {
 
 export function buildBaseIntentRow(orderContainer: OrderContainer): BaseIntentRow {
 	const order = orderContainer.order;
-	const orderId = orderToIntent(orderContainer).orderId();
+	const orderId =
+		"originChainId" in order && isSolanaChain(order.originChainId)
+			? new StandardSolanaIntent(
+					orderContainer.inputSettler,
+					order as import("@lifi/intent").StandardSolana
+				).orderId()
+			: orderToIntent(orderContainer).orderId();
 	const inputChipsRaw = getInputs(order);
 	const outputChipsRaw = getOutputs(order);
 	const chainScope = getChainScope(order);

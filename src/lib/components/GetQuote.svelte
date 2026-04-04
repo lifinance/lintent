@@ -10,7 +10,7 @@
 		inputTokens,
 		outputTokens = $bindable(),
 		account,
-		recipient,
+		recipient = () => undefined,
 		mainnet
 	}: {
 		exclusiveFor: string;
@@ -18,7 +18,7 @@
 		inputTokens: AppTokenContext[];
 		outputTokens: AppTokenContext[];
 		account: () => `0x${string}`;
-		recipient: () => `0x${string}` | undefined;
+		recipient?: () => `0x${string}` | undefined;
 		mainnet: boolean;
 	} = $props();
 

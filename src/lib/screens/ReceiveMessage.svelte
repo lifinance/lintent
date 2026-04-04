@@ -12,7 +12,7 @@
 	import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
 	import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
 	import store from "$lib/state.svelte";
-	import { orderToIntent } from "@lifi/intent";
+	import { orderToIntent, StandardSolanaIntent } from "@lifi/intent";
 	import { compactTypes } from "@lifi/intent";
 
 	// This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
@@ -30,6 +30,12 @@
 		postHook: () => Promise<any>;
 		account: () => `0x${string}`;
 	} = $props();
+
+	const inputChainsDerived = $derived.by(() => {
+		const intent = orderToIntent(orderContainer);
+		if (intent instanceof StandardSolanaIntent) return [intent.inputChain()];
+		return intent.inputChains();
+	});
 
 	let refreshValidation = $state(0);
 	let autoScrolledOrderId = $state<`0x${string}` | null>(null);
@@ -114,6 +120,20 @@
 		const orderId = intent.orderId();
 		if (autoScrolledOrderId === orderId) return;
 
+		if (intent instanceof StandardSolanaIntent) {
+			// TODO: Proof relay and claim for Solana→EVM intents are not yet implemented.
+			// Buttons are rendered but disabled. The validate/claim step requires relaying a Solana
+			// transaction receipt through the Polymer oracle to the EVM input settler escrow.
+			// Initialize statuses to false so the UI renders the (disabled) buttons.
+			const inputChain = intent.inputChain();
+			const nextStatuses: Record<string, boolean> = {};
+			for (const output of orderContainer.order.outputs) {
+				nextStatuses[validationKey(inputChain, output)] = false;
+			}
+			validationStatuses = nextStatuses;
+			return;
+		}
+
 		const inputChains = intent.inputChains();
 		const outputs = orderContainer.order.outputs;
 		const fillTxHashes = outputs.map((output) => {
@@ -167,7 +187,7 @@
 	description="Click on each output and wait until they turn green. Polymer does not support batch validation. Continue to the right."
 >
 	<div class="space-y-2">
-		{#each orderToIntent(orderContainer).inputChains() as inputChain}
+		{#each inputChainsDerived as inputChain}
 			<SectionCard compact>
 				<ChainActionRow chainLabel={getChainName(inputChain)}>
 					{#snippet action()}

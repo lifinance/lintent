@@ -179,6 +179,9 @@
 		return uniqueChains.length;
 	});
 
+	const hasEvmOutput = $derived(
+		store.outputTokens.some(({ token }) => !isSolanaChain(token.chainId))
+	);
 	const hasSolanaOutput = $derived(
 		store.outputTokens.some(({ token }) => isSolanaChain(token.chainId))
 	);
@@ -186,6 +189,11 @@
 		store.inputTokens.some(({ token }) => isSolanaChain(token.chainId))
 	);
 
+	const evmRecipientValid = $derived(
+		!hasEvmOutput ||
+			store.recipient.trim().length === 0 ||
+			isAddress(store.recipient, { strict: false })
+	);
 	// When there's a Solana output, a non-empty valid Solana recipient is required.
 	// Empty string is NOT accepted: the intent library would throw at submission time
 	// rather than disabling the button, giving the user a poor experience.
@@ -193,7 +201,7 @@
 		!hasSolanaOutput ||
 			(store.solanaRecipient.trim().length > 0 && isValidSolanaAddress(store.solanaRecipient))
 	);
-	const recipientValid = $derived(solanaRecipientValid);
+	const recipientValid = $derived(evmRecipientValid && solanaRecipientValid);
 
 	const sameChain = $derived.by(() => {
 		if (numInputChains > 1) return false;
@@ -244,6 +252,10 @@
 						inputTokens={store.inputTokens}
 						bind:outputTokens={store.outputTokens}
 						{account}
+						recipient={() =>
+							evmRecipientValid && store.recipient.length > 0
+								? (store.recipient as `0x${string}`)
+								: undefined}
 					></GetQuote>
 				</div>
 			{/snippet}
@@ -318,6 +330,26 @@
 				</div>
 				<div class="flex min-w-0 items-center gap-1">
 					<span
+						class="text-[11px] font-semibold whitespace-nowrap {hasEvmOutput
+							? 'text-gray-500'
+							: 'text-gray-300'}">EVM Recipient</span
+					>
+					<FormControl
+						type="text"
+						size="sm"
+						className="flex-1"
+						placeholder="0x... (defaults to connected wallet)"
+						disabled={!hasEvmOutput}
+						state={!hasEvmOutput
+							? "disabled"
+							: store.recipient.length > 0 && !evmRecipientValid
+								? "error"
+								: "default"}
+						bind:value={store.recipient}
+					/>
+				</div>
+				<div class="flex min-w-0 items-center gap-1">
+					<span
 						class="text-[11px] font-semibold whitespace-nowrap {hasSolanaOutput
 							? 'text-gray-500'
 							: 'text-gray-300'}">Solana Recipient</span
@@ -373,7 +405,13 @@
 					class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
 					disabled
 				>
-					Enter Solana Recipient
+					{#if !evmRecipientValid && !solanaRecipientValid}
+						Fix Recipients
+					{:else if !evmRecipientValid}
+						Fix EVM Recipient
+					{:else}
+						Enter Solana Recipient
+					{/if}
 				</button>
 			{:else if !allowanceCheck && !hasSolanaInput}
 				<AwaitButton buttonFunction={approveFunction}>

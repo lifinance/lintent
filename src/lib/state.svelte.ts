@@ -295,6 +295,7 @@ class Store {
 	intentType = $state<"escrow" | "compact">("escrow");
 	allocatorId = $state<availableAllocators>(ALWAYS_OK_ALLOCATOR);
 	verifier = $state<Verifier>("polymer");
+	recipient: string = $state("");
 	solanaRecipient: string = $state("");
 	exclusiveFor: string = $state("");
 

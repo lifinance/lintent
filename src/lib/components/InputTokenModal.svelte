@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { coinList, getChainName, type Token } from "$lib/config";
+	import { clients, coinList, getChainName, isSolanaChain, type Token } from "$lib/config";
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import InlineMetaField from "$lib/components/ui/InlineMetaField.svelte";
@@ -8,6 +8,7 @@
 	import store from "$lib/state.svelte";
 	import { toBigIntWithDecimals } from "@lifi/intent";
 	import { type InteropableAddress, getInteropableAddress } from "@lifi/intent";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 
 	const v = (num: number | null) => (num ? num : 0);
 	const formatBalance = (value: bigint, decimals: number) =>
@@ -65,6 +66,7 @@
 			const token = getTokenFor(key);
 			// If we can't find the token, then it is most likely because the user changed their token.
 			if (!token) continue;
+			if (!hasClient(token.chainId) && !isChainAvailable(token.chainId)) continue;
 			if (!isEnabled(key)) continue;
 
 			if (inputValue === 0) continue;
@@ -77,6 +79,9 @@
 
 		active = false;
 	}
+
+	const hasClient = (chainId: number) => (getChainName(chainId) as string) in clients;
+	const isChainAvailable = (chainId: number) => !isSolanaChain(chainId) || solanaWallet.connected;
 
 	const uniqueInputTokens = $derived([
 		...new Set(
@@ -106,7 +111,7 @@
 		const tokens = tokenSet;
 		const selectedIndices = tokens
 			.map((token, i) => [token, i] as const)
-			.filter(([token]) => isEnabled(iaddrFor(token)))
+			.filter(([token]) => hasClient(token.chainId) && isEnabled(iaddrFor(token)))
 			.map(([, i]) => i);
 		if (selectedIndices.length === 0) {
 			for (const token of tokens) {
@@ -212,35 +217,72 @@
 				<div>
 					{#each tokenSet as tkn, rowIndex}
 						{@const iaddr = iaddrFor(tkn)}
-						<div data-testid={`input-token-row-${getChainName(tkn.chainId)}`}>
-							<FieldRow columns={rowColumns} striped index={rowIndex}>
-								<div class="truncate text-xs font-medium text-gray-700">
-									{getChainName(tkn.chainId)}
-								</div>
+						{@const evmChain = hasClient(tkn.chainId)}
+						{@const chainAvailable = isChainAvailable(tkn.chainId)}
+						<FieldRow columns={rowColumns} striped index={rowIndex}>
+							<div
+								class="truncate text-xs font-medium {evmChain ||
+								(isSolanaChain(tkn.chainId) && chainAvailable)
+									? 'text-gray-700'
+									: 'text-gray-400'}"
+							>
+								{getChainName(tkn.chainId)}
+							</div>
+							{#if evmChain}
 								{#await (store.intentType === "compact" ? store.compactBalances : store.balances)[tkn.chainId][tkn.address]}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText="..."
-										disabled={!isEnabled(iaddr)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{:then balance}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText={formatBalance(balance, tkn.decimals)}
-										disabled={!isEnabled(iaddr)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{:catch _}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
 										metaText="err"
-										disabled={!isEnabled(iaddr)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{/await}
-								<div class="flex justify-center">
-									<input type="checkbox" bind:checked={enabledByToken[iaddr]} />
-								</div>
-							</FieldRow>
-						</div>
+							{:else if store.solanaBalances[tkn.chainId]?.[tkn.address]}
+								{#await store.solanaBalances[tkn.chainId]![tkn.address]}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="..."
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:then balance}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText={formatBalance(balance, tkn.decimals)}
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{:catch _}
+									<InlineMetaField
+										bind:value={inputs[iaddr]}
+										metaText="err"
+										disabled={!isEnabled(iaddr) || !chainAvailable}
+									/>
+								{/await}
+							{:else}
+								<InlineMetaField
+									bind:value={inputs[iaddr]}
+									metaText="—"
+									disabled={!isEnabled(iaddr) || !chainAvailable}
+								/>
+							{/if}
+							<div class="flex justify-center">
+								<input
+									type="checkbox"
+									bind:checked={enabledByToken[iaddr]}
+									disabled={!chainAvailable}
+								/>
+							</div>
+						</FieldRow>
 					{/each}
 				</div>
 			</div>

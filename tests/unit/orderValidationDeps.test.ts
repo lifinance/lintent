@@ -5,14 +5,14 @@ import {
 	addressToBytes32,
 	validateOrderWithReason
 } from "@lifi/intent";
-import { makeMandateOutput, makeStandardOrder } from "../fixtures/orderFixtures";
+import { makeMandateOutput, makeStandardEvm } from "../fixtures/orderFixtures";
 import { orderValidationDeps } from "../../src/lib/libraries/coreDeps";
 
 describe("orderValidationDeps unknown-chain handling", () => {
 	it("rejects unsupported origin chains even when same-chain fill uses COIN_FILLER", () => {
 		const unknownChainId = 999999999n;
 		const result = validateOrderWithReason({
-			order: makeStandardOrder({
+			order: makeStandardEvm({
 				originChainId: unknownChainId,
 				inputOracle: COIN_FILLER,
 				outputs: [
@@ -33,7 +33,7 @@ describe("orderValidationDeps unknown-chain handling", () => {
 	it("rejects unsupported output chains instead of treating them as COIN_FILLER-only", () => {
 		const unknownChainId = 999999999n;
 		const result = validateOrderWithReason({
-			order: makeStandardOrder({
+			order: makeStandardEvm({
 				outputs: [
 					makeMandateOutput(unknownChainId, 1n, {
 						oracle: addressToBytes32(COIN_FILLER),

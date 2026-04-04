@@ -16,7 +16,7 @@ import {
 import { compact_type_hash } from "@lifi/intent";
 import { addressToBytes32 } from "@lifi/intent";
 import { signMultichainCompact, signStandardCompact } from "@lifi/intent";
-import { MultichainOrderIntent, StandardOrderIntent } from "@lifi/intent";
+import { MultichainOrderIntent, StandardEVMIntent } from "@lifi/intent";
 import type { NoSignature, Signature } from "@lifi/intent";
 import type { TypedDataSigner } from "@lifi/intent";
 import { switchWalletChain } from "$lib/utils/walletClientRuntime";
@@ -33,12 +33,12 @@ function combineSignatures(signatures: {
 }
 
 export function signIntentCompact(
-	intent: StandardOrderIntent | MultichainOrderIntent,
+	intent: StandardEVMIntent | MultichainOrderIntent,
 	account: `0x${string}`,
 	walletClient: WC
 ): Promise<`0x${string}`> {
 	const signer = walletClient as unknown as TypedDataSigner;
-	if (intent instanceof StandardOrderIntent) {
+	if (intent instanceof StandardEVMIntent) {
 		const order = intent.asOrder();
 		return signStandardCompact(account, signer, order.originChainId, intent.asBatchCompact());
 	}
@@ -52,7 +52,7 @@ export function signIntentCompact(
 }
 
 export async function depositAndRegisterCompact(
-	intent: StandardOrderIntent,
+	intent: StandardEVMIntent,
 	account: `0x${string}`,
 	walletClient: WC
 ): Promise<`0x${string}`> {
@@ -69,11 +69,11 @@ export async function depositAndRegisterCompact(
 }
 
 export async function openEscrowIntent(
-	intent: StandardOrderIntent | MultichainOrderIntent,
+	intent: StandardEVMIntent | MultichainOrderIntent,
 	account: `0x${string}`,
 	walletClient: WC
 ): Promise<`0x${string}`[]> {
-	if (intent instanceof StandardOrderIntent) {
+	if (intent instanceof StandardEVMIntent) {
 		const order = intent.asOrder();
 		await switchWalletChain(walletClient, Number(order.originChainId));
 		const chain = getChain(order.originChainId);
@@ -109,7 +109,7 @@ export async function openEscrowIntent(
 }
 
 export async function finaliseIntent(options: {
-	intent: StandardOrderIntent | MultichainOrderIntent;
+	intent: StandardEVMIntent | MultichainOrderIntent;
 	sourceChainId: number | bigint;
 	account: `0x${string}`;
 	walletClient: WC;
@@ -122,7 +122,7 @@ export async function finaliseIntent(options: {
 	const { intent, sourceChainId, account, walletClient, solveParams, signatures } = options;
 	const actionChain = getChain(sourceChainId);
 
-	if (intent instanceof StandardOrderIntent) {
+	if (intent instanceof StandardEVMIntent) {
 		const order = intent.asOrder();
 		if (actionChain.id !== Number(order.originChainId)) {
 			throw new Error(

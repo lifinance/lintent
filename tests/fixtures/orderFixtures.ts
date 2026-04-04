@@ -30,7 +30,7 @@ export function makeMandateOutput(
 	};
 }
 
-export function makeStandardOrder(overrides: Partial<StandardOrder> = {}): StandardOrder {
+export function makeStandardEvm(overrides: Partial<StandardOrder> = {}): StandardOrder {
 	return {
 		user: TEST_USER,
 		nonce: 1n,

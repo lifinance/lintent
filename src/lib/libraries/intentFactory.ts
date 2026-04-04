@@ -3,6 +3,7 @@ import {
 	getClient,
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
+	isSolanaChain,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
 	type WC
 } from "$lib/config";
@@ -18,8 +19,7 @@ import type {
 } from "@lifi/intent";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { Intent } from "@lifi/intent";
-import { IntentApi } from "@lifi/intent";
+import { Intent, IntentApi, StandardEVMIntent, MultichainOrderIntent } from "@lifi/intent";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
 import { intentDeps } from "./coreDeps";
@@ -30,7 +30,8 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
 			address: input.token.address,
 			name: input.token.name,
 			chainId: BigInt(input.token.chainId),
-			decimals: input.token.decimals
+			decimals: input.token.decimals,
+			chainNamespace: isSolanaChain(input.token.chainId) ? "solana" : "eip155"
 		},
 		amount: input.amount
 	};
@@ -45,6 +46,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 			outputTokens: opts.outputTokens.map(toCoreTokenContext),
 			verifier: opts.verifier,
 			account,
+			outputRecipient: opts.outputRecipient,
 			lock: {
 				type: "compact",
 				resetPeriod: opts.lock.resetPeriod,
@@ -59,6 +61,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
 		outputTokens: opts.outputTokens.map(toCoreTokenContext),
 		verifier: opts.verifier,
 		account,
+		outputRecipient: opts.outputRecipient,
 		lock: {
 			type: "escrow"
 		}
@@ -126,7 +129,9 @@ export class IntentFactory {
 			const { account, inputTokens } = opts;
 			const inputChain = inputTokens[0].token.chainId;
 			if (this.preHook) await this.preHook(inputChain);
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
+			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order() as
+				| StandardEVMIntent
+				| MultichainOrderIntent;
 
 			const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
 
@@ -164,7 +169,10 @@ export class IntentFactory {
 	compactDepositAndRegister(opts: AppCreateIntentOptions) {
 		return async () => {
 			const { inputTokens, account } = opts;
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).singlechain();
+			const intent = new Intent(
+				toCoreCreateIntentOptions(opts),
+				intentDeps
+			).singlechain() as StandardEVMIntent;
 
 			if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
@@ -199,27 +207,19 @@ export class IntentFactory {
 	openIntent(opts: AppCreateIntentOptions) {
 		return async () => {
 			const { inputTokens, account } = opts;
-			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
-
 			const inputChain = inputTokens[0].token.chainId;
+
 			if (this.preHook) await this.preHook(inputChain);
-
-			// Execute the open.
+			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order() as
+				| StandardEVMIntent
+				| MultichainOrderIntent;
 			const transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
-			console.log({ tsh: transactionHashes });
-
-			// for (const hash of transactionHashes) {
-			// 	await clients[inputChain].waitForTransactionReceipt({
-			// 		hash: await hash
-			// 	});
-			// }
-
-			if (this.postHook) await this.postHook();
-
 			this.saveOrder({
 				order: intent.asOrder(),
 				inputSettler: store.inputSettler
 			});
+
+			if (this.postHook) await this.postHook();
 
 			return transactionHashes;
 		};

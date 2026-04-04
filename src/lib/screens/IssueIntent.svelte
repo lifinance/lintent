@@ -4,7 +4,9 @@
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
-	import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
+	import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName, isSolanaChain } from "$lib/config";
+	import { isAddress } from "viem";
+	import { isValidSolanaAddress, solanaAddressToBytes32 } from "$lib/utils/solana";
 	import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
 	import { CompactLib } from "$lib/libraries/compactLib";
 	import store from "$lib/state.svelte";
@@ -12,7 +14,7 @@
 	import OutputTokenModal from "$lib/components/OutputTokenModal.svelte";
 	import { ResetPeriod } from "@lifi/intent";
 	import type { AppCreateIntentOptions } from "$lib/appTypes";
-	import { isAddress } from "viem";
+	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
 
 	const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
 	const REQUIRED_INPUT_USDC_RAW = 100n;
@@ -40,6 +42,10 @@
 			inputTokens: store.inputTokens,
 			outputTokens: store.outputTokens,
 			verifier: store.verifier,
+			outputRecipient:
+				hasSolanaOutput && isValidSolanaAddress(store.solanaRecipient)
+					? solanaAddressToBytes32(store.solanaRecipient)
+					: undefined,
 			lock:
 				store.intentType === "compact"
 					? {
@@ -97,15 +103,26 @@
 	let balanceCheckWallet = $state(true);
 	$effect(() => {
 		balanceCheckWallet = true;
-		if (!store.balances[store.inputTokens[0].token.chainId]) {
-			balanceCheckWallet = false;
-			return;
-		}
 		for (let i = 0; i < store.inputTokens.length; ++i) {
 			const { token, amount } = store.inputTokens[i];
-			store.balances[token.chainId][token.address].then((b) => {
-				balanceCheckWallet = balanceCheckWallet && b >= amount;
-			});
+			if (isSolanaChain(token.chainId)) {
+				const solBal = store.solanaBalances[token.chainId]?.[token.address];
+				if (!solBal) {
+					balanceCheckWallet = false;
+					continue;
+				}
+				solBal.then((b) => {
+					balanceCheckWallet = balanceCheckWallet && b >= amount;
+				});
+			} else {
+				if (!store.balances[token.chainId]) {
+					balanceCheckWallet = false;
+					continue;
+				}
+				store.balances[token.chainId][token.address].then((b) => {
+					balanceCheckWallet = balanceCheckWallet && b >= amount;
+				});
+			}
 		}
 	});
 	let balanceCheckCompact = $state(true);
@@ -160,6 +177,21 @@
 		const uniqueChains = [...new Set(tokenChains)];
 		return uniqueChains.length;
 	});
+
+	const hasSolanaOutput = $derived(
+		store.outputTokens.some(({ token }) => isSolanaChain(token.chainId))
+	);
+	const hasSolanaInput = $derived(
+		store.inputTokens.some(({ token }) => isSolanaChain(token.chainId))
+	);
+
+	// When there's a Solana output, a valid Solana recipient address is required.
+	// An empty field is NOT accepted: the intent library would silently fall back
+	// to the EVM wallet address, which is not a valid Solana recipient.
+	const solanaRecipientValid = $derived(
+		!hasSolanaOutput || isValidSolanaAddress(store.solanaRecipient)
+	);
+	const recipientValid = $derived(solanaRecipientValid);
 
 	const sameChain = $derived.by(() => {
 		if (numInputChains > 1) return false;
@@ -276,18 +308,38 @@
 
 		<SectionCard compact>
 			<div class="flex flex-col gap-2">
+				<div class="flex items-center gap-1.5">
+					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500"
+						>Solana Wallet</span
+					>
+					<SolanaWalletButton />
+				</div>
+				<div class="flex min-w-0 items-center gap-1">
+					<span
+						class="text-[11px] font-semibold whitespace-nowrap {hasSolanaOutput
+							? 'text-gray-500'
+							: 'text-gray-300'}">Solana Recipient</span
+					>
+					<FormControl
+						type="text"
+						size="sm"
+						className="flex-1"
+						placeholder="Base58 address..."
+						disabled={!hasSolanaOutput}
+						state={!hasSolanaOutput
+							? "disabled"
+							: store.solanaRecipient.length > 0 && !solanaRecipientValid
+								? "error"
+								: "default"}
+						bind:value={store.solanaRecipient}
+					/>
+				</div>
 				<div class="flex items-center gap-1">
 					<span class="text-[11px] font-semibold text-gray-500">Verifier</span>
-					{#if sameChain}
-						<FormControl as="select" size="sm" state="disabled" disabled>
-							<option selected disabled>Settler</option>
-						</FormControl>
-					{:else}
-						<FormControl as="select" id="verified-by" size="sm">
-							<option value="polymer" selected>Polymer</option>
-							<option value="wormhole" disabled>Wormhole</option>
-						</FormControl>
-					{/if}
+					<FormControl as="select" id="verified-by" size="sm">
+						<option value="polymer" selected>Polymer</option>
+						<option value="wormhole" disabled>Wormhole</option>
+					</FormControl>
 				</div>
 				<div class="flex min-w-0 items-center gap-1">
 					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500">Exclusive</span>
@@ -313,15 +365,15 @@
 		</SectionCard>
 
 		<div class="mt-2 flex justify-center">
-			{#if !true}
+			{#if !recipientValid}
 				<button
 					type="button"
 					class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
 					disabled
 				>
-					Input must be exactly raw 100 USDC
+					Enter Solana Recipient
 				</button>
-			{:else if !allowanceCheck}
+			{:else if !allowanceCheck && !hasSolanaOutput && !hasSolanaInput}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance

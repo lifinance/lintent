@@ -2,6 +2,7 @@ import {
 	formatTokenAmount,
 	getChainName,
 	getCoin,
+	isSolanaChain,
 	INPUT_SETTLER_ESCROW_LIFI,
 	INPUT_SETTLER_COMPACT_LIFI,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
@@ -9,12 +10,7 @@ import {
 } from "../config";
 import { orderToIntent } from "@lifi/intent";
 import { bytes32ToAddress, idToToken } from "@lifi/intent";
-import type {
-	OrderContainer,
-	StandardOrder,
-	SolanaStandardOrder,
-	MultichainOrder
-} from "@lifi/intent";
+import type { OrderContainer, StandardOrder, MultichainOrder } from "@lifi/intent";
 import { validateOrderContainerWithReason } from "@lifi/intent";
 import { orderValidationDeps } from "./coreDeps";
 
@@ -80,7 +76,10 @@ function shortAddress(value: string, start = 6, end = 4) {
 }
 
 function summarizeInput(chainId: bigint, tokenId: bigint, amount: bigint): string {
-	const tokenAddress = idToToken(tokenId);
+	// For Solana, tokenId is a raw 32-byte mint address; idToToken would truncate it to 20 bytes.
+	const tokenAddress = isSolanaChain(chainId)
+		? (`0x${tokenId.toString(16).padStart(64, "0")}` as `0x${string}`)
+		: idToToken(tokenId);
 	const chainName = safeChainName(chainId);
 	if (!chainName) {
 		return `${amount.toString()} ${shortAddress(tokenAddress)} on chain-${chainId.toString()}`;
@@ -100,17 +99,8 @@ function summarizeOutput(chainId: bigint, token: `0x${string}`, amount: bigint):
 	return `${amountText} ${coin.name.toUpperCase()} on ${chainName}`;
 }
 
-function getInputs(order: StandardOrder | SolanaStandardOrder | MultichainOrder) {
+function getInputs(order: StandardOrder | MultichainOrder) {
 	if ("originChainId" in order) {
-		if ("input" in order) {
-			// SolanaStandardOrder — single input with bytes32 token address
-			return [
-				{
-					key: `s-0-${order.input.token}`,
-					text: summarizeOutput(order.originChainId, order.input.token, order.input.amount)
-				}
-			];
-		}
 		return order.inputs.map((input, index) => ({
 			key: `s-${index}-${input[0].toString()}`,
 			text: summarizeInput(order.originChainId, input[0], input[1])
@@ -123,14 +113,14 @@ function getInputs(order: StandardOrder | SolanaStandardOrder | MultichainOrder)
 	}));
 }
 
-function getOutputs(order: StandardOrder | SolanaStandardOrder | MultichainOrder) {
+function getOutputs(order: StandardOrder | MultichainOrder) {
 	return order.outputs.map((output, index) => ({
 		key: `o-${index}-${output.token}`,
 		text: summarizeOutput(output.chainId, output.token, output.amount)
 	}));
 }
 
-function getChainScope(order: StandardOrder | SolanaStandardOrder | MultichainOrder): ChainScope {
+function getChainScope(order: StandardOrder | MultichainOrder): ChainScope {
 	if (!("originChainId" in order)) return "multichain";
 	const isSameChain = order.outputs.every((output) => output.chainId === order.originChainId);
 	return isSameChain ? "samechain" : "singlechain";

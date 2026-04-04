@@ -1,7 +1,7 @@
 import { keccak256 } from "viem";
 import idl from "../abi/input_settler_escrow.json";
 import { SOLANA_INPUT_SETTLER_ESCROW, SOLANA_POLYMER_ORACLE } from "../config";
-import type { MandateOutput, SolanaStandardOrder } from "@lifi/intent";
+import type { MandateOutput, StandardSolana } from "@lifi/intent";
 
 /** Convert a 0x-prefixed hex string (32 bytes) to a number[] */
 function hexToBytes32(hex: `0x${string}`): number[] {
@@ -16,14 +16,14 @@ function bigintToBeBytes32(n: bigint): number[] {
 /**
  * Open a Solana→EVM intent by calling input_settler_escrow.open() on Solana devnet.
  *
- * @param order           SolanaStandardOrder from @lifi/intent
+ * @param order           StandardSolana from @lifi/intent
  * @param solanaPublicKey Base58-encoded Solana wallet public key (becomes order.user)
  * @param walletAdapter   Connected Solana wallet adapter (Phantom, Solflare, …)
  * @param connection      Solana Connection instance
  * @returns               Solana transaction signature string
  */
 export async function openSolanaEscrow(params: {
-	order: SolanaStandardOrder;
+	order: StandardSolana;
 	solanaPublicKey: string;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	walletAdapter: any; // WalletAdapter with signTransaction / signAllTransactions
@@ -33,8 +33,14 @@ export async function openSolanaEscrow(params: {
 	// Dynamic imports to avoid CJS/ESM bundling issues with Rollup
 	const { AnchorProvider, BN, Program } = await import("@coral-xyz/anchor");
 	const { PublicKey, SystemProgram } = await import("@solana/web3.js");
-	const { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } =
-		await import("@solana/spl-token");
+	const {
+		ASSOCIATED_TOKEN_PROGRAM_ID,
+		TOKEN_PROGRAM_ID,
+		TOKEN_2022_PROGRAM_ID,
+		getAssociatedTokenAddressSync,
+		getAccount,
+		createAssociatedTokenAccountInstruction
+	} = await import("@solana/spl-token");
 
 	const { order, solanaPublicKey, walletAdapter, connection } = params;
 
@@ -69,9 +75,12 @@ export async function openSolanaEscrow(params: {
 		inputSettlerProgramId
 	);
 
-	// Extract input token from SolanaStandardOrder
-	const inputMint = new PublicKey(Buffer.from(order.input.token.slice(2), "hex"));
-	const inputAmount = new BN(order.input.amount.toString());
+	// Extract input token from StandardSolana.
+	// Solana token IDs are full 32-byte public keys stored as bigint — do NOT use idToToken()
+	// which strips the first 12 bytes (EVM-only helper that returns 20-byte addresses).
+	const tokenIdHex = order.inputs[0][0].toString(16).padStart(64, "0");
+	const inputMint = new PublicKey(Buffer.from(tokenIdHex, "hex"));
+	const inputAmount = new BN(order.inputs[0][1].toString());
 
 	// Build Anchor-format order.
 	// Field names are camelCase here; Anchor's BorshCoder maps them to the IDL's snake_case names.
@@ -121,10 +130,42 @@ export async function openSolanaEscrow(params: {
 		inputSettlerProgramId
 	);
 
-	// ATA for the user (must already exist — user has a balance)
-	const userTokenAccount = getAssociatedTokenAddressSync(inputMint, userPubkey, false);
+	// Detect whether this is a Token or Token-2022 mint by comparing owner pubkey strings
+	const mintAccountInfo = await connection.getAccountInfo(inputMint);
+	const isToken2022 = mintAccountInfo?.owner?.toBase58() === TOKEN_2022_PROGRAM_ID.toBase58();
+	const tokenProgramId = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+
+	// ATA for the user
+	const userTokenAccount = getAssociatedTokenAddressSync(
+		inputMint,
+		userPubkey,
+		false,
+		tokenProgramId
+	);
 	// ATA for the order PDA (created by the Anchor instruction)
-	const orderPdaTokenAccount = getAssociatedTokenAddressSync(inputMint, orderContext, true);
+	const orderPdaTokenAccount = getAssociatedTokenAddressSync(
+		inputMint,
+		orderContext,
+		true,
+		tokenProgramId
+	);
+
+	// Create the user's ATA if it doesn't exist yet
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const preInstructions: any[] = [];
+	try {
+		await getAccount(connection, userTokenAccount, "confirmed", tokenProgramId);
+	} catch {
+		preInstructions.push(
+			createAssociatedTokenAccountInstruction(
+				userPubkey,
+				userTokenAccount,
+				userPubkey,
+				inputMint,
+				tokenProgramId
+			)
+		);
+	}
 
 	// Call input_settler_escrow.open(order)
 	const signature = await program.methods
@@ -136,10 +177,12 @@ export async function openSolanaEscrow(params: {
 			orderContext,
 			orderPdaTokenAccount,
 			mint: inputMint,
-			tokenProgram: TOKEN_PROGRAM_ID,
+			tokenProgram: tokenProgramId,
 			associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
 			systemProgram: SystemProgram.programId
 		})
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		.preInstructions(preInstructions as any[])
 		.rpc({ commitment: "confirmed" });
 
 	return signature;

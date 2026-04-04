@@ -22,7 +22,7 @@
 	import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 	import { idToToken } from "@lifi/intent";
 	import store from "$lib/state.svelte";
-	import { orderToIntent, SolanaStandardOrderIntent } from "@lifi/intent";
+	import { orderToIntent, StandardSolanaIntent } from "@lifi/intent";
 	import { hashStruct } from "viem";
 	import { compactTypes } from "@lifi/intent";
 
@@ -43,13 +43,12 @@
 	let claimStatusRun = 0;
 	const inputChains = $derived.by(() => {
 		const intent = orderToIntent(orderContainer);
-		if (intent instanceof SolanaStandardOrderIntent) return [intent.inputChain()];
+		if (intent instanceof StandardSolanaIntent) return [intent.inputChain()];
 		return intent.inputChains();
 	});
 	const getInputsForChain = (container: OrderContainer, inputChain: bigint): [bigint, bigint][] => {
 		const { order } = container;
 		if ("originChainId" in order) {
-			if (!("inputs" in order)) return []; // SolanaStandardOrder — no [bigint, bigint][] inputs
 			return order.originChainId === inputChain ? order.inputs : [];
 		}
 		return order.inputs.find((chainInput) => chainInput.chainId === inputChain)?.inputs ?? [];

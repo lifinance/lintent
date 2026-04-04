@@ -19,15 +19,15 @@ import type {
 	OrderContainer,
 	Signature,
 	StandardOrder,
-	SolanaStandardOrder
+	StandardSolana
 } from "@lifi/intent";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import {
 	Intent,
 	IntentApi,
-	SolanaStandardOrderIntent,
-	StandardOrderIntent,
+	StandardSolanaIntent,
+	StandardEVMIntent,
 	MultichainOrderIntent
 } from "@lifi/intent";
 import { store } from "$lib/state.svelte";
@@ -43,7 +43,7 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
 			name: input.token.name,
 			chainId: BigInt(input.token.chainId),
 			decimals: input.token.decimals,
-			chain: isSolanaChain(input.token.chainId) ? "solana" : "eip155"
+			chainNameSpace: isSolanaChain(input.token.chainId) ? "solana" : "eip155"
 		},
 		amount: input.amount
 	};
@@ -111,7 +111,7 @@ export class IntentFactory {
 	}
 
 	private saveOrder(options: {
-		order: StandardOrder | SolanaStandardOrder | MultichainOrder;
+		order: StandardOrder | StandardSolana | MultichainOrder;
 		inputSettler: `0x${string}`;
 		sponsorSignature?: Signature | NoSignature;
 		allocatorSignature?: Signature | NoSignature;
@@ -140,7 +140,7 @@ export class IntentFactory {
 			const inputChain = inputTokens[0].token.chainId;
 			if (this.preHook) await this.preHook(inputChain);
 			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order() as
-				| StandardOrderIntent
+				| StandardEVMIntent
 				| MultichainOrderIntent;
 
 			const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
@@ -182,7 +182,7 @@ export class IntentFactory {
 			const intent = new Intent(
 				toCoreCreateIntentOptions(opts),
 				intentDeps
-			).singlechain() as StandardOrderIntent;
+			).singlechain() as StandardEVMIntent;
 
 			if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
@@ -238,7 +238,7 @@ export class IntentFactory {
 						lock: { type: "escrow" }
 					},
 					intentDeps
-				).singlechain() as SolanaStandardOrderIntent;
+				).singlechain() as StandardSolanaIntent;
 				// fillDeadline must be strictly < expires (Solana program requirement)
 				const solanaOrder = {
 					...solanaOrderIntent.asOrder(),
@@ -259,7 +259,7 @@ export class IntentFactory {
 			} else {
 				if (this.preHook) await this.preHook(inputChain);
 				const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order() as
-					| StandardOrderIntent
+					| StandardEVMIntent
 					| MultichainOrderIntent;
 				transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
 				this.saveOrder({

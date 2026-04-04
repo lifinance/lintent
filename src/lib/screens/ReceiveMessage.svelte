@@ -12,7 +12,7 @@
 	import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
 	import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
 	import store from "$lib/state.svelte";
-	import { orderToIntent, SolanaStandardOrderIntent } from "@lifi/intent";
+	import { orderToIntent, StandardSolanaIntent } from "@lifi/intent";
 	import { compactTypes } from "@lifi/intent";
 
 	// This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
@@ -33,7 +33,7 @@
 
 	const inputChainsDerived = $derived.by(() => {
 		const intent = orderToIntent(orderContainer);
-		if (intent instanceof SolanaStandardOrderIntent) return [intent.inputChain()];
+		if (intent instanceof StandardSolanaIntent) return [intent.inputChain()];
 		return intent.inputChains();
 	});
 
@@ -120,7 +120,7 @@
 		const orderId = intent.orderId();
 		if (autoScrolledOrderId === orderId) return;
 
-		if (intent instanceof SolanaStandardOrderIntent) {
+		if (intent instanceof StandardSolanaIntent) {
 			// Initialize statuses to false so buttons are rendered (Solana-specific validate logic handles the click)
 			const inputChain = intent.inputChain();
 			const nextStatuses: Record<string, boolean> = {};

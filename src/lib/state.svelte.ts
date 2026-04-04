@@ -27,6 +27,20 @@ import {
 } from "./schema";
 import { and, eq } from "drizzle-orm";
 import { orderToIntent } from "@lifi/intent";
+
+function serializeOrder(order: OrderContainer): string {
+	return JSON.stringify(order, (_key, value) =>
+		typeof value === "bigint" ? { __bigint: value.toString() } : value
+	);
+}
+
+function deserializeOrder(data: string): OrderContainer {
+	return JSON.parse(data, (_key, value) =>
+		value && typeof value === "object" && "__bigint" in value && typeof value.__bigint === "string"
+			? BigInt(value.__bigint)
+			: value
+	) as OrderContainer;
+}
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {
 	getCurrentConnection,
@@ -46,7 +60,7 @@ class Store {
 		if (!db) await initDb();
 		if (!db) return;
 		const rows = await db!.select().from(intents);
-		this.orders = rows.map((r: any) => JSON.parse(r.data) as OrderContainer);
+		this.orders = rows.map((r: any) => deserializeOrder(r.data));
 	}
 
 	async saveOrderToDb(order: OrderContainer) {
@@ -57,7 +71,7 @@ class Store {
 		const id =
 			(order as any).id ?? (typeof crypto !== "undefined" ? crypto.randomUUID() : String(now));
 		const intentType = (order as any).intentType ?? "escrow";
-		const data = JSON.stringify(order);
+		const data = serializeOrder(order);
 		if (db) {
 			try {
 				try {

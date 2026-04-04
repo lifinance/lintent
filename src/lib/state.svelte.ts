@@ -267,7 +267,7 @@ class Store {
 	solanaBalances = $derived.by(() => {
 		this.refreshEpoch;
 		const account = this.solanaPublicKey || undefined;
-		const resolved: Partial<Record<number, Record<`0x${string}`, Promise<bigint>>>> = {};
+		const resolved: Partial<Record<number, Record<`0x${string}`, Promise<bigint | null>>>> = {};
 		if (!account) return resolved;
 		for (const token of coinList(this.mainnet)) {
 			if (!isSolanaChain(token.chainId)) continue;

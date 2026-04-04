@@ -43,25 +43,34 @@ export function getAllowance(contract: `0x${string}`) {
 	};
 }
 
+const SOLANA_RPC_TIMEOUT_MS = 10_000;
+
 export async function getSolanaBalance(
 	userBase58: string | undefined,
 	asset: `0x${string}`,
 	connection: Connection
-): Promise<bigint> {
-	if (!userBase58) return 0n;
+): Promise<bigint | null> {
+	if (!userBase58) return null;
 	try {
+		const signal = AbortSignal.timeout(SOLANA_RPC_TIMEOUT_MS);
 		const userPubkey = new PublicKey(userBase58);
 		if (asset === ADDRESS_ZERO) {
-			const lamports = await connection.getBalance(userPubkey);
+			const lamports = await Promise.race([
+				connection.getBalance(userPubkey),
+				new Promise<never>((_, reject) =>
+					signal.addEventListener("abort", () => reject(signal.reason))
+				)
+			]);
 			return BigInt(lamports);
 		}
-		const hex = asset.replace("0x", "");
-		const mintBytes = new Uint8Array(hex.length / 2);
-		for (let i = 0; i < hex.length; i += 2) mintBytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+		const mintBytes = Buffer.from(asset.replace("0x", ""), "hex");
 		const mintPubkey = new PublicKey(mintBytes);
-		const tokenAccounts = await connection.getParsedTokenAccountsByOwner(userPubkey, {
-			mint: mintPubkey
-		});
+		const tokenAccounts = await Promise.race([
+			connection.getParsedTokenAccountsByOwner(userPubkey, { mint: mintPubkey }),
+			new Promise<never>((_, reject) =>
+				signal.addEventListener("abort", () => reject(signal.reason))
+			)
+		]);
 		if (tokenAccounts.value.length === 0) return 0n;
 		const amount = tokenAccounts.value[0]?.account?.data?.parsed?.info?.tokenAmount?.amount;
 		if (typeof amount !== "string") {
@@ -70,7 +79,7 @@ export async function getSolanaBalance(
 		return BigInt(amount);
 	} catch (e) {
 		console.error("getSolanaBalance failed", { userBase58, asset, error: e });
-		return 0n;
+		return null;
 	}
 }
 

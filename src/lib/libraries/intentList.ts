@@ -10,7 +10,7 @@ import {
 } from "../config";
 import { orderToIntent, StandardSolanaIntent } from "@lifi/intent";
 import { bytes32ToAddress, idToToken } from "@lifi/intent";
-import type { OrderContainer, StandardOrder, MultichainOrder } from "@lifi/intent";
+import type { OrderContainer, StandardOrder, MultichainOrder, StandardSolana } from "@lifi/intent";
 import { validateOrderContainerWithReason } from "@lifi/intent";
 import { orderValidationDeps } from "./coreDeps";
 
@@ -207,10 +207,7 @@ export function buildBaseIntentRow(orderContainer: OrderContainer): BaseIntentRo
 	const order = orderContainer.order;
 	const orderId =
 		"originChainId" in order && isSolanaChain(order.originChainId)
-			? new StandardSolanaIntent(
-					orderContainer.inputSettler,
-					order as import("@lifi/intent").StandardSolana
-				).orderId()
+			? new StandardSolanaIntent(orderContainer.inputSettler, order as StandardSolana).orderId()
 			: orderToIntent(orderContainer).orderId();
 	const inputChipsRaw = getInputs(order);
 	const outputChipsRaw = getOutputs(order);

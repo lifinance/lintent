@@ -112,7 +112,8 @@
 					continue;
 				}
 				solBal.then((b) => {
-					balanceCheckWallet = balanceCheckWallet && b >= amount;
+					// null means RPC error / unavailable — treat as insufficient to block submission
+					balanceCheckWallet = balanceCheckWallet && b !== null && b >= amount;
 				});
 			} else {
 				if (!store.balances[token.chainId]) {
@@ -185,11 +186,12 @@
 		store.inputTokens.some(({ token }) => isSolanaChain(token.chainId))
 	);
 
-	// When there's a Solana output, a valid Solana recipient address is required.
-	// An empty field is NOT accepted: the intent library would silently fall back
-	// to the EVM wallet address, which is not a valid Solana recipient.
+	// When there's a Solana output, a non-empty valid Solana recipient is required.
+	// Empty string is NOT accepted: the intent library would throw at submission time
+	// rather than disabling the button, giving the user a poor experience.
 	const solanaRecipientValid = $derived(
-		!hasSolanaOutput || isValidSolanaAddress(store.solanaRecipient)
+		!hasSolanaOutput ||
+			(store.solanaRecipient.trim().length > 0 && isValidSolanaAddress(store.solanaRecipient))
 	);
 	const recipientValid = $derived(solanaRecipientValid);
 
@@ -373,7 +375,7 @@
 				>
 					Enter Solana Recipient
 				</button>
-			{:else if !allowanceCheck && !hasSolanaOutput && !hasSolanaInput}
+			{:else if !allowanceCheck && !hasSolanaInput}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance

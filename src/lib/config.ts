@@ -31,12 +31,15 @@ export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02
 export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
 
 // --- Solana addresses --- //
+const SOLANA_DEVNET_RPC = "https://api.devnet.solana.com";
+const SOLANA_MAINNET_RPC = "https://api.mainnet-beta.solana.com";
+
 const solanaDevnet = defineChain({
 	id: 1151111081099712,
 	name: "Solana Devnet",
 	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
 	rpcUrls: {
-		default: { http: ["https://api.devnet.solana.com"] }
+		default: { http: [SOLANA_DEVNET_RPC] }
 	},
 	testnet: true
 });
@@ -45,12 +48,12 @@ const solanaMainnet = defineChain({
 	name: "Solana",
 	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
 	rpcUrls: {
-		default: { http: ["https://api.mainnet-beta.solana.com"] }
+		default: { http: [SOLANA_MAINNET_RPC] }
 	}
 });
 
-const _solanaDevnetConn = new Connection("https://api.devnet.solana.com", "confirmed");
-const _solanaMainnetConn = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+const _solanaDevnetConn = new Connection(SOLANA_DEVNET_RPC, "confirmed");
+const _solanaMainnetConn = new Connection(SOLANA_MAINNET_RPC, "confirmed");
 
 export function getSolanaConnection(chainId: number | bigint): Connection {
 	return Number(chainId) === solanaMainnet.id ? _solanaMainnetConn : _solanaDevnetConn;
@@ -62,7 +65,10 @@ export function isSolanaChain(chainId: number | bigint): boolean {
 }
 
 // catalyst-intent-svm program IDs, keyed by network
-export const SOLANA_PROGRAMS = {
+export const SOLANA_PROGRAMS: {
+	devnet: Record<string, string>;
+	mainnet: Record<string, string | null>;
+} = {
 	devnet: {
 		// from Anchor.toml
 		INTENTS_PROTOCOL: "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz",
@@ -71,16 +77,23 @@ export const SOLANA_PROGRAMS = {
 		POLYMER_ORACLE: "C2rAFLS6xQ78t18rK5s9madY9fztbhTaHwShgYtzonk7"
 	},
 	mainnet: {
-		// Mainnet program IDs are not yet deployed. These are intentionally null — any
-		// attempt to construct a PublicKey from them will throw a clear error rather than
-		// a cryptic base58 decode failure. Remove solanaMainnet from chainList(true) until
-		// these are filled in and re-tested.
-		INTENTS_PROTOCOL: null as unknown as string,
-		OUTPUT_SETTLER_SIMPLE: null as unknown as string,
-		INPUT_SETTLER_ESCROW: null as unknown as string,
-		POLYMER_ORACLE: null as unknown as string
+		// Mainnet program IDs are not yet deployed. Remove solanaMainnet from chainList(true)
+		// until these are filled in and re-tested.
+		INTENTS_PROTOCOL: null,
+		OUTPUT_SETTLER_SIMPLE: null,
+		INPUT_SETTLER_ESCROW: null,
+		POLYMER_ORACLE: null
 	}
-} as const;
+};
+
+/** Throws a descriptive error when a mainnet program ID is accessed before deployment. */
+export function requireSolanaProgram(id: string | null, name: string): string {
+	if (id === null)
+		throw new Error(
+			`Solana mainnet program "${name}" is not deployed yet. Update SOLANA_PROGRAMS.mainnet and re-test before enabling mainnet.`
+		);
+	return id;
+}
 
 // Derived PDAs, keyed by network
 export const SOLANA_PDAS = {
@@ -301,14 +314,15 @@ export const coinList = (mainnet: boolean) => {
 				decimals: 9
 			},
 			{
-				// So11111111111111111111111111111111111111112
+				// SPL mint So11111111111111111111111111111111111111112 encoded as bytes32
+				// (Base58 decoded → 32-byte big-endian hex, prefixed with 0x)
 				address: `0x069b8857feab8184fb687f634618c035dac439dc1aeb3b5598a0f00000000001`,
 				name: "wsol",
 				chainId: solanaMainnet.id,
 				decimals: 9
 			},
 			{
-				// EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+				// SPL mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v encoded as bytes32
 				address: `0xc6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61`,
 				name: "usdc",
 				chainId: solanaMainnet.id,
@@ -396,13 +410,15 @@ export const coinList = (mainnet: boolean) => {
 				decimals: 9
 			},
 			{
-				// So11111111111111111111111111111111111111112
+				// SPL mint So11111111111111111111111111111111111111112 encoded as bytes32
+				// (Base58 decoded → 32-byte big-endian hex, prefixed with 0x)
 				address: `0x069b8857feab8184fb687f634618c035dac439dc1aeb3b5598a0f00000000001`,
 				name: "wsol",
 				chainId: solanaDevnet.id,
 				decimals: 9
 			},
 			{
+				// SPL mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU encoded as bytes32
 				address: `0x3b442cb3912157f13a933d0134282d032b5ffecd01a2dbf1b7790608df002ea7`,
 				name: "usdc",
 				chainId: solanaDevnet.id,

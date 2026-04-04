@@ -258,7 +258,7 @@
 								{:then balance}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
-										metaText={formatBalance(balance, tkn.decimals)}
+										metaText={balance !== null ? formatBalance(balance, tkn.decimals) : "err"}
 										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
 								{:catch _}

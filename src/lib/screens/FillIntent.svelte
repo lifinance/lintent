@@ -1,5 +1,12 @@
 <script lang="ts">
-	import { BYTES32_ZERO, formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
+	import {
+		BYTES32_ZERO,
+		formatTokenAmount,
+		getChainName,
+		getClient,
+		getCoin,
+		isSolanaChain
+	} from "$lib/config";
 	import { bytes32ToAddress } from "@lifi/intent";
 	import { getOutputHash } from "@lifi/intent";
 	import type { MandateOutput, OrderContainer } from "@lifi/intent";
@@ -80,7 +87,9 @@
 		const orderId = orderToIntent(orderContainer).orderId();
 		if (autoScrolledOrderId === orderId) return;
 
-		const outputs = sortOutputsByChain(orderContainer).flatMap(([, chainOutputs]) => chainOutputs);
+		const outputs = sortOutputsByChain(orderContainer)
+			.flatMap(([, chainOutputs]) => chainOutputs)
+			.filter((output) => !isSolanaChain(output.chainId));
 		if (outputs.length === 0) return;
 
 		const currentRun = ++fillRun;
@@ -130,7 +139,15 @@
 						{@const chainStatuses = chainIdAndOutputs[1].map(
 							(output) => fillStatuses[outputKey(output)]
 						)}
-						{#if chainStatuses.some((status) => status === undefined)}
+						{#if isSolanaChain(chainIdAndOutputs[0])}
+							<button
+								type="button"
+								class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+								disabled
+							>
+								Fill
+							</button>
+						{:else if chainStatuses.some((status) => status === undefined)}
 							<button
 								type="button"
 								class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"

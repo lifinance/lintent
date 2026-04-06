@@ -1,12 +1,27 @@
 <script lang="ts">
-	import { formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
+	import {
+		chainMap,
+		formatTokenAmount,
+		getChainName,
+		getClient,
+		getCoin,
+		getSolanaConnection,
+		isSolanaChain
+	} from "$lib/config";
 	import { addressToBytes32 } from "@lifi/intent";
 	import { encodeMandateOutput } from "@lifi/intent";
-	import { hashStruct, keccak256 } from "viem";
+	import { hashStruct, keccak256, parseEventLogs } from "viem";
 	import type { MandateOutput, OrderContainer } from "@lifi/intent";
 	import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
+	import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 	import { Solver } from "$lib/libraries/solver";
+	import {
+		submitProofToSolanaOracle,
+		deriveAttestationPda
+	} from "$lib/libraries/solanaValidateLib";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
+	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
 	import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
@@ -36,6 +51,10 @@
 		if (intent instanceof StandardSolanaIntent) return [intent.inputChain()];
 		return intent.inputChains();
 	});
+	// Solana→EVM: input chain is Solana
+	const isSolanaToEvm = $derived(
+		"originChainId" in orderContainer.order && isSolanaChain(orderContainer.order.originChainId)
+	);
 
 	let refreshValidation = $state(0);
 	let autoScrolledOrderId = $state<`0x${string}` | null>(null);
@@ -54,6 +73,93 @@
 	const validationKey = (inputChain: bigint, output: MandateOutput) =>
 		`${inputChain.toString()}:${outputKey(output)}`;
 
+	function markOutputValidated(output: MandateOutput) {
+		const intent = orderToIntent(orderContainer);
+		const orderId = intent.orderId();
+		const nextStatuses = { ...validationStatuses };
+		if (intent instanceof StandardSolanaIntent) {
+			const inputChain = intent.inputChain();
+			nextStatuses[validationKey(inputChain, output)] = true;
+			validationStatuses = nextStatuses;
+			const allValidated = orderContainer.order.outputs.every(
+				(candidate) => nextStatuses[validationKey(inputChain, candidate)] === true
+			);
+			if (allValidated) {
+				autoScrolledOrderId = orderId;
+				scroll(5)();
+			}
+			return;
+		}
+		const chains = intent.inputChains();
+		for (const inputChain of chains) {
+			nextStatuses[validationKey(inputChain, output)] = true;
+		}
+		validationStatuses = nextStatuses;
+		const allValidated =
+			chains.length > 0 &&
+			chains
+				.flatMap((inputChain) =>
+					orderContainer.order.outputs.map((candidate) => validationKey(inputChain, candidate))
+				)
+				.every((key) => nextStatuses[key] === true);
+		if (!allValidated) return;
+		autoScrolledOrderId = orderId;
+		scroll(5)();
+	}
+
+	/**
+	 * Check if a Solana attestation PDA exists for this fill (Solana→EVM path).
+	 */
+	async function isValidatedSolana(
+		orderId: `0x${string}`,
+		output: MandateOutput,
+		fillTransactionHash: `0x${string}`,
+		chainId: bigint
+	): Promise<boolean> {
+		try {
+			const { PublicKey } = await import("@solana/web3.js");
+			const outputClient = getClient(output.chainId);
+			const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
+			const logs = parseEventLogs({
+				abi: COIN_FILLER_ABI,
+				eventName: "OutputFilled",
+				logs: receipt.logs
+			});
+			const expectedHash = hashStruct({
+				types: compactTypes,
+				primaryType: "MandateOutput",
+				data: output
+			});
+			const matchingLog = logs.find((log) => {
+				const logHash = hashStruct({
+					types: compactTypes,
+					primaryType: "MandateOutput",
+					data: log.args.output
+				});
+				return logHash === expectedHash;
+			});
+			if (!matchingLog) return false;
+			const solverBytes32 = matchingLog.args.solver as `0x${string}`;
+			const fillTimestamp =
+				typeof matchingLog.args.timestamp === "number"
+					? matchingLog.args.timestamp
+					: Number(matchingLog.args.timestamp);
+			const attestationPda = await deriveAttestationPda({
+				evmChainId: output.chainId,
+				output,
+				proofOutput: matchingLog.args.output as MandateOutput,
+				orderId,
+				fillTimestamp,
+				solverBytes32,
+				emittingContract: matchingLog.address as `0x${string}`
+			});
+			const info = await getSolanaConnection(chainId).getAccountInfo(new PublicKey(attestationPda));
+			return info !== null;
+		} catch {
+			return false;
+		}
+	}
+
 	async function isValidated(
 		orderId: `0x${string}`,
 		chainId: bigint,
@@ -69,6 +175,12 @@
 			fillTransactionHash.length != 66
 		)
 			return false;
+
+		// Solana input chain: check attestation PDA on Solana
+		if (isSolanaChain(chainId)) {
+			return isValidatedSolana(orderId, output, fillTransactionHash, chainId);
+		}
+
 		const { order } = orderContainer;
 		const outputClient = getClient(output.chainId);
 		const transactionReceipt = await outputClient.getTransactionReceipt({
@@ -94,24 +206,72 @@
 		});
 	}
 
-	// const validations = $derived(
-	// 	orderContainer.order.outputs.map((output) => {
-	// 		return orderToIntent(orderContainer)
-	// 			.inputChains()
-	// 			.map((inputChain) => {
-	// 				return isValidated(
-	// 					orderToIntent(orderContainer).orderId(),
-	// 					inputChain,
-	// 					orderContainer,
-	// 					output,
-	// 					store.fillTransactions[
-	// 						hashStruct({ data: output, types: compactTypes, primaryType: "MandateOutput" })
-	// 					],
-	// 					refreshValidation
-	// 				);
-	// 			});
-	// 	})
-	// );
+	/**
+	 * Returns a button function for submitting a Polymer proof to the Solana oracle (Solana→EVM).
+	 */
+	function solanaValidateButtonFn(output: MandateOutput) {
+		return async () => {
+			if (!solanaWallet.connected || !solanaWallet.publicKey) {
+				throw new Error("Connect your Solana wallet first");
+			}
+			const fillTransactionHash = store.fillTransactions[outputKey(output)];
+			if (
+				!fillTransactionHash ||
+				!fillTransactionHash.startsWith("0x") ||
+				fillTransactionHash.length !== 66
+			) {
+				throw new Error(
+					"Fill transaction hash not available. Please wait for the fill to be recorded."
+				);
+			}
+			const outputClient = getClient(output.chainId);
+			const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
+			const logs = parseEventLogs({
+				abi: COIN_FILLER_ABI,
+				eventName: "OutputFilled",
+				logs: receipt.logs
+			});
+			const expectedHash = hashStruct({
+				types: compactTypes,
+				primaryType: "MandateOutput",
+				data: output
+			});
+			const matchingLog = logs.find((log) => {
+				const logHash = hashStruct({
+					types: compactTypes,
+					primaryType: "MandateOutput",
+					data: log.args.output
+				});
+				return logHash === expectedHash;
+			});
+			if (!matchingLog) throw new Error("Could not find OutputFilled event for this output");
+			const solverBytes32 = matchingLog.args.solver as `0x${string}`;
+			const fillTimestamp =
+				typeof matchingLog.args.timestamp === "number"
+					? matchingLog.args.timestamp
+					: Number(matchingLog.args.timestamp);
+			const orderId = orderToIntent(orderContainer).orderId();
+			await submitProofToSolanaOracle({
+				evmChainId: output.chainId,
+				output,
+				proofOutput: matchingLog.args.output as MandateOutput,
+				orderId,
+				fillTimestamp,
+				solverBytes32,
+				emittingContract: matchingLog.address as `0x${string}`,
+				fillBlockNumber: Number(receipt.blockNumber),
+				globalLogIndex: matchingLog.logIndex,
+				mainnet: store.mainnet,
+				solanaPublicKey: solanaWallet.publicKey,
+				walletAdapter: solanaWallet.adapter,
+				connection: getSolanaConnection(
+					store.mainnet ? chainMap.solanaMainnet.id : chainMap.solanaDevnet.id
+				)
+			});
+			markOutputValidated(output);
+			await postHookRefreshValidate();
+		};
+	}
 
 	$effect(() => {
 		refreshValidation;
@@ -121,10 +281,7 @@
 		if (autoScrolledOrderId === orderId) return;
 
 		if (intent instanceof StandardSolanaIntent) {
-			// TODO: Proof relay and claim for Solana→EVM intents are not yet implemented.
-			// Buttons are rendered but disabled. The validate/claim step requires relaying a Solana
-			// transaction receipt through the Polymer oracle to the EVM input settler escrow.
-			// Initialize statuses to false so the UI renders the (disabled) buttons.
+			// Initialize statuses to false so buttons are rendered (Solana-specific validate logic handles the click)
 			const inputChain = intent.inputChain();
 			const nextStatuses: Record<string, boolean> = {};
 			for (const output of orderContainer.order.outputs) {
@@ -168,13 +325,18 @@
 					)
 			}))
 		);
-		Promise.all(pairs.map(async (pair) => [pair.key, await pair.run()] as const))
-			.then((entries) => {
+		Promise.allSettled(pairs.map(async (pair) => [pair.key, await pair.run()] as const))
+			.then((results) => {
 				if (currentRun !== validationRun) return;
 				const nextStatuses: Record<string, boolean> = {};
-				for (const [key, validated] of entries) nextStatuses[key] = validated;
+				for (let i = 0; i < results.length; i++) {
+					const result = results[i];
+					const key = pairs[i].key;
+					nextStatuses[key] = result.status === "fulfilled" ? result.value[1] : false;
+				}
 				validationStatuses = nextStatuses;
-				if (entries.length === 0 || !entries.every(([, validated]) => validated)) return;
+				const allValidated = pairs.length > 0 && pairs.every((p) => nextStatuses[p.key] === true);
+				if (!allValidated) return;
 				autoScrolledOrderId = orderId;
 				scroll(5)();
 			})
@@ -205,46 +367,51 @@
 									symbol={getCoin({ address: output.token, chainId: output.chainId }).name}
 									tone="warning"
 								/>
+							{:else if isSolanaToEvm && !solanaWallet.connected}
+								<SolanaWalletButton />
 							{:else}
+								{@const fillTxHash =
+									store.fillTransactions[
+										hashStruct({ data: output, types: compactTypes, primaryType: "MandateOutput" })
+									]}
 								<AwaitButton
 									size="sm"
 									variant={status ? "success" : "warning"}
 									baseClass={["min-w-[6.5rem] justify-center"]}
 									buttonFunction={status
 										? async () => {}
-										: Solver.validate(
-												store.walletClient,
-												{
-													output,
-													orderContainer,
-													fillTransactionHash:
-														store.fillTransactions[
-															hashStruct({
-																data: output,
-																types: compactTypes,
-																primaryType: "MandateOutput"
-															})
-														],
-													sourceChainId: Number(inputChain),
-													mainnet: store.mainnet
-												},
-												{
-													preHook,
-													postHook: postHookRefreshValidate,
-													account
-												}
-											)}
+										: isSolanaToEvm
+											? solanaValidateButtonFn(output)
+											: Solver.validate(
+													store.walletClient,
+													{
+														output,
+														orderContainer,
+														fillTransactionHash: fillTxHash,
+														sourceChainId: Number(inputChain),
+														mainnet: store.mainnet
+													},
+													{
+														preHook,
+														postHook: postHookRefreshValidate,
+														account
+													}
+												)}
 								>
 									{#snippet name()}
-										{formatTokenAmount(
-											output.amount,
-											getCoin({ address: output.token, chainId: output.chainId }).decimals
-										)}
-										&nbsp;
-										{getCoin({
-											address: output.token,
-											chainId: output.chainId
-										}).name.toUpperCase()}
+										{#if status}
+											Validated
+										{:else}
+											{formatTokenAmount(
+												output.amount,
+												getCoin({ address: output.token, chainId: output.chainId }).decimals
+											)}
+											&nbsp;
+											{getCoin({
+												address: output.token,
+												chainId: output.chainId
+											}).name.toUpperCase()}
+										{/if}
 									{/snippet}
 									{#snippet awaiting()}
 										Validating...

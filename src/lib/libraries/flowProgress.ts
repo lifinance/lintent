@@ -5,19 +5,23 @@ import {
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_COMPACT,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
-	getClient
+	getClient,
+	getSolanaConnection,
+	isSolanaChain
 } from "$lib/config";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COMPACT_ABI } from "$lib/abi/compact";
-import { hashStruct, keccak256 } from "viem";
+import { hashStruct, keccak256, parseEventLogs } from "viem";
 import { compactTypes } from "@lifi/intent";
 import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
 import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
 import { orderToIntent, StandardSolanaIntent } from "@lifi/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
-import type { MandateOutput, OrderContainer } from "@lifi/intent";
+import { deriveAttestationPda } from "$lib/libraries/solanaValidateLib";
+import { deriveOrderContextPda } from "$lib/libraries/solanaFinaliseLib";
+import type { MandateOutput, OrderContainer, StandardSolana } from "@lifi/intent";
 import store from "$lib/state.svelte";
 
 const PROGRESS_TTL_MS = 30_000;
@@ -93,6 +97,54 @@ async function isOutputValidatedOnChain(
 			.catch((error) => console.warn("saveTransactionReceipt error", error));
 	}
 
+	// Solana→EVM: check attestation PDA existence instead of on-chain isProven
+	if (isSolanaChain(inputChain)) {
+		return getOrFetchRpc(
+			`progress:solana-proven:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`,
+			async () => {
+				const logs = parseEventLogs({
+					abi: COIN_FILLER_ABI,
+					eventName: "OutputFilled",
+					logs: (receipt as unknown as { logs: any[] }).logs
+				});
+				const expectedHash = hashStruct({
+					types: compactTypes,
+					primaryType: "MandateOutput",
+					data: output
+				});
+				const matchingLog = logs.find((log) => {
+					const logOutputHash = hashStruct({
+						types: compactTypes,
+						primaryType: "MandateOutput",
+						data: log.args.output
+					});
+					return logOutputHash === expectedHash;
+				});
+				if (!matchingLog) return false;
+				const solverBytes32 = matchingLog.args.solver as `0x${string}`;
+				const fillTimestamp =
+					typeof matchingLog.args.timestamp === "number"
+						? matchingLog.args.timestamp
+						: Number(matchingLog.args.timestamp);
+				const attestationPda = await deriveAttestationPda({
+					evmChainId: output.chainId,
+					output,
+					proofOutput: matchingLog.args.output as MandateOutput,
+					orderId,
+					fillTimestamp,
+					solverBytes32,
+					emittingContract: matchingLog.address as `0x${string}`
+				});
+				const { PublicKey } = await import("@solana/web3.js");
+				const info = await getSolanaConnection(inputChain).getAccountInfo(
+					new PublicKey(attestationPda)
+				);
+				return info !== null;
+			},
+			{ ttlMs: PROGRESS_TTL_MS }
+		);
+	}
+
 	const block = await getOrFetchRpc(
 		`progress:block:${output.chainId.toString()}:${receipt.blockHash}`,
 		async () => {
@@ -127,9 +179,25 @@ async function isOutputValidatedOnChain(
 
 async function isInputChainFinalised(chainId: bigint, container: OrderContainer) {
 	const { order, inputSettler } = container;
-	const inputChainClient = getClient(chainId);
 	const intent = orderToIntent(container);
 	const orderId = intent.orderId();
+
+	// Solana→EVM: order_context PDA is closed after finalise
+	if (isSolanaChain(chainId)) {
+		return getOrFetchRpc(
+			`progress:finalised:solana:${orderId}:${chainId.toString()}`,
+			async () => {
+				const { PublicKey } = await import("@solana/web3.js");
+				const conn = getSolanaConnection(chainId);
+				const orderContextPda = await deriveOrderContextPda(order as StandardSolana);
+				const info = await conn.getAccountInfo(new PublicKey(orderContextPda));
+				return info === null; // null = closed = finalised
+			},
+			{ ttlMs: PROGRESS_TTL_MS }
+		);
+	}
+
+	const inputChainClient = getClient(chainId);
 
 	if (
 		inputSettler === INPUT_SETTLER_ESCROW_LIFI ||

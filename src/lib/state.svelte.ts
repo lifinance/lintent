@@ -2,7 +2,7 @@ import type { OrderContainer } from "@lifi/intent";
 import type { AppTokenContext } from "./appTypes";
 import {
 	ALWAYS_OK_ALLOCATOR,
-	clientsById,
+	evmClientsById,
 	coinList,
 	COMPACT,
 	INPUT_SETTLER_COMPACT_LIFI,
@@ -388,18 +388,18 @@ class Store {
 		scopeKey: string;
 		fetcher: (
 			asset: `0x${string}`,
-			client: (typeof clientsById)[keyof typeof clientsById]
+			client: (typeof evmClientsById)[keyof typeof evmClientsById]
 		) => Promise<T>;
 	}) {
 		const { bucket, ttlMs, isMainnet, scopeKey, fetcher } = opts;
 		const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
 		for (const token of coinList(isMainnet)) {
-			if (!clientsById[token.chainId]) continue; // skip non-EVM chains (e.g. Solana)
+			if (!evmClientsById[token.chainId]) continue; // skip non-EVM chains (e.g. Solana)
 			if (!resolved[token.chainId]) resolved[token.chainId] = {};
 			const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${scopeKey}`;
 			resolved[token.chainId][token.address] = getOrFetchRpc(
 				key,
-				() => fetcher(token.address, clientsById[token.chainId]),
+				() => fetcher(token.address, evmClientsById[token.chainId]),
 				{ ttlMs }
 			);
 		}

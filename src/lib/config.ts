@@ -339,7 +339,7 @@ export const coinList = (mainnet: boolean): Token[] => {
 };
 
 export const evmCoinList = (mainnet: boolean) =>
-	coinList(mainnet).filter((t) => !!clientsById[t.chainId]);
+	coinList(mainnet).filter((t) => !!evmClientsById[t.chainId]);
 
 export const solanaCoinList = (mainnet: boolean) =>
 	coinList(mainnet).filter((t) => SOLANA_CHAIN_IDS.has(t.chainId));
@@ -467,12 +467,12 @@ export function getChain(chainId: number | bigint | string) {
 
 export function getClient(chainId: number | bigint | string) {
 	const normalized = normalizeChainId(chainId);
-	const client = clientsById[normalized];
+	const client = evmClientsById[normalized];
 	if (!client) throw new Error(`Could not find client for chainId ${normalized}`);
 	return client;
 }
 
-export const clients = {
+export const evmClients = {
 	ethereum: createPublicClient({
 		chain: ethereum,
 		transport: fallback([
@@ -561,12 +561,12 @@ export const chainNameById = {
 	[solanaDevnet.id]: "solana-devnet"
 } as Record<number, string>;
 
-export const clientsById = Object.fromEntries(
-	(Object.keys(clients) as (keyof typeof clients)[]).map((name) => [
+export const evmClientsById = Object.fromEntries(
+	(Object.keys(evmClients) as (keyof typeof evmClients)[]).map((name) => [
 		chainMap[name].id,
-		clients[name]
+		evmClients[name]
 	])
-) as Record<number, (typeof clients)[keyof typeof clients]>;
+) as Record<number, (typeof evmClients)[keyof typeof evmClients]>;
 
 export type WC = ReturnType<
 	typeof createWalletClient<ReturnType<typeof custom>, undefined, undefined, undefined>

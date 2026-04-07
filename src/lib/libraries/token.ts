@@ -1,13 +1,13 @@
 import { maxUint256 } from "viem";
 import { COMPACT_ABI } from "../abi/compact";
 import { ERC20_ABI } from "../abi/erc20";
-import { ADDRESS_ZERO, clients, COMPACT } from "../config";
+import { ADDRESS_ZERO, evmClients, COMPACT } from "../config";
 import { ResetPeriod, toId } from "@lifi/intent";
 
 export async function getBalance(
 	user: `0x${string}` | undefined,
 	asset: `0x${string}`,
-	client: (typeof clients)[keyof typeof clients]
+	client: (typeof evmClients)[keyof typeof evmClients]
 ) {
 	if (!user) return 0n;
 	if (asset === ADDRESS_ZERO) {
@@ -29,7 +29,7 @@ export function getAllowance(contract: `0x${string}`) {
 	return async (
 		user: `0x${string}` | undefined,
 		asset: `0x${string}`,
-		client: (typeof clients)[keyof typeof clients]
+		client: (typeof evmClients)[keyof typeof evmClients]
 	) => {
 		if (!user) return 0n;
 		if (asset == ADDRESS_ZERO) return maxUint256;
@@ -45,7 +45,7 @@ export function getAllowance(contract: `0x${string}`) {
 export async function getCompactBalance(
 	user: `0x${string}` | undefined,
 	asset: `0x${string}`,
-	client: (typeof clients)[keyof typeof clients],
+	client: (typeof evmClients)[keyof typeof evmClients],
 	allocatorId: string
 ) {
 	if (!user) return 0n;

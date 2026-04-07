@@ -1,7 +1,7 @@
 import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
 import { hashStruct, maxUint256, parseEventLogs } from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
-import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
+import { addressToBytes32, bytes32ToAddress, StandardSolanaIntent } from "@lifi/intent";
 import axios from "axios";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
@@ -311,6 +311,8 @@ export class Solver {
 			const { orderContainer, fillTransactionHashes, sourceChainId } = args;
 			const { order, inputSettler } = orderContainer;
 			const intent = containerToIntent(orderContainer);
+			if (intent instanceof StandardSolanaIntent)
+				throw new Error("Finalise is not supported for Solana input intents.");
 			if (fillTransactionHashes.length !== order.outputs.length) {
 				throw new Error(
 					`Fill transaction hash count (${fillTransactionHashes.length}) does not match output count (${order.outputs.length}).`

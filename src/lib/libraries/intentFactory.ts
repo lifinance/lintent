@@ -16,21 +16,35 @@ import type {
 	Signature,
 	StandardOrder
 } from "@lifi/intent";
+import {
+	Intent,
+	IntentApi,
+	StandardSolanaIntent,
+	SOLANA_MAINNET_CHAIN_ID,
+	SOLANA_TESTNET_CHAIN_ID,
+	SOLANA_DEVNET_CHAIN_ID
+} from "@lifi/intent";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { Intent } from "@lifi/intent";
-import { IntentApi } from "@lifi/intent";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
 import { intentDeps } from "./coreDeps";
 
+const SOLANA_CHAIN_IDS = new Set([
+	SOLANA_MAINNET_CHAIN_ID,
+	SOLANA_TESTNET_CHAIN_ID,
+	SOLANA_DEVNET_CHAIN_ID
+]);
+
 function toCoreTokenContext(input: AppTokenContext): TokenContext {
+	const chainId = BigInt(input.token.chainId);
 	return {
 		token: {
 			address: input.token.address,
 			name: input.token.name,
-			chainId: BigInt(input.token.chainId),
-			decimals: input.token.decimals
+			chainId,
+			decimals: input.token.decimals,
+			chainNamespace: SOLANA_CHAIN_IDS.has(chainId) ? "solana" : "eip155"
 		},
 		amount: input.amount
 	};
@@ -127,6 +141,8 @@ export class IntentFactory {
 			const inputChain = inputTokens[0].token.chainId;
 			if (this.preHook) await this.preHook(inputChain);
 			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
+			if (intent instanceof StandardSolanaIntent)
+				throw new Error("Compact signing is not supported for Solana intents.");
 
 			const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
 
@@ -165,6 +181,8 @@ export class IntentFactory {
 		return async () => {
 			const { inputTokens, account } = opts;
 			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).singlechain();
+			if (intent instanceof StandardSolanaIntent)
+				throw new Error("Compact deposit and register is not supported for Solana intents.");
 
 			if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
@@ -200,6 +218,8 @@ export class IntentFactory {
 		return async () => {
 			const { inputTokens, account } = opts;
 			const intent = new Intent(toCoreCreateIntentOptions(opts), intentDeps).order();
+			if (intent instanceof StandardSolanaIntent)
+				throw new Error("openEscrowIntent is not supported for Solana intents.");
 
 			const inputChain = inputTokens[0].token.chainId;
 			if (this.preHook) await this.preHook(inputChain);

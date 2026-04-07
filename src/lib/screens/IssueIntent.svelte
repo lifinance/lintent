@@ -13,9 +13,10 @@
 	import { ResetPeriod } from "@lifi/intent";
 	import type { AppCreateIntentOptions } from "$lib/appTypes";
 	import { isAddress } from "viem";
+	import { isValidSolanaAddress, solanaAddressToBytes32 } from "$lib/utils/solana";
+	import { SOLANA_CHAIN_IDS } from "$lib/config";
 
 	const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
-	const REQUIRED_INPUT_USDC_RAW = 100n;
 
 	let {
 		scroll,
@@ -34,8 +35,28 @@
 	const resolveExclusiveFor = (value: string): `0x${string}` | undefined =>
 		isAddress(value, { strict: false }) ? value : undefined;
 
-	const resolveRecipient = (value: string): `0x${string}` | undefined =>
-		isAddress(value, { strict: false }) ? value : undefined;
+	const resolveEvmRecipient = (value: string): `0x${string}` | undefined =>
+		isAddress(value, { strict: false }) ? (value as `0x${string}`) : undefined;
+	const resolveSolanaRecipient = (value: string): `0x${string}` | undefined =>
+		isValidSolanaAddress(value) ? solanaAddressToBytes32(value) : undefined;
+
+	const hasSolanaOutput = $derived(
+		store.outputTokens.some((t) => SOLANA_CHAIN_IDS.has(t.token.chainId))
+	);
+	const hasEvmOutput = $derived(
+		store.outputTokens.some((t) => !SOLANA_CHAIN_IDS.has(t.token.chainId))
+	);
+
+	// When both Solana and EVM outputs are selected, Solana recipient takes priority since the
+	// library supports a single outputRecipient for all outputs. EVM recipient is only used when
+	// there are no Solana outputs.
+	const outputRecipient = $derived.by((): `0x${string}` | undefined => {
+		if (hasSolanaOutput) return resolveSolanaRecipient(store.solanaRecipient);
+		return resolveEvmRecipient(store.recipient);
+	});
+
+	// A valid Solana recipient is required to encode a usable cross-chain intent.
+	const solanaRecipientMissing = $derived(hasSolanaOutput && !outputRecipient);
 
 	const intentOptions = $derived.by(
 		(): AppCreateIntentOptions => ({
@@ -43,7 +64,7 @@
 			inputTokens: store.inputTokens,
 			outputTokens: store.outputTokens,
 			verifier: store.verifier,
-			outputRecipient: resolveRecipient(store.recipient),
+			outputRecipient,
 			lock:
 				store.intentType === "compact"
 					? {
@@ -280,19 +301,41 @@
 
 		<SectionCard compact>
 			<div class="flex flex-col gap-2">
-				<div class="flex min-w-0 items-center gap-1">
-					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500">Recipient</span>
-					<FormControl
-						type="text"
-						size="sm"
-						className="flex-1"
-						placeholder="0x... (optional)"
-						state={store.recipient.length > 0 && !resolveRecipient(store.recipient)
-							? "error"
-							: "default"}
-						bind:value={store.recipient}
-					/>
-				</div>
+				{#if hasEvmOutput}
+					<div class="flex min-w-0 items-center gap-1">
+						<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500"
+							>EVM Recipient</span
+						>
+						<FormControl
+							type="text"
+							size="sm"
+							className="flex-1"
+							placeholder="0x... (optional)"
+							state={store.recipient.length > 0 && !resolveEvmRecipient(store.recipient)
+								? "error"
+								: "default"}
+							bind:value={store.recipient}
+						/>
+					</div>
+				{/if}
+				{#if hasSolanaOutput}
+					<div class="flex min-w-0 items-center gap-1">
+						<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500"
+							>Solana Recipient</span
+						>
+						<FormControl
+							type="text"
+							size="sm"
+							className="flex-1"
+							placeholder="Base58... (required)"
+							state={store.solanaRecipient.length > 0 &&
+							!resolveSolanaRecipient(store.solanaRecipient)
+								? "error"
+								: "default"}
+							bind:value={store.solanaRecipient}
+						/>
+					</div>
+				{/if}
 				<div class="flex items-center gap-1">
 					<span class="text-[11px] font-semibold text-gray-500">Verifier</span>
 					{#if sameChain}
@@ -330,7 +373,15 @@
 		</SectionCard>
 
 		<div class="mt-2 flex justify-center">
-			{#if !allowanceCheck}
+			{#if solanaRecipientMissing}
+				<button
+					type="button"
+					class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+					disabled
+				>
+					Solana Recipient Required
+				</button>
+			{:else if !allowanceCheck}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance

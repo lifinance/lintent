@@ -274,6 +274,7 @@ class Store {
 	verifier = $state<Verifier>("polymer");
 	exclusiveFor: string = $state("");
 	recipient: string = $state("");
+	solanaRecipient: string = $state("");
 	useExclusiveForQuoteRequest = $state(false);
 
 	invalidateWalletReadCache(scope: "all" | "balance" | "allowance" | "compact" = "all") {
@@ -393,6 +394,7 @@ class Store {
 		const { bucket, ttlMs, isMainnet, scopeKey, fetcher } = opts;
 		const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
 		for (const token of coinList(isMainnet)) {
+			if (!clientsById[token.chainId]) continue; // skip non-EVM chains (e.g. Solana)
 			if (!resolved[token.chainId]) resolved[token.chainId] = {};
 			const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${scopeKey}`;
 			resolved[token.chainId][token.address] = getOrFetchRpc(

@@ -5,7 +5,11 @@ import {
 	POLYMER_ORACLE,
 	WORMHOLE_ORACLE
 } from "$lib/config";
-import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
+import {
+	SOLANA_OUTPUT_SETTLER_PDAS,
+	type IntentDeps,
+	type OrderContainerValidationDeps
+} from "@lifi/intent";
 
 function isNonZeroAddress(value: string | undefined): value is `0x${string}` {
 	return !!value && value.toLowerCase() !== "0x0000000000000000000000000000000000000000";
@@ -49,6 +53,9 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
 		return allowed;
 	},
 	allowedOutputSettlers() {
-		return [COIN_FILLER];
+		const solanaSettlers = Object.values(SOLANA_OUTPUT_SETTLER_PDAS).filter(
+			(v): v is `0x${string}` => !!v
+		);
+		return [COIN_FILLER, ...solanaSettlers];
 	}
 };

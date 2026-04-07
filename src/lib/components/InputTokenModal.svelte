@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { coinList, getChainName, type Token } from "$lib/config";
+	import { clientsById, coinList, getChainName, type Token } from "$lib/config";
+	const evmCoinList = (mainnet: boolean) =>
+		coinList(mainnet).filter((t) => !!clientsById[t.chainId]);
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import InlineMetaField from "$lib/components/ui/InlineMetaField.svelte";
@@ -80,7 +82,7 @@
 
 	const uniqueInputTokens = $derived([
 		...new Set(
-			coinList(store.mainnet)
+			evmCoinList(store.mainnet)
 				.map((v) => v.name)
 				.filter((v) => v !== "eth")
 		)
@@ -89,7 +91,9 @@
 	// svelte-ignore state_referenced_locally
 	let selectedTokenName = $state<string>(currentInputTokens[0].token.name);
 	const tokenSet = $derived(
-		coinList(store.mainnet).filter((v) => v.name.toLowerCase() === selectedTokenName.toLowerCase())
+		evmCoinList(store.mainnet).filter(
+			(v) => v.name.toLowerCase() === selectedTokenName.toLowerCase()
+		)
 	);
 
 	let circuitBreaker = false;

@@ -26,6 +26,10 @@ export const MULTICHAIN_INPUT_SETTLER_COMPACT =
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
 export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
+export const SOLANA_DEVNET_CHAIN_ID_NUM = 1151111081099712; // safe JS number (< 2^53)
+const SOLANA_POLYMER_ORACLE_DEVNET =
+	"0xe48a6f95df84c28a030f60ba5b74e4a02922a4a5724c9633109f089b2287edfc" as const;
+// Source: PDA(seed: "polymer", program: SOLANA_POLYMER_ORACLE) — confirmed in default_orders.json
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[ethereum.id]: "0x0000000000000000000000000000000000000000",
 	[arbitrum.id]: "0x0000000000000000000000000000000000000000",
@@ -43,7 +47,8 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[sepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	[baseSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	[arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00"
+	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
+	[SOLANA_DEVNET_CHAIN_ID_NUM]: SOLANA_POLYMER_ORACLE_DEVNET
 };
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
@@ -73,7 +78,9 @@ export const chainList = (mainnet: boolean) => {
 };
 
 export const chainIdList = (mainnet: boolean) => {
-	return chainList(mainnet).map((name) => chainMap[name].id);
+	const list = chainList(mainnet).map((name) => chainMap[name].id) as number[];
+	if (!mainnet) list.push(SOLANA_DEVNET_CHAIN_ID_NUM);
+	return list;
 };
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
@@ -267,6 +274,13 @@ export const coinList = (mainnet: boolean) => {
 				name: "weth",
 				chainId: arbitrumSepolia.id,
 				decimals: 18
+			},
+			// Solana devnet — token address is the SPL mint encoded as bytes32 (66 chars)
+			{
+				address: `0x3b442cb3912157f13a933d0134282d032b5ffecd01a2dbf1b7790608df002ea7`,
+				name: "usdc",
+				chainId: SOLANA_DEVNET_CHAIN_ID_NUM,
+				decimals: 6
 			}
 		] as const;
 };
@@ -324,9 +338,12 @@ export function getCoin(
 ) {
 	const { name = undefined, address = undefined } = args;
 	const chainId = normalizeChainId(args.chainId);
-	// ensure the address is ERC20-sized.
-	const concatedAddress =
-		"0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
+	// For Solana chains, the token address is a full 32-byte pubkey (66-char hex) — compare directly.
+	// For EVM chains, the address may arrive as a bytes32 left-padded with zeros — slice to 20 bytes.
+	const isSolanaChain = chainId === SOLANA_DEVNET_CHAIN_ID_NUM;
+	const concatedAddress = isSolanaChain
+		? address?.toLowerCase()
+		: "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
 	for (const token of coinList(!isChainIdTestnet(chainId))) {
 		// check chain first.
 		if (token.chainId === chainId) {
@@ -353,6 +370,7 @@ function normalizeChainId(chainId: number | bigint | string) {
 
 export function isChainIdTestnet(chainId: number | bigint | string) {
 	const normalized = normalizeChainId(chainId);
+	if (normalized === SOLANA_DEVNET_CHAIN_ID_NUM) return true;
 	const chain = chainById[normalized];
 	if (!chain) throw new Error(`Chain is not known: ${normalized}`);
 	return chain.testnet;
@@ -360,6 +378,7 @@ export function isChainIdTestnet(chainId: number | bigint | string) {
 
 export function getChainName(chainId: number | bigint | string) {
 	const normalized = normalizeChainId(chainId);
+	if (normalized === SOLANA_DEVNET_CHAIN_ID_NUM) return "solana-devnet";
 	const name = chainNameById[normalized];
 	if (!name) throw new Error(`Chain is not known: ${normalized}`);
 	return name;

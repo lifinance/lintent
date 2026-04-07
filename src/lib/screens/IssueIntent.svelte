@@ -14,7 +14,7 @@
 	import type { AppCreateIntentOptions } from "$lib/appTypes";
 	import { isAddress } from "viem";
 	import { isValidSolanaAddress, solanaAddressToBytes32 } from "$lib/utils/solana";
-	import { SOLANA_DEVNET_CHAIN_ID_NUM } from "$lib/config";
+	import { SOLANA_CHAIN_IDS } from "$lib/config";
 
 	const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
 
@@ -35,7 +35,6 @@
 	const resolveExclusiveFor = (value: string): `0x${string}` | undefined =>
 		isAddress(value, { strict: false }) ? value : undefined;
 
-	const SOLANA_CHAIN_IDS = new Set([SOLANA_DEVNET_CHAIN_ID_NUM]);
 	const resolveEvmRecipient = (value: string): `0x${string}` | undefined =>
 		isAddress(value, { strict: false }) ? (value as `0x${string}`) : undefined;
 	const resolveSolanaRecipient = (value: string): `0x${string}` | undefined =>

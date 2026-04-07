@@ -1,4 +1,9 @@
-import { createPublicClient, createWalletClient, custom, fallback, http } from "viem";
+import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
+import {
+	SOLANA_MAINNET_CHAIN_ID,
+	SOLANA_TESTNET_CHAIN_ID,
+	SOLANA_DEVNET_CHAIN_ID
+} from "@lifi/intent";
 import {
 	arbitrum,
 	arbitrumSepolia,
@@ -26,7 +31,37 @@ export const MULTICHAIN_INPUT_SETTLER_COMPACT =
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
 export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
-export const SOLANA_DEVNET_CHAIN_ID_NUM = 1151111081099712; // safe JS number (< 2^53)
+// All three Solana chain IDs as numbers (all values are < 2^53, safe as JS numbers)
+export const SOLANA_MAINNET_CHAIN_ID_NUM = Number(SOLANA_MAINNET_CHAIN_ID);
+export const SOLANA_TESTNET_CHAIN_ID_NUM = Number(SOLANA_TESTNET_CHAIN_ID);
+export const SOLANA_DEVNET_CHAIN_ID_NUM = Number(SOLANA_DEVNET_CHAIN_ID);
+export const SOLANA_CHAIN_IDS = new Set([
+	SOLANA_MAINNET_CHAIN_ID_NUM,
+	SOLANA_TESTNET_CHAIN_ID_NUM,
+	SOLANA_DEVNET_CHAIN_ID_NUM
+]);
+
+export const solanaMainnet = defineChain({
+	id: SOLANA_MAINNET_CHAIN_ID_NUM,
+	name: "Solana",
+	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
+	rpcUrls: { default: { http: ["https://api.mainnet-beta.solana.com"] } }
+});
+export const solanaTestnet = defineChain({
+	id: SOLANA_TESTNET_CHAIN_ID_NUM,
+	name: "Solana Testnet",
+	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
+	rpcUrls: { default: { http: ["https://api.testnet.solana.com"] } },
+	testnet: true
+});
+export const solanaDevnet = defineChain({
+	id: SOLANA_DEVNET_CHAIN_ID_NUM,
+	name: "Solana Devnet",
+	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
+	rpcUrls: { default: { http: ["https://api.devnet.solana.com"] } },
+	testnet: true
+});
+
 const SOLANA_POLYMER_ORACLE_DEVNET =
 	"0xe48a6f95df84c28a030f60ba5b74e4a02922a4a5724c9633109f089b2287edfc" as const;
 // Source: PDA(seed: "polymer", program: SOLANA_POLYMER_ORACLE) — confirmed in default_orders.json
@@ -67,21 +102,30 @@ export const chainMap = {
 	katana,
 	megaeth,
 	bsc,
-	polygon
+	polygon,
+	solanaMainnet,
+	solanaTestnet,
+	solanaDevnet
 } as const;
 type ChainName = keyof typeof chainMap;
 export const chains = Object.keys(chainMap) as ChainName[];
-export const chainList = (mainnet: boolean) => {
-	if (mainnet == true) {
-		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc"] as ChainName[];
-	} else return ["sepolia", "optimismSepolia", "baseSepolia", "arbitrumSepolia"] as ChainName[];
+export const chainList = (mainnet: boolean): ChainName[] => {
+	if (mainnet) {
+		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc", "solanaMainnet"];
+	} else {
+		return [
+			"sepolia",
+			"optimismSepolia",
+			"baseSepolia",
+			"arbitrumSepolia",
+			"solanaTestnet",
+			"solanaDevnet"
+		];
+	}
 };
 
-export const chainIdList = (mainnet: boolean) => {
-	const list = chainList(mainnet).map((name) => chainMap[name].id) as number[];
-	if (!mainnet) list.push(SOLANA_DEVNET_CHAIN_ID_NUM);
-	return list;
-};
+export const chainIdList = (mainnet: boolean) =>
+	chainList(mainnet).map((name) => chainMap[name].id) as number[];
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
 const chainNameEntries = chains.map((name) => [chainMap[name].id, name] as const);
@@ -340,7 +384,7 @@ export function getCoin(
 	const chainId = normalizeChainId(args.chainId);
 	// For Solana chains, the token address is a full 32-byte pubkey (66-char hex) — compare directly.
 	// For EVM chains, the address may arrive as a bytes32 left-padded with zeros — slice to 20 bytes.
-	const isSolanaChain = chainId === SOLANA_DEVNET_CHAIN_ID_NUM;
+	const isSolanaChain = SOLANA_CHAIN_IDS.has(chainId);
 	const concatedAddress = isSolanaChain
 		? address?.toLowerCase()
 		: "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
@@ -370,15 +414,13 @@ function normalizeChainId(chainId: number | bigint | string) {
 
 export function isChainIdTestnet(chainId: number | bigint | string) {
 	const normalized = normalizeChainId(chainId);
-	if (normalized === SOLANA_DEVNET_CHAIN_ID_NUM) return true;
 	const chain = chainById[normalized];
 	if (!chain) throw new Error(`Chain is not known: ${normalized}`);
-	return chain.testnet;
+	return chain.testnet ?? false;
 }
 
 export function getChainName(chainId: number | bigint | string) {
 	const normalized = normalizeChainId(chainId);
-	if (normalized === SOLANA_DEVNET_CHAIN_ID_NUM) return "solana-devnet";
 	const name = chainNameById[normalized];
 	if (!name) throw new Error(`Chain is not known: ${normalized}`);
 	return name;
@@ -490,15 +532,25 @@ export const clients = {
 	})
 } as const;
 
-export const chainById = Object.fromEntries(chainEntries) as Record<
-	number,
-	(typeof chainMap)[keyof typeof chainMap]
->;
+export const chainById = {
+	...Object.fromEntries(chainEntries),
+	[solanaMainnet.id]: solanaMainnet,
+	[solanaTestnet.id]: solanaTestnet,
+	[solanaDevnet.id]: solanaDevnet
+} as Record<number, (typeof chainMap)[keyof typeof chainMap] | typeof solanaMainnet>;
 
-export const chainNameById = Object.fromEntries(chainNameEntries) as Record<number, ChainName>;
+export const chainNameById = {
+	...Object.fromEntries(chainNameEntries),
+	[solanaMainnet.id]: "solana",
+	[solanaTestnet.id]: "solana-testnet",
+	[solanaDevnet.id]: "solana-devnet"
+} as Record<number, string>;
 
 export const clientsById = Object.fromEntries(
-	chains.map((name) => [chainMap[name].id, clients[name]])
+	(Object.keys(clients) as (keyof typeof clients)[]).map((name) => [
+		chainMap[name].id,
+		clients[name]
+	])
 ) as Record<number, (typeof clients)[keyof typeof clients]>;
 
 export type WC = ReturnType<

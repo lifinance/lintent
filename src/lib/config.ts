@@ -139,8 +139,8 @@ export type Token = {
 	decimals: number;
 };
 
-export const coinList = (mainnet: boolean) => {
-	if (mainnet == true)
+export const coinList = (mainnet: boolean): Token[] => {
+	if (mainnet)
 		return [
 			{
 				address: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`,
@@ -243,6 +243,14 @@ export const coinList = (mainnet: boolean) => {
 				name: "usdc.e",
 				chainId: polygon.id,
 				decimals: 6
+			},
+			// Solana mainnet — SPL mint addresses encoded as bytes32 (66 chars); ADDRESS_ZERO = native SOL
+			{ address: ADDRESS_ZERO, name: "sol", chainId: SOLANA_MAINNET_CHAIN_ID_NUM, decimals: 9 },
+			{
+				address: `0xc6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61`,
+				name: "usdc",
+				chainId: SOLANA_MAINNET_CHAIN_ID_NUM,
+				decimals: 6
 			}
 		] as const;
 	else
@@ -319,15 +327,22 @@ export const coinList = (mainnet: boolean) => {
 				chainId: arbitrumSepolia.id,
 				decimals: 18
 			},
-			// Solana devnet — token address is the SPL mint encoded as bytes32 (66 chars)
+			// Solana devnet — SPL mint addresses encoded as bytes32 (66 chars); ADDRESS_ZERO = native SOL
+			{ address: ADDRESS_ZERO, name: "sol", chainId: SOLANA_DEVNET_CHAIN_ID_NUM, decimals: 9 },
 			{
 				address: `0x3b442cb3912157f13a933d0134282d032b5ffecd01a2dbf1b7790608df002ea7`,
 				name: "usdc",
 				chainId: SOLANA_DEVNET_CHAIN_ID_NUM,
 				decimals: 6
 			}
-		] as const;
+		];
 };
+
+export const evmCoinList = (mainnet: boolean) =>
+	coinList(mainnet).filter((t) => !!clientsById[t.chainId]);
+
+export const solanaCoinList = (mainnet: boolean) =>
+	coinList(mainnet).filter((t) => SOLANA_CHAIN_IDS.has(t.chainId));
 
 export function printToken(token: Token) {
 	return `${token.name.toUpperCase()}, ${getChainName(token.chainId)}`;

@@ -1,7 +1,5 @@
 <script lang="ts">
-	import { clientsById, coinList, getChainName, type Token } from "$lib/config";
-	const evmCoinList = (mainnet: boolean) =>
-		coinList(mainnet).filter((t) => !!clientsById[t.chainId]);
+	import { evmCoinList, getChainName, type Token } from "$lib/config";
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import InlineMetaField from "$lib/components/ui/InlineMetaField.svelte";

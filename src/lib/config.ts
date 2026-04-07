@@ -71,7 +71,12 @@ const _solanaDevnetConn = new Connection(SOLANA_DEVNET_RPC, "confirmed");
 const _solanaMainnetConn = new Connection(SOLANA_MAINNET_RPC, "confirmed");
 
 export function getSolanaConnection(chainId: number | bigint): Connection {
-	return Number(chainId) === solanaMainnet.id ? _solanaMainnetConn : _solanaDevnetConn;
+	const id = Number(chainId);
+	if (id === solanaMainnet.id) return _solanaMainnetConn;
+	if (id === solanaDevnet.id) return _solanaDevnetConn;
+	throw new Error(
+		`No Solana connection configured for chain ID ${id}. Solana testnet is not supported.`
+	);
 }
 
 export function isSolanaChain(chainId: number | bigint): boolean {
@@ -178,7 +183,8 @@ type ChainName = keyof typeof chainMap;
 export const chains = Object.keys(chainMap) as ChainName[];
 export const chainList = (mainnet: boolean): ChainName[] => {
 	if (mainnet) {
-		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc", "solanaMainnet"];
+		// solanaMainnet omitted until SOLANA_PROGRAMS.mainnet are deployed and tested.
+		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc"];
 	} else {
 		return [
 			"sepolia",
@@ -309,14 +315,6 @@ export const coinList = (mainnet: boolean): Token[] => {
 				address: `0x2791bca1f2de4661ed88a30c99a7a9449aa84174`,
 				name: "usdc.e",
 				chainId: polygon.id,
-				decimals: 6
-			},
-			// Solana mainnet — SPL mint addresses encoded as bytes32 (66 chars); ADDRESS_ZERO = native SOL
-			{ address: ADDRESS_ZERO, name: "sol", chainId: SOLANA_MAINNET_CHAIN_ID_NUM, decimals: 9 },
-			{
-				address: `0xc6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61`,
-				name: "usdc",
-				chainId: SOLANA_MAINNET_CHAIN_ID_NUM,
 				decimals: 6
 			}
 		] as const;
@@ -569,7 +567,7 @@ export const evmClients = {
 		])
 	}),
 	polygon: createPublicClient({
-		chain: base,
+		chain: polygon,
 		transport: fallback([
 			http("https://polygon-bor-rpc.publicnode.com"),
 			...polygon.rpcUrls.default.http.map((v) => http(v))

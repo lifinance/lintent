@@ -1,12 +1,12 @@
 import type { Connection } from "@solana/web3.js";
 
-const CONFIRM_TIMEOUT_MS = 5_000;
+const CONFIRM_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 1;
 
 /**
  * Sends a serialized signed Solana transaction and waits for on-chain confirmation.
  *
- * If confirmation does not arrive within `confirmTimeoutMs` (default 5 s), the same
+ * If confirmation does not arrive within `confirmTimeoutMs` (default 30 s), the same
  * transaction is re-submitted once more and the wait is repeated. Throws if all
  * attempts are exhausted without confirmation.
  *

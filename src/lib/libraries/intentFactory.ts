@@ -17,8 +17,7 @@ import type {
 	NoSignature,
 	OrderContainer,
 	Signature,
-	StandardOrder,
-	StandardSolana
+	StandardOrder
 } from "@lifi/intent";
 import { Intent, IntentApi, StandardSolanaIntent } from "@lifi/intent";
 import type { StandardEVMIntent, MultichainOrderIntent } from "@lifi/intent";
@@ -109,7 +108,7 @@ export class IntentFactory {
 	}
 
 	private saveOrder(options: {
-		order: StandardOrder | MultichainOrder | StandardSolana;
+		order: StandardOrder | MultichainOrder;
 		inputSettler: `0x${string}`;
 		sponsorSignature?: Signature | NoSignature;
 		allocatorSignature?: Signature | NoSignature;
@@ -142,11 +141,6 @@ export class IntentFactory {
 				throw new Error("Compact signing is not supported for Solana intents.");
 
 			const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
-
-			console.log({
-				order: intent.asOrder(),
-				sponsorSignature
-			});
 
 			this.saveOrder({
 				order: intent.asOrder(),
@@ -185,7 +179,7 @@ export class IntentFactory {
 
 			let transactionHash = await depositAndRegisterCompact(intent, account(), this.walletClient);
 
-			const receipt = await getClient(inputTokens[0].token.chainId).waitForTransactionReceipt({
+			await getClient(inputTokens[0].token.chainId).waitForTransactionReceipt({
 				hash: transactionHash
 			});
 

@@ -3,7 +3,7 @@ import idl from "../abi/input_settler_escrow.json";
 import { SOLANA_INPUT_SETTLER_ESCROW, SOLANA_POLYMER_ORACLE } from "../config";
 import type { MandateOutput, StandardSolana } from "@lifi/intent";
 import type { SignerWalletAdapter } from "@solana/wallet-adapter-base";
-import type { Connection } from "@solana/web3.js";
+import type { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { sendAndConfirmSolanaTx } from "$lib/utils/solanaTx";
 
 /** Convert a 0x-prefixed hex string (32 bytes) to a number[] */
@@ -50,18 +50,23 @@ export async function openSolanaEscrow(params: {
 	const polymerProgramId = new PublicKey(SOLANA_POLYMER_ORACLE);
 
 	// Wrap the wallet adapter as an Anchor-compatible wallet.
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const anchorWallet = {
 		publicKey: userPubkey,
-		signTransaction: (tx: any) => walletAdapter.signTransaction(tx),
-		signAllTransactions: (txs: any[]) => walletAdapter.signAllTransactions(txs)
+		signTransaction: <T extends Transaction | VersionedTransaction>(tx: T) =>
+			walletAdapter.signTransaction(tx),
+		signAllTransactions: <T extends Transaction | VersionedTransaction>(txs: T[]) =>
+			walletAdapter.signAllTransactions(txs)
 	};
 
+	// `idl` is typed as a plain JSON object; cast to any so Anchor's Program generic accepts it.
+	// `anchorWallet` is cast to any because Anchor's internal AnchorWallet type may differ across
+	// peer-dependency versions of @solana/web3.js.
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const typedIdl = idl as any;
-	const provider = new AnchorProvider(connection as any, anchorWallet as any, {
+	const provider = new AnchorProvider(connection, anchorWallet as any, {
 		commitment: "confirmed"
 	});
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const typedIdl = idl as any;
 	// Program converts the IDL to camelCase internally; its coder uses camelCase field names.
 	const program = new Program(typedIdl, provider);
 

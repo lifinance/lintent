@@ -1,4 +1,5 @@
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
+import { Connection } from "@solana/web3.js";
 import {
 	SOLANA_MAINNET_CHAIN_ID,
 	SOLANA_TESTNET_CHAIN_ID,
@@ -41,30 +42,101 @@ export const SOLANA_CHAIN_IDS = new Set([
 	SOLANA_DEVNET_CHAIN_ID_NUM
 ]);
 
+const SOLANA_DEVNET_RPC = "https://api.devnet.solana.com";
+const SOLANA_MAINNET_RPC = "https://api.mainnet-beta.solana.com";
+const SOLANA_TESTNET_RPC = "https://api.testnet.solana.com";
+
 export const solanaMainnet = defineChain({
 	id: SOLANA_MAINNET_CHAIN_ID_NUM,
 	name: "Solana",
 	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
-	rpcUrls: { default: { http: ["https://api.mainnet-beta.solana.com"] } }
+	rpcUrls: { default: { http: [SOLANA_MAINNET_RPC] } }
 });
 export const solanaTestnet = defineChain({
 	id: SOLANA_TESTNET_CHAIN_ID_NUM,
 	name: "Solana Testnet",
 	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
-	rpcUrls: { default: { http: ["https://api.testnet.solana.com"] } },
+	rpcUrls: { default: { http: [SOLANA_TESTNET_RPC] } },
 	testnet: true
 });
 export const solanaDevnet = defineChain({
 	id: SOLANA_DEVNET_CHAIN_ID_NUM,
 	name: "Solana Devnet",
 	nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
-	rpcUrls: { default: { http: ["https://api.devnet.solana.com"] } },
+	rpcUrls: { default: { http: [SOLANA_DEVNET_RPC] } },
 	testnet: true
 });
 
-// Source: PDA(seed: "polymer", program: SOLANA_POLYMER_ORACLE) — confirmed in default_orders.json
-const SOLANA_POLYMER_ORACLE_DEVNET =
-	"0xe48a6f95df84c28a030f60ba5b74e4a02922a4a5724c9633109f089b2287edfc" as const;
+const _solanaDevnetConn = new Connection(SOLANA_DEVNET_RPC, "confirmed");
+const _solanaMainnetConn = new Connection(SOLANA_MAINNET_RPC, "confirmed");
+
+export function getSolanaConnection(chainId: number | bigint): Connection {
+	const id = Number(chainId);
+	if (id === solanaMainnet.id) return _solanaMainnetConn;
+	if (id === solanaDevnet.id) return _solanaDevnetConn;
+	throw new Error(
+		`No Solana connection configured for chain ID ${id}. Solana testnet is not supported.`
+	);
+}
+
+export function isSolanaChain(chainId: number | bigint): boolean {
+	return SOLANA_CHAIN_IDS.has(Number(chainId));
+}
+
+// catalyst-intent-svm program IDs, keyed by network
+export const SOLANA_PROGRAMS: {
+	devnet: Record<string, string>;
+	mainnet: Record<string, string | null>;
+} = {
+	devnet: {
+		// from Anchor.toml
+		INTENTS_PROTOCOL: "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz",
+		OUTPUT_SETTLER_SIMPLE: "58CsNaufL383JL7J1jafGW4eWgeQFX5vSZssjsk4WKXd",
+		INPUT_SETTLER_ESCROW: "5QngyaYhNscSebqV4DwYQhk333p5CMP8A9yyLX3pPyXC",
+		POLYMER_ORACLE: "C2rAFLS6xQ78t18rK5s9madY9fztbhTaHwShgYtzonk7"
+	},
+	mainnet: {
+		// Mainnet program IDs are not yet deployed. Remove solanaMainnet from chainList(true)
+		// until these are filled in and re-tested.
+		INTENTS_PROTOCOL: null,
+		OUTPUT_SETTLER_SIMPLE: null,
+		INPUT_SETTLER_ESCROW: null,
+		POLYMER_ORACLE: null
+	}
+};
+
+/** Throws a descriptive error when a mainnet Solana program ID is accessed before deployment. */
+export function requireSolanaProgram(id: string | null, name: string): string {
+	if (id === null)
+		throw new Error(
+			`Solana mainnet program "${name}" is not deployed yet. Update SOLANA_PROGRAMS.mainnet and re-test before enabling mainnet.`
+		);
+	return id;
+}
+
+// Derived PDAs, keyed by network
+export const SOLANA_PDAS = {
+	devnet: {
+		// PDA(seed: "output_settler_simple", program: SOLANA_PROGRAMS.devnet.OUTPUT_SETTLER_SIMPLE)
+		OUTPUT_SETTLER:
+			"0xabb04f05c412a4892f8c93efa4eda9f360ba8b5c8342bed51207c7a4fdd036d6" as `0x${string}`,
+		// PDA(seed: "polymer", program: SOLANA_PROGRAMS.devnet.POLYMER_ORACLE)
+		POLYMER_ORACLE:
+			"0xe48a6f95df84c28a030f60ba5b74e4a02922a4a5724c9633109f089b2287edfc" as `0x${string}`
+	},
+	mainnet: {
+		OUTPUT_SETTLER: BYTES32_ZERO,
+		POLYMER_ORACLE: BYTES32_ZERO
+	}
+} as const;
+
+// Flat exports for use throughout the codebase
+export const SOLANA_INTENTS_PROTOCOL = SOLANA_PROGRAMS.devnet.INTENTS_PROTOCOL;
+export const SOLANA_OUTPUT_SETTLER_SIMPLE = SOLANA_PROGRAMS.devnet.OUTPUT_SETTLER_SIMPLE;
+export const SOLANA_INPUT_SETTLER_ESCROW = SOLANA_PROGRAMS.devnet.INPUT_SETTLER_ESCROW;
+export const SOLANA_POLYMER_ORACLE = SOLANA_PROGRAMS.devnet.POLYMER_ORACLE;
+export const SOLANA_OUTPUT_SETTLER_PDA = SOLANA_PDAS.devnet.OUTPUT_SETTLER;
+
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[ethereum.id]: "0x0000000000000000000000000000000000000000",
 	[arbitrum.id]: "0x0000000000000000000000000000000000000000",
@@ -83,7 +155,7 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[baseSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	[arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	[optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-	[SOLANA_DEVNET_CHAIN_ID_NUM]: SOLANA_POLYMER_ORACLE_DEVNET
+	[SOLANA_DEVNET_CHAIN_ID_NUM]: SOLANA_PDAS.devnet.POLYMER_ORACLE
 };
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
@@ -111,7 +183,8 @@ type ChainName = keyof typeof chainMap;
 export const chains = Object.keys(chainMap) as ChainName[];
 export const chainList = (mainnet: boolean): ChainName[] => {
 	if (mainnet) {
-		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc", "solanaMainnet"];
+		// solanaMainnet omitted until SOLANA_PROGRAMS.mainnet are deployed and tested.
+		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc"];
 	} else {
 		return [
 			"sepolia",
@@ -242,14 +315,6 @@ export const coinList = (mainnet: boolean): Token[] => {
 				address: `0x2791bca1f2de4661ed88a30c99a7a9449aa84174`,
 				name: "usdc.e",
 				chainId: polygon.id,
-				decimals: 6
-			},
-			// Solana mainnet — SPL mint addresses encoded as bytes32 (66 chars); ADDRESS_ZERO = native SOL
-			{ address: ADDRESS_ZERO, name: "sol", chainId: SOLANA_MAINNET_CHAIN_ID_NUM, decimals: 9 },
-			{
-				address: `0xc6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61`,
-				name: "usdc",
-				chainId: SOLANA_MAINNET_CHAIN_ID_NUM,
 				decimals: 6
 			}
 		] as const;
@@ -502,7 +567,7 @@ export const evmClients = {
 		])
 	}),
 	polygon: createPublicClient({
-		chain: base,
+		chain: polygon,
 		transport: fallback([
 			http("https://polygon-bor-rpc.publicnode.com"),
 			...polygon.rpcUrls.default.http.map((v) => http(v))

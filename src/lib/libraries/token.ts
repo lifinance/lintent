@@ -3,6 +3,7 @@ import { COMPACT_ABI } from "../abi/compact";
 import { ERC20_ABI } from "../abi/erc20";
 import { ADDRESS_ZERO, evmClients, COMPACT } from "../config";
 import { ResetPeriod, toId } from "@lifi/intent";
+import { Connection, PublicKey } from "@solana/web3.js";
 
 export async function getBalance(
 	user: `0x${string}` | undefined,
@@ -59,5 +60,45 @@ export async function getCompactBalance(
 		});
 	} catch {
 		return 0n;
+	}
+}
+
+const SOLANA_RPC_TIMEOUT_MS = 10_000;
+
+export async function getSolanaBalance(
+	userBase58: string | undefined,
+	asset: `0x${string}`,
+	connection: Connection
+): Promise<bigint | null> {
+	if (!userBase58) return null;
+	try {
+		const signal = AbortSignal.timeout(SOLANA_RPC_TIMEOUT_MS);
+		const userPubkey = new PublicKey(userBase58);
+		if (asset === ADDRESS_ZERO) {
+			const lamports = await Promise.race([
+				connection.getBalance(userPubkey),
+				new Promise<never>((_, reject) =>
+					signal.addEventListener("abort", () => reject(signal.reason))
+				)
+			]);
+			return BigInt(lamports);
+		}
+		const mintBytes = Buffer.from(asset.replace("0x", ""), "hex");
+		const mintPubkey = new PublicKey(mintBytes);
+		const tokenAccounts = await Promise.race([
+			connection.getParsedTokenAccountsByOwner(userPubkey, { mint: mintPubkey }),
+			new Promise<never>((_, reject) =>
+				signal.addEventListener("abort", () => reject(signal.reason))
+			)
+		]);
+		if (tokenAccounts.value.length === 0) return 0n;
+		const amount = tokenAccounts.value[0]?.account?.data?.parsed?.info?.tokenAmount?.amount;
+		if (typeof amount !== "string") {
+			throw new Error("Unexpected Solana RPC response: missing tokenAmount in parsed account data");
+		}
+		return BigInt(amount);
+	} catch (e) {
+		console.error("getSolanaBalance failed", { userBase58, asset, error: e });
+		return null;
 	}
 }

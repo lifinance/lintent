@@ -42,6 +42,9 @@
 	const resolveSolanaRecipient = (value: string): `0x${string}` | undefined =>
 		isValidSolanaAddress(value) ? solanaAddressToBytes32(value) : undefined;
 
+	const hasSolanaInput = $derived(
+		store.inputTokens.some((t) => SOLANA_CHAIN_IDS.has(t.token.chainId))
+	);
 	const hasSolanaOutput = $derived(
 		store.outputTokens.some((t) => SOLANA_CHAIN_IDS.has(t.token.chainId))
 	);
@@ -131,15 +134,30 @@
 	let balanceCheckWallet = $state(true);
 	$effect(() => {
 		balanceCheckWallet = true;
-		if (!store.balances[store.inputTokens[0].token.chainId]) {
-			balanceCheckWallet = false;
-			return;
-		}
-		for (let i = 0; i < store.inputTokens.length; ++i) {
-			const { token, amount } = store.inputTokens[i];
-			store.balances[token.chainId][token.address].then((b) => {
-				balanceCheckWallet = balanceCheckWallet && b >= amount;
-			});
+		const firstToken = store.inputTokens[0];
+		if (SOLANA_CHAIN_IDS.has(firstToken.token.chainId)) {
+			for (let i = 0; i < store.inputTokens.length; ++i) {
+				const { token, amount } = store.inputTokens[i];
+				const balPromise = store.solanaBalances[token.chainId]?.[token.address];
+				if (!balPromise) {
+					balanceCheckWallet = false;
+					return;
+				}
+				balPromise.then((b) => {
+					balanceCheckWallet = balanceCheckWallet && b !== null && b >= amount;
+				});
+			}
+		} else {
+			if (!store.balances[firstToken.token.chainId]) {
+				balanceCheckWallet = false;
+				return;
+			}
+			for (let i = 0; i < store.inputTokens.length; ++i) {
+				const { token, amount } = store.inputTokens[i];
+				store.balances[token.chainId][token.address].then((b) => {
+					balanceCheckWallet = balanceCheckWallet && b >= amount;
+				});
+			}
 		}
 	});
 	let balanceCheckCompact = $state(true);
@@ -396,7 +414,7 @@
 				>
 					Solana Recipient Required
 				</button>
-			{:else if !allowanceCheck}
+			{:else if !allowanceCheck && !hasSolanaInput}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance

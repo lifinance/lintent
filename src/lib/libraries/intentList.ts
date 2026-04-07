@@ -2,6 +2,7 @@ import {
 	formatTokenAmount,
 	getChainName,
 	getCoin,
+	isSolanaChain,
 	INPUT_SETTLER_ESCROW_LIFI,
 	INPUT_SETTLER_COMPACT_LIFI,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
@@ -75,23 +76,30 @@ function shortAddress(value: string, start = 6, end = 4) {
 }
 
 function summarizeInput(chainId: bigint, tokenId: bigint, amount: bigint): string {
-	const tokenAddress = idToToken(tokenId);
+	// After a DB round-trip, bigint fields are serialized as strings — coerce them back.
+	const tokenIdBig = BigInt(tokenId);
+	const amountBig = BigInt(amount);
+	// Solana token IDs are full 32-byte SPL mint pubkeys; idToToken is EVM-only (strips to 20 bytes)
+	const tokenAddress = isSolanaChain(chainId)
+		? (`0x${tokenIdBig.toString(16).padStart(64, "0")}` as `0x${string}`)
+		: idToToken(tokenIdBig);
 	const chainName = safeChainName(chainId);
 	if (!chainName) {
-		return `${amount.toString()} ${shortAddress(tokenAddress)} on chain-${chainId.toString()}`;
+		return `${amountBig.toString()} ${shortAddress(tokenAddress)} on chain-${chainId.toString()}`;
 	}
 	const coin = getCoin({ address: tokenAddress, chainId });
-	const amountText = formatTokenAmount(amount, coin.decimals);
+	const amountText = formatTokenAmount(amountBig, coin.decimals);
 	return `${amountText} ${coin.name.toUpperCase()} on ${chainName}`;
 }
 
 function summarizeOutput(chainId: bigint, token: `0x${string}`, amount: bigint): string {
+	const amountBig = BigInt(amount);
 	const chainName = safeChainName(chainId);
 	if (!chainName) {
-		return `${amount.toString()} ${shortAddress(token)} on chain-${chainId.toString()}`;
+		return `${amountBig.toString()} ${shortAddress(token)} on chain-${chainId.toString()}`;
 	}
 	const coin = getCoin({ address: token, chainId });
-	const amountText = formatTokenAmount(amount, coin.decimals);
+	const amountText = formatTokenAmount(amountBig, coin.decimals);
 	return `${amountText} ${coin.name.toUpperCase()} on ${chainName}`;
 }
 

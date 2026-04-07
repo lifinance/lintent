@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { evmCoinList, getChainName, type Token } from "$lib/config";
+	import { evmClientsById, coinList, getChainName, isSolanaChain, type Token } from "$lib/config";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 	import FieldRow from "$lib/components/ui/FieldRow.svelte";
 	import FormControl from "$lib/components/ui/FormControl.svelte";
 	import InlineMetaField from "$lib/components/ui/InlineMetaField.svelte";
@@ -29,12 +30,34 @@
 			])
 		)
 	);
+
+	// Build initial enabledByToken from the full token set for the current name,
+	// enforcing Solana/EVM exclusivity from the start.
+	const _initTokenName = (currentInputTokens ?? [])[0]?.token.name ?? "";
+	const _initTokenSet = coinList(store.mainnet).filter(
+		(v) => v.name.toLowerCase() === _initTokenName.toLowerCase()
+	);
+	const _initHasEvmTokens = _initTokenSet.some((t) => !isSolanaChain(t.chainId));
+	const _initCurrentHasSolana = (currentInputTokens ?? []).some(({ token }) =>
+		isSolanaChain(token.chainId)
+	);
+	const _initCurrentAddrs = new Set(
+		(currentInputTokens ?? []).map(({ token }) =>
+			getInteropableAddress(token.address, token.chainId)
+		)
+	);
+
 	let enabledByToken = $state<{ [index: InteropableAddress]: boolean }>(
 		Object.fromEntries(
-			(currentInputTokens ?? []).map(({ token }) => [
-				getInteropableAddress(token.address, token.chainId),
-				true
-			])
+			_initTokenSet.map((token) => {
+				const iaddr = getInteropableAddress(token.address, token.chainId);
+				if (_initCurrentAddrs.has(iaddr)) return [iaddr, true];
+				// Don't auto-enable a chain that conflicts with the current side
+				if (_initCurrentHasSolana && !isSolanaChain(token.chainId)) return [iaddr, false];
+				if (!_initCurrentHasSolana && _initHasEvmTokens && isSolanaChain(token.chainId))
+					return [iaddr, false];
+				return [iaddr, true];
+			})
 		)
 	);
 	// svelte-ignore state_referenced_locally
@@ -45,7 +68,29 @@
 	const rowColumns = "4.5rem minmax(0,1fr) 2rem";
 	const iaddrFor = (token: Token) => getInteropableAddress(token.address, token.chainId);
 
-	const isEnabled = (address: InteropableAddress) => enabledByToken[address] ?? true;
+	const isEnabled = (address: InteropableAddress) => enabledByToken[address] ?? false;
+
+	function toggleEnabled(iaddr: InteropableAddress) {
+		const token = getTokenFor(iaddr);
+		if (!token) return;
+		const enabling = !enabledByToken[iaddr];
+		if (enabling) {
+			if (isSolanaChain(token.chainId)) {
+				// Enabling a Solana chain → disable all EVM chains
+				for (const addr of Object.keys(enabledByToken) as InteropableAddress[]) {
+					const t = getTokenFor(addr);
+					if (t && !isSolanaChain(t.chainId)) enabledByToken[addr] = false;
+				}
+			} else {
+				// Enabling an EVM chain → disable all Solana chains
+				for (const addr of Object.keys(enabledByToken) as InteropableAddress[]) {
+					const t = getTokenFor(addr);
+					if (t && isSolanaChain(t.chainId)) enabledByToken[addr] = false;
+				}
+			}
+		}
+		enabledByToken[iaddr] = enabling;
+	}
 
 	function getTokenFor(address: InteropableAddress): Token | undefined {
 		for (const token of tokenSet) {
@@ -54,19 +99,20 @@
 		}
 	}
 
+	const hasClient = (chainId: number) => !!evmClientsById[chainId];
+	const isChainAvailable = (chainId: number) => !isSolanaChain(chainId) || solanaWallet.connected;
+
 	function save() {
 		// Go over every single non-0 instance in the array:
 		const inputKeys = Object.keys(inputs) as InteropableAddress[];
 		const inputTokens: AppTokenContext[] = [];
 		for (const key of inputKeys) {
-			// Check that key is a number
 			const inputValue = v(inputs[key]);
-			// The token would be:
 			const token = getTokenFor(key);
-			// If we can't find the token, then it is most likely because the user changed their token.
+			// If we can't find the token, the user most likely changed their selection.
 			if (!token) continue;
 			if (!isEnabled(key)) continue;
-
+			if (!hasClient(token.chainId) && !isChainAvailable(token.chainId)) continue;
 			if (inputValue === 0) continue;
 			inputTokens.push({ token, amount: toBigIntWithDecimals(inputValue, token.decimals) });
 		}
@@ -80,7 +126,7 @@
 
 	const uniqueInputTokens = $derived([
 		...new Set(
-			evmCoinList(store.mainnet)
+			coinList(store.mainnet)
 				.map((v) => v.name)
 				.filter((v) => v !== "eth")
 		)
@@ -89,9 +135,7 @@
 	// svelte-ignore state_referenced_locally
 	let selectedTokenName = $state<string>(currentInputTokens[0].token.name);
 	const tokenSet = $derived(
-		evmCoinList(store.mainnet).filter(
-			(v) => v.name.toLowerCase() === selectedTokenName.toLowerCase()
-		)
+		coinList(store.mainnet).filter((v) => v.name.toLowerCase() === selectedTokenName.toLowerCase())
 	);
 
 	let circuitBreaker = false;
@@ -100,7 +144,14 @@
 		if (circuitBreaker || currentInputTokens[0].token.name !== selectedTokenName) {
 			circuitBreaker = true;
 			inputs = Object.fromEntries(tokenSet.map((token) => [iaddrFor(token), 0]));
-			enabledByToken = Object.fromEntries(tokenSet.map((token) => [iaddrFor(token), true]));
+			// When the token set has both EVM and Solana chains, default to EVM-only.
+			const hasEvmTokens = tokenSet.some((token) => !isSolanaChain(token.chainId));
+			enabledByToken = Object.fromEntries(
+				tokenSet.map((token) => [
+					iaddrFor(token),
+					hasEvmTokens ? !isSolanaChain(token.chainId) : true
+				])
+			);
 		}
 	});
 
@@ -108,7 +159,7 @@
 		const tokens = tokenSet;
 		const selectedIndices = tokens
 			.map((token, i) => [token, i] as const)
-			.filter(([token]) => isEnabled(iaddrFor(token)))
+			.filter(([token]) => hasClient(token.chainId) && isEnabled(iaddrFor(token)))
 			.map(([, i]) => i);
 		if (selectedIndices.length === 0) {
 			for (const token of tokens) {
@@ -214,32 +265,72 @@
 				<div>
 					{#each tokenSet as tkn, rowIndex}
 						{@const iaddr = iaddrFor(tkn)}
+						{@const evmChain = hasClient(tkn.chainId)}
+						{@const chainAvailable = isChainAvailable(tkn.chainId)}
 						<div data-testid={`input-token-row-${getChainName(tkn.chainId)}`}>
 							<FieldRow columns={rowColumns} striped index={rowIndex}>
-								<div class="truncate text-xs font-medium text-gray-700">
+								<div
+									class="truncate text-xs font-medium {evmChain ||
+									(isSolanaChain(tkn.chainId) && chainAvailable)
+										? 'text-gray-700'
+										: 'text-gray-400'}"
+								>
 									{getChainName(tkn.chainId)}
 								</div>
-								{#await (store.intentType === "compact" ? store.compactBalances : store.balances)[tkn.chainId][tkn.address]}
+								{#if evmChain}
+									{#await (store.intentType === "compact" ? store.compactBalances : store.balances)[tkn.chainId][tkn.address]}
+										<InlineMetaField
+											bind:value={inputs[iaddr]}
+											metaText="..."
+											disabled={!isEnabled(iaddr) || !chainAvailable}
+										/>
+									{:then balance}
+										<InlineMetaField
+											bind:value={inputs[iaddr]}
+											metaText={formatBalance(balance, tkn.decimals)}
+											disabled={!isEnabled(iaddr) || !chainAvailable}
+										/>
+									{:catch}
+										<InlineMetaField
+											bind:value={inputs[iaddr]}
+											metaText="err"
+											disabled={!isEnabled(iaddr) || !chainAvailable}
+										/>
+									{/await}
+								{:else if store.solanaBalances[tkn.chainId]?.[tkn.address]}
+									{#await store.solanaBalances[tkn.chainId]![tkn.address]}
+										<InlineMetaField
+											bind:value={inputs[iaddr]}
+											metaText="..."
+											disabled={!isEnabled(iaddr) || !chainAvailable}
+										/>
+									{:then balance}
+										<InlineMetaField
+											bind:value={inputs[iaddr]}
+											metaText={balance !== null ? formatBalance(balance, tkn.decimals) : "err"}
+											disabled={!isEnabled(iaddr) || !chainAvailable}
+										/>
+									{:catch}
+										<InlineMetaField
+											bind:value={inputs[iaddr]}
+											metaText="err"
+											disabled={!isEnabled(iaddr) || !chainAvailable}
+										/>
+									{/await}
+								{:else}
 									<InlineMetaField
 										bind:value={inputs[iaddr]}
-										metaText="..."
-										disabled={!isEnabled(iaddr)}
+										metaText="—"
+										disabled={!isEnabled(iaddr) || !chainAvailable}
 									/>
-								{:then balance}
-									<InlineMetaField
-										bind:value={inputs[iaddr]}
-										metaText={formatBalance(balance, tkn.decimals)}
-										disabled={!isEnabled(iaddr)}
-									/>
-								{:catch _}
-									<InlineMetaField
-										bind:value={inputs[iaddr]}
-										metaText="err"
-										disabled={!isEnabled(iaddr)}
-									/>
-								{/await}
+								{/if}
 								<div class="flex justify-center">
-									<input type="checkbox" bind:checked={enabledByToken[iaddr]} />
+									<input
+										type="checkbox"
+										checked={isEnabled(iaddr)}
+										onchange={() => toggleEnabled(iaddr)}
+										disabled={!chainAvailable}
+									/>
 								</div>
 							</FieldRow>
 						</div>

@@ -22,7 +22,9 @@ export function containerToIntent(
 	if (!("originChainId" in order)) {
 		return orderToIntent({ namespace: "eip155", inputSettler, order });
 	}
-	if (SOLANA_CHAIN_IDS.has(order.originChainId)) {
+	// After a JSON round-trip through the DB, bigints are serialized as strings.
+	// Wrap in BigInt() so the Set comparison works regardless.
+	if (SOLANA_CHAIN_IDS.has(BigInt(order.originChainId))) {
 		return orderToIntent({ namespace: "solana", inputSettler, order });
 	}
 	return orderToIntent({ namespace: "eip155", inputSettler, order });

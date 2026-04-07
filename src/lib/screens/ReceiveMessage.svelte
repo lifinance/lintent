@@ -12,7 +12,7 @@
 	import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
 	import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
 	import store from "$lib/state.svelte";
-	import { orderToIntent } from "@lifi/intent";
+	import { containerToIntent } from "$lib/utils/intent";
 	import { compactTypes } from "@lifi/intent";
 
 	// This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
@@ -110,7 +110,7 @@
 	$effect(() => {
 		refreshValidation;
 
-		const intent = orderToIntent(orderContainer);
+		const intent = containerToIntent(orderContainer);
 		const orderId = intent.orderId();
 		if (autoScrolledOrderId === orderId) return;
 
@@ -167,7 +167,7 @@
 	description="Click on each output and wait until they turn green. Polymer does not support batch validation. Continue to the right."
 >
 	<div class="space-y-2">
-		{#each orderToIntent(orderContainer).inputChains() as inputChain}
+		{#each containerToIntent(orderContainer).inputChains() as inputChain}
 			<SectionCard compact>
 				<ChainActionRow chainLabel={getChainName(inputChain)}>
 					{#snippet action()}

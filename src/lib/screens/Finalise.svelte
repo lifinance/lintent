@@ -22,7 +22,7 @@
 	import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 	import { idToToken } from "@lifi/intent";
 	import store from "$lib/state.svelte";
-	import { orderToIntent } from "@lifi/intent";
+	import { containerToIntent } from "$lib/utils/intent";
 	import { hashStruct } from "viem";
 	import { compactTypes } from "@lifi/intent";
 
@@ -41,7 +41,7 @@
 	let refreshClaimed = $state(0);
 	let claimedByChain = $state<Record<string, boolean>>({});
 	let claimStatusRun = 0;
-	const inputChains = $derived(orderToIntent(orderContainer).inputChains());
+	const inputChains = $derived(containerToIntent(orderContainer).inputChains());
 	const getInputsForChain = (container: OrderContainer, inputChain: bigint): [bigint, bigint][] => {
 		const { order } = container;
 		if ("originChainId" in order) {
@@ -89,7 +89,7 @@
 		const { order, inputSettler } = container;
 		const inputChainClient = getClient(chainId);
 
-		const intent = orderToIntent(container);
+		const intent = containerToIntent(container);
 		const orderId = intent.orderId();
 		// Determine the order type.
 		if (

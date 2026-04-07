@@ -7,8 +7,8 @@ import {
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
 	MULTICHAIN_INPUT_SETTLER_COMPACT
 } from "../config";
-import { orderToIntent } from "@lifi/intent";
 import { bytes32ToAddress, idToToken } from "@lifi/intent";
+import { containerToIntent } from "$lib/utils/intent";
 import type { OrderContainer, StandardOrder, MultichainOrder } from "@lifi/intent";
 import { validateOrderContainerWithReason } from "@lifi/intent";
 import { orderValidationDeps } from "./coreDeps";
@@ -201,7 +201,7 @@ function getContextDetails(orderContainer: OrderContainer): ContextDetails {
 
 export function buildBaseIntentRow(orderContainer: OrderContainer): BaseIntentRow {
 	const order = orderContainer.order;
-	const orderId = orderToIntent(orderContainer).orderId();
+	const orderId = containerToIntent(orderContainer).orderId();
 	const inputChipsRaw = getInputs(order);
 	const outputChipsRaw = getOutputs(order);
 	const chainScope = getChainScope(order);

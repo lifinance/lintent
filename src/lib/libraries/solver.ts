@@ -6,7 +6,7 @@ import axios from "axios";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { orderToIntent } from "@lifi/intent";
+import { containerToIntent } from "$lib/utils/intent";
 import { compactTypes } from "@lifi/intent";
 import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
@@ -66,7 +66,7 @@ export class Solver {
 				orderContainer: { order, inputSettler },
 				outputs
 			} = args;
-			const orderId = orderToIntent({ order, inputSettler }).orderId();
+			const orderId = containerToIntent(args.orderContainer).orderId();
 
 			const outputChainId = Number(outputs[0].chainId);
 			const outputChain = getChain(outputChainId);
@@ -310,10 +310,7 @@ export class Solver {
 			const { preHook, postHook, account } = opts;
 			const { orderContainer, fillTransactionHashes, sourceChainId } = args;
 			const { order, inputSettler } = orderContainer;
-			const intent = orderToIntent({
-				inputSettler,
-				order
-			});
+			const intent = containerToIntent(orderContainer);
 			if (fillTransactionHashes.length !== order.outputs.length) {
 				throw new Error(
 					`Fill transaction hash count (${fillTransactionHashes.length}) does not match output count (${order.outputs.length}).`

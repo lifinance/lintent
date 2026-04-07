@@ -23,7 +23,7 @@ import {
 	transactionReceipts as transactionReceiptsTable
 } from "./schema";
 import { and, eq } from "drizzle-orm";
-import { orderToIntent } from "@lifi/intent";
+import { containerToIntent } from "./utils/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {
 	getCurrentConnection,
@@ -49,7 +49,7 @@ class Store {
 	async saveOrderToDb(order: OrderContainer) {
 		if (!browser) return;
 		if (!db) await initDb();
-		const orderId = orderToIntent(order).orderId();
+		const orderId = containerToIntent(order).orderId();
 		const now = Math.floor(Date.now() / 1000);
 		const id =
 			(order as any).id ?? (typeof crypto !== "undefined" ? crypto.randomUUID() : String(now));
@@ -89,7 +89,7 @@ class Store {
 				console.warn("saveOrderToDb db write failed", { orderId, error });
 			}
 		}
-		const idx = this.orders.findIndex((o) => orderToIntent(o).orderId() === orderId);
+		const idx = this.orders.findIndex((o) => containerToIntent(o).orderId() === orderId);
 		if (idx >= 0) this.orders[idx] = order;
 		else this.orders.push(order);
 	}

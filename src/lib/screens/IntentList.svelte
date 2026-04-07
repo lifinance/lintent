@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from "svelte";
 	import { tick } from "svelte";
-	import { orderToIntent } from "@lifi/intent";
+	import { containerToIntent } from "$lib/utils/intent";
 	import IntentListDetailRow from "$lib/components/IntentListDetailRow.svelte";
 	import {
 		buildBaseIntentRow,
@@ -104,7 +104,7 @@
 	);
 
 	const selectedOrderId = $derived(
-		selectedOrder ? orderToIntent(selectedOrder).orderId() : undefined
+		selectedOrder ? containerToIntent(selectedOrder).orderId() : undefined
 	);
 </script>
 

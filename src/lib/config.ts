@@ -62,9 +62,9 @@ export const solanaDevnet = defineChain({
 	testnet: true
 });
 
+// Source: PDA(seed: "polymer", program: SOLANA_POLYMER_ORACLE) — confirmed in default_orders.json
 const SOLANA_POLYMER_ORACLE_DEVNET =
 	"0xe48a6f95df84c28a030f60ba5b74e4a02922a4a5724c9633109f089b2287edfc" as const;
-// Source: PDA(seed: "polymer", program: SOLANA_POLYMER_ORACLE) — confirmed in default_orders.json
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
 	[ethereum.id]: "0x0000000000000000000000000000000000000000",
 	[arbitrum.id]: "0x0000000000000000000000000000000000000000",

@@ -47,10 +47,16 @@
 		store.outputTokens.some((t) => !SOLANA_CHAIN_IDS.has(t.token.chainId))
 	);
 
+	// When both Solana and EVM outputs are selected, Solana recipient takes priority since the
+	// library supports a single outputRecipient for all outputs. EVM recipient is only used when
+	// there are no Solana outputs.
 	const outputRecipient = $derived.by((): `0x${string}` | undefined => {
 		if (hasSolanaOutput) return resolveSolanaRecipient(store.solanaRecipient);
 		return resolveEvmRecipient(store.recipient);
 	});
+
+	// A valid Solana recipient is required to encode a usable cross-chain intent.
+	const solanaRecipientMissing = $derived(hasSolanaOutput && !outputRecipient);
 
 	const intentOptions = $derived.by(
 		(): AppCreateIntentOptions => ({
@@ -367,7 +373,15 @@
 		</SectionCard>
 
 		<div class="mt-2 flex justify-center">
-			{#if !allowanceCheck}
+			{#if solanaRecipientMissing}
+				<button
+					type="button"
+					class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+					disabled
+				>
+					Solana Recipient Required
+				</button>
+			{:else if !allowanceCheck}
 				<AwaitButton buttonFunction={approveFunction}>
 					{#snippet name()}
 						Set allowance

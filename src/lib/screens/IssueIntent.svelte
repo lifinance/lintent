@@ -15,6 +15,8 @@
 	import { isAddress } from "viem";
 	import { isValidSolanaAddress, solanaAddressToBytes32 } from "$lib/utils/solana";
 	import { SOLANA_CHAIN_IDS } from "$lib/config";
+	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 
 	const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
 
@@ -53,6 +55,13 @@
 	const outputRecipient = $derived.by((): `0x${string}` | undefined => {
 		if (hasSolanaOutput) return resolveSolanaRecipient(store.solanaRecipient);
 		return resolveEvmRecipient(store.recipient);
+	});
+
+	// Auto-fill solana recipient from connected wallet (only when field is empty).
+	$effect(() => {
+		if (solanaWallet.publicKey && store.solanaRecipient.trim() === "") {
+			store.solanaRecipient = solanaWallet.publicKey;
+		}
 	});
 
 	// A valid Solana recipient is required to encode a usable cross-chain intent.
@@ -301,6 +310,12 @@
 
 		<SectionCard compact>
 			<div class="flex flex-col gap-2">
+				<div class="flex items-center gap-1.5">
+					<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500"
+						>Solana Wallet</span
+					>
+					<SolanaWalletButton />
+				</div>
 				{#if hasEvmOutput}
 					<div class="flex min-w-0 items-center gap-1">
 						<span class="text-[11px] font-semibold whitespace-nowrap text-gray-500"

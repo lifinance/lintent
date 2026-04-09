@@ -1,8 +1,16 @@
 <script lang="ts">
-	import { BYTES32_ZERO, formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
+	import {
+		BYTES32_ZERO,
+		formatTokenAmount,
+		getChainName,
+		getClient,
+		getCoin,
+		isSolanaChain
+	} from "$lib/config";
 	import { bytes32ToAddress } from "@lifi/intent";
 	import { getOutputHash } from "@lifi/intent";
 	import type { MandateOutput, OrderContainer } from "@lifi/intent";
+	import { isValidSolanaAddress, solanaAddressToBytes32 } from "$lib/utils/solana";
 	import { Solver } from "$lib/libraries/solver";
 	import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
@@ -28,6 +36,12 @@
 		postHook: () => Promise<any>;
 		account: () => `0x${string}`;
 	} = $props();
+
+	// Solana→EVM: input chain is Solana
+	const isSolanaToEvm = $derived(
+		"originChainId" in orderContainer.order && isSolanaChain(orderContainer.order.originChainId)
+	);
+	let solanaSolverAddress = $state("");
 
 	let refreshValidation = $state(0);
 	let autoScrolledOrderId = $state<`0x${string}` | null>(null);
@@ -114,6 +128,7 @@
 					.saveFillTransaction(outputHash, result)
 					.catch((e) => console.warn("saveFillTransaction error", e));
 			}
+			await postHookScroll();
 		};
 	};
 </script>
@@ -123,6 +138,21 @@
 	description="Fill each chain once and continue to the right. If you refreshed the page provide your fill tx hash in the input box."
 >
 	<div class="space-y-2">
+		{#if isSolanaToEvm}
+			<SectionCard compact>
+				<div class="flex flex-col gap-1 px-1 py-1">
+					<label class="text-xs text-gray-500" for="solana-solver-address">
+						Solana Solver Address (your Solana pubkey — used to receive the claim)
+					</label>
+					<input
+						id="solana-solver-address"
+						class="rounded border px-2 py-1 text-xs"
+						bind:value={solanaSolverAddress}
+						placeholder="Base58 Solana address..."
+					/>
+				</div>
+			</SectionCard>
+		{/if}
 		{#each sortOutputsByChain(orderContainer) as chainIdAndOutputs}
 			<SectionCard compact>
 				<ChainActionRow chainLabel={getChainName(chainIdAndOutputs[0])}>
@@ -138,6 +168,14 @@
 							>
 								Fill
 							</button>
+						{:else if isSolanaToEvm && !isValidSolanaAddress(solanaSolverAddress)}
+							<button
+								type="button"
+								class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+								disabled
+							>
+								Enter solver address
+							</button>
 						{:else}
 							<AwaitButton
 								variant={chainStatuses.every((v) => v == BYTES32_ZERO) ? "default" : "muted"}
@@ -148,11 +186,14 @@
 												store.walletClient,
 												{
 													orderContainer,
-													outputs: chainIdAndOutputs[1]
+													outputs: chainIdAndOutputs[1],
+													solverBytes32:
+														isSolanaToEvm && isValidSolanaAddress(solanaSolverAddress)
+															? solanaAddressToBytes32(solanaSolverAddress)
+															: undefined
 												},
 												{
 													preHook,
-													postHook: postHookScroll,
 													account
 												}
 											)

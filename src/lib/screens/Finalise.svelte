@@ -1,13 +1,17 @@
 <script lang="ts">
 	import AwaitButton from "../components/AwaitButton.svelte";
+	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
 	import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
 	import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
 
 	import { Solver } from "$lib/libraries/solver";
-	import type { OrderContainer } from "@lifi/intent";
+	import { deriveAttestationPda } from "$lib/libraries/solanaValidateLib";
+	import { finaliseSolanaEscrow, deriveOrderContextPda } from "$lib/libraries/solanaFinaliseLib";
+	import type { MandateOutput, OrderContainer, StandardSolana } from "@lifi/intent";
 	import {
+		chainMap,
 		COMPACT,
 		formatTokenAmount,
 		getChainName,
@@ -16,15 +20,19 @@
 		INPUT_SETTLER_COMPACT_LIFI,
 		INPUT_SETTLER_ESCROW_LIFI,
 		MULTICHAIN_INPUT_SETTLER_COMPACT,
-		MULTICHAIN_INPUT_SETTLER_ESCROW
+		MULTICHAIN_INPUT_SETTLER_ESCROW,
+		getSolanaConnection,
+		isSolanaChain
 	} from "$lib/config";
 	import { COMPACT_ABI } from "$lib/abi/compact";
 	import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
+	import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 	import { idToToken } from "@lifi/intent";
+	import { parseEventLogs, hashStruct } from "viem";
+	import { compactTypes } from "@lifi/intent";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 	import store from "$lib/state.svelte";
 	import { containerToIntent } from "$lib/utils/intent";
-	import { hashStruct } from "viem";
-	import { compactTypes } from "@lifi/intent";
 
 	let {
 		orderContainer,
@@ -45,6 +53,7 @@
 	const getInputsForChain = (container: OrderContainer, inputChain: bigint): [bigint, bigint][] => {
 		const { order } = container;
 		if ("originChainId" in order) {
+			if (!("inputs" in order)) return []; // StandardSolana — no [bigint, bigint][] inputs
 			return order.originChainId === inputChain ? order.inputs : [];
 		}
 		return order.inputs.find((chainInput) => chainInput.chainId === inputChain)?.inputs ?? [];
@@ -80,23 +89,29 @@
 		typeof hash === "string" && hash.startsWith("0x") && hash.length === 66;
 
 	// Order status enum
-	const OrderStatus_None = 0;
-	const OrderStatus_Deposited = 1;
 	const OrderStatus_Claimed = 2;
 	const OrderStatus_Refunded = 3;
 
 	async function isClaimed(chainId: bigint, container: OrderContainer, _: any) {
 		const { order, inputSettler } = container;
-		const inputChainClient = getClient(chainId);
 
+		// Solana→EVM: order_context PDA is closed after finalise
+		if (isSolanaChain(chainId)) {
+			const { PublicKey } = await import("@solana/web3.js");
+			const conn = getSolanaConnection(chainId);
+			const orderContextPda = await deriveOrderContextPda(order as StandardSolana);
+			const info = await conn.getAccountInfo(new PublicKey(orderContextPda));
+			return info === null; // null = closed = finalised
+		}
+
+		const inputChainClient = getClient(chainId);
 		const intent = containerToIntent(container);
 		const orderId = intent.orderId();
-		// Determine the order type.
+
 		if (
 			inputSettler === INPUT_SETTLER_ESCROW_LIFI ||
 			inputSettler === MULTICHAIN_INPUT_SETTLER_ESCROW
 		) {
-			// Check order status
 			const orderStatus = await inputChainClient.readContract({
 				address: inputSettler,
 				abi: SETTLER_ESCROW_ABI,
@@ -108,17 +123,15 @@
 			inputSettler === INPUT_SETTLER_COMPACT_LIFI ||
 			inputSettler === MULTICHAIN_INPUT_SETTLER_COMPACT
 		) {
-			// Check claim status
 			const flattenedInputs = "originChainId" in order ? order.inputs : order.inputs[0]?.inputs;
 			if (!flattenedInputs || flattenedInputs.length === 0) return false;
 
-			const [token, allocator, resetPeriod, scope] = await inputChainClient.readContract({
+			const [, allocator] = await inputChainClient.readContract({
 				address: COMPACT,
 				abi: COMPACT_ABI,
 				functionName: "getLockDetails",
 				args: [flattenedInputs[0][0]]
 			});
-			// Check if nonce is spent.
 			return await inputChainClient.readContract({
 				address: COMPACT,
 				abi: COMPACT_ABI,
@@ -127,6 +140,100 @@
 			});
 		}
 		return false;
+	}
+
+	/**
+	 * Returns a button function for finalising a Solana→EVM order.
+	 * Reads EVM fill receipts to build solveParams, derives attestation PDAs, then calls finaliseSolanaEscrow().
+	 */
+	function solanaClaimFn(container: OrderContainer) {
+		return async () => {
+			if (!solanaWallet.connected || !solanaWallet.publicKey) {
+				throw new Error("Connect your Solana wallet first");
+			}
+			const solanaOrder = container.order as StandardSolana;
+			const orderId = containerToIntent(container).orderId();
+			const outputs = solanaOrder.outputs;
+
+			const fillTxHashes = outputs.map(
+				(output) =>
+					store.fillTransactions[
+						hashStruct({ data: output, types: compactTypes, primaryType: "MandateOutput" })
+					]
+			);
+			if (fillTxHashes.some((h) => !h || !h.startsWith("0x") || h.length !== 66)) {
+				throw new Error("Missing fill transaction hashes");
+			}
+
+			const outputClient = (output: (typeof outputs)[number]) => getClient(output.chainId);
+			const receipts = await Promise.all(
+				outputs.map((output, i) =>
+					outputClient(output).getTransactionReceipt({
+						hash: fillTxHashes[i] as `0x${string}`
+					})
+				)
+			);
+
+			const solveParams: { solver: number[]; timestamp: number }[] = [];
+			const attestationPdas: string[] = [];
+
+			for (let i = 0; i < outputs.length; i++) {
+				const output = outputs[i];
+				const receipt = receipts[i];
+				const logs = parseEventLogs({
+					abi: COIN_FILLER_ABI,
+					eventName: "OutputFilled",
+					logs: receipt.logs
+				});
+				const expectedHash = hashStruct({
+					types: compactTypes,
+					primaryType: "MandateOutput",
+					data: output
+				});
+				const matchingLog = logs.find((log) => {
+					const logHash = hashStruct({
+						types: compactTypes,
+						primaryType: "MandateOutput",
+						data: log.args.output
+					});
+					return logHash === expectedHash;
+				});
+				if (!matchingLog) throw new Error(`Could not find OutputFilled event for output ${i}`);
+
+				const solverBytes32 = matchingLog.args.solver as `0x${string}`;
+				const fillTimestamp =
+					typeof matchingLog.args.timestamp === "number"
+						? matchingLog.args.timestamp
+						: Number(matchingLog.args.timestamp);
+
+				solveParams.push({
+					solver: Array.from(Buffer.from(solverBytes32.slice(2), "hex")),
+					timestamp: fillTimestamp
+				});
+
+				const attestationPda = await deriveAttestationPda({
+					evmChainId: output.chainId,
+					output,
+					proofOutput: matchingLog.args.output as MandateOutput,
+					orderId,
+					fillTimestamp,
+					solverBytes32,
+					emittingContract: matchingLog.address as `0x${string}`
+				});
+				attestationPdas.push(attestationPda);
+			}
+
+			return await finaliseSolanaEscrow({
+				order: solanaOrder,
+				solveParams,
+				attestationPdas,
+				solanaPublicKey: solanaWallet.publicKey,
+				walletAdapter: solanaWallet.adapter!,
+				connection: getSolanaConnection(
+					store.mainnet ? chainMap.solanaMainnet.id : chainMap.solanaDevnet.id
+				)
+			});
+		};
 	}
 
 	$effect(() => {
@@ -192,6 +299,8 @@
 							>
 								Finalised
 							</button>
+						{:else if isSolanaChain(inputChain) && !solanaWallet.connected}
+							<SolanaWalletButton />
 						{:else}
 							{@const fillTransactionHashes = fillTransactionHashesFor(orderContainer)}
 							{@const canClaim = fillTransactionHashes.every((hash) => isValidFillTxHash(hash))}
@@ -203,6 +312,20 @@
 								>
 									Await fills
 								</button>
+							{:else if isSolanaChain(inputChain)}
+								<AwaitButton
+									buttonFunction={async () => {
+										await solanaClaimFn(orderContainer)();
+										await postHookRefreshValidate();
+									}}
+								>
+									{#snippet name()}
+										Claim
+									{/snippet}
+									{#snippet awaiting()}
+										Waiting for transaction...
+									{/snippet}
+								</AwaitButton>
 							{:else}
 								<AwaitButton
 									buttonFunction={Solver.claim(
@@ -230,22 +353,44 @@
 						{/if}
 					{/snippet}
 					{#snippet chips()}
-						{#each getInputsForChain(orderContainer, inputChain) as input}
+						{#if isSolanaChain(inputChain)}
+							{@const solanaOrder = orderContainer.order as StandardSolana}
+							{@const [tokenRaw, amountRaw] = solanaOrder.inputs[0]}
+							{@const tokenId = BigInt(tokenRaw as bigint | string | number)}
+							{@const inputAmt = BigInt(amountRaw as bigint | string | number)}
+							{@const tokenBytes32 = `0x${tokenId.toString(16).padStart(64, "0")}` as `0x${string}`}
 							<TokenAmountChip
 								amountText={formatTokenAmount(
-									input[1],
+									inputAmt,
 									getCoin({
-										address: idToToken(input[0]),
+										address: tokenBytes32,
 										chainId: inputChain
 									}).decimals
 								)}
 								symbol={getCoin({
-									address: idToToken(input[0]),
+									address: tokenBytes32,
 									chainId: inputChain
 								}).name}
 								tone="neutral"
 							/>
-						{/each}
+						{:else}
+							{#each getInputsForChain(orderContainer, inputChain) as input}
+								<TokenAmountChip
+									amountText={formatTokenAmount(
+										input[1],
+										getCoin({
+											address: idToToken(input[0]),
+											chainId: inputChain
+										}).decimals
+									)}
+									symbol={getCoin({
+										address: idToToken(input[0]),
+										chainId: inputChain
+									}).name}
+									tone="neutral"
+								/>
+							{/each}
+						{/if}
 					{/snippet}
 				</ChainActionRow>
 			</SectionCard>

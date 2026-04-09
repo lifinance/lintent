@@ -53,6 +53,7 @@ export class Solver {
 		args: {
 			orderContainer: OrderContainer;
 			outputs: MandateOutput[];
+			solverBytes32?: `0x${string}`; // override default addressToBytes32(account()) — used for Solana→EVM fills
 		},
 		opts: {
 			preHook?: (chainId: number) => Promise<any>;
@@ -64,7 +65,8 @@ export class Solver {
 			const { preHook, postHook, account } = opts;
 			const {
 				orderContainer: { order, inputSettler },
-				outputs
+				outputs,
+				solverBytes32
 			} = args;
 			const orderId = containerToIntent(args.orderContainer).orderId();
 
@@ -122,7 +124,7 @@ export class Solver {
 				value,
 				abi: COIN_FILLER_ABI,
 				functionName: "fillOrderOutputs",
-				args: [orderId, outputs, order.fillDeadline, addressToBytes32(account())]
+				args: [orderId, outputs, order.fillDeadline, solverBytes32 ?? addressToBytes32(account())]
 			});
 			const fillReceipt = await getClient(outputChain.id).waitForTransactionReceipt({
 				hash: transactionHash
@@ -312,7 +314,7 @@ export class Solver {
 			const { order, inputSettler } = orderContainer;
 			const intent = containerToIntent(orderContainer);
 			if (intent instanceof StandardSolanaIntent)
-				throw new Error("Finalise is not supported for Solana input intents.");
+				throw new Error("Use finaliseSolanaEscrow() for Solana input intents.");
 			if (fillTransactionHashes.length !== order.outputs.length) {
 				throw new Error(
 					`Fill transaction hash count (${fillTransactionHashes.length}) does not match output count (${order.outputs.length}).`

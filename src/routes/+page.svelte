@@ -14,6 +14,7 @@
 	import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
 	import store from "$lib/state.svelte";
 	import { containerToIntent } from "$lib/utils/intent";
+	import { reviveOrderBigInts } from "$lib/utils/reviveOrderBigInts";
 
 	// Fix bigint so we can json serialize it:
 	(BigInt.prototype as any).toJSON = function () {
@@ -64,7 +65,11 @@
 							type: "None",
 							payload: "0x"
 						} as NoSignature);
-				const orderContainer = { ...order, allocatorSignature, sponsorSignature };
+				const orderContainer = reviveOrderBigInts({
+					...order,
+					allocatorSignature,
+					sponsorSignature
+				} as OrderContainer);
 
 				// Deduplicate: only add if not already present
 				const orderId = containerToIntent(orderContainer).orderId();
@@ -99,7 +104,7 @@
 	let currentScreenIndex = $state(0);
 	let scrollStepProgress = $state(0);
 	async function importOrderById(orderId: `0x${string}`): Promise<"inserted" | "updated"> {
-		const importedOrder = await intentApi.getOrderByOnChainOrderId(orderId);
+		const importedOrder = reviveOrderBigInts(await intentApi.getOrderByOnChainOrderId(orderId));
 		const importedOrderId = containerToIntent(importedOrder).orderId();
 		const existingIndex = store.orders.findIndex(
 			(o) => containerToIntent(o).orderId() === importedOrderId

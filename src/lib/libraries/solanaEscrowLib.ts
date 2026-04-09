@@ -85,9 +85,11 @@ export async function openSolanaEscrow(params: {
 	// Extract input token from StandardSolana.
 	// Solana token IDs are full 32-byte public keys stored as bigint — do NOT use idToToken()
 	// which strips the first 12 bytes (EVM-only helper that returns 20-byte addresses).
-	const tokenIdHex = BigInt(order.inputs[0][0] as bigint | string | number)
-		.toString(16)
-		.padStart(64, "0");
+	const rawToken = order.inputs[0][0];
+	if (rawToken === undefined || rawToken === null) {
+		throw new Error("StandardSolana order is missing inputs[0][0] (token)");
+	}
+	const tokenIdHex = BigInt(rawToken).toString(16).padStart(64, "0");
 	const inputMint = new PublicKey(Buffer.from(tokenIdHex, "hex"));
 	const inputAmount = new BN(order.inputs[0][1].toString());
 

@@ -104,10 +104,11 @@ export async function finaliseSolanaEscrow(params: {
 	);
 
 	// StandardSolana stores the token as a bigint (32-byte public key)
-	const [tokenBigInt, inputAmount] = order.inputs[0];
-	const tokenIdHex = BigInt(tokenBigInt as bigint | string | number)
-		.toString(16)
-		.padStart(64, "0");
+	const [rawToken, inputAmount] = order.inputs[0];
+	if (rawToken === undefined || rawToken === null) {
+		throw new Error("StandardSolana order is missing inputs[0][0] (token)");
+	}
+	const tokenIdHex = BigInt(rawToken).toString(16).padStart(64, "0");
 	const inputMint = new PublicKey(Buffer.from(tokenIdHex, "hex"));
 	const userPubkey = new PublicKey(Buffer.from(order.user.slice(2), "hex"));
 

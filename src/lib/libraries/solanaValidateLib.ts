@@ -101,6 +101,9 @@ export async function deriveAttestationPda(params: {
 	const source = normalizeBytes32Hex(payloadOutput.oracle);
 	const application = normalizeEvmIdentifier(params.emittingContract, payloadOutput.settler);
 
+	// Seed order is fixed by the on-chain intents_protocol program — any change silently produces
+	// the wrong address. Order: [b"attestation", polymer_oracle_pda, chain_id_le16,
+	// source (oracle bytes32), application (settler/emitting-contract bytes32), payload_hash]
 	const [attestationPda] = PublicKey.findProgramAddressSync(
 		[
 			Buffer.from("attestation"),
@@ -146,7 +149,7 @@ export async function submitProofToSolanaOracle(params: {
 	// Fetch Polymer proof via /polymer route (returns hex-encoded bytes)
 	let proof: string | undefined;
 	let polymerIndex: number | undefined;
-	for (const waitMs of [0, 2000, 4000, 8000, 16000]) {
+	for (const waitMs of [0, 2000, 4000, 8000]) {
 		if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
 		const response = await axios.post(
 			"/polymer",
@@ -210,6 +213,7 @@ export async function submitProofToSolanaOracle(params: {
 		payloadOutput.settler
 	);
 
+	// Same seed order as deriveAttestationPda — must stay in sync with the on-chain program.
 	const [attestationPda] = PublicKey.findProgramAddressSync(
 		[
 			Buffer.from("attestation"),

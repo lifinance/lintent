@@ -8,7 +8,8 @@ import {
 import { borshEncodeSolanaOrder } from "@lifi/intent";
 import type { MandateOutput, StandardSolana } from "@lifi/intent";
 import type { SignerWalletAdapter } from "@solana/wallet-adapter-base";
-import type { Connection } from "@solana/web3.js";
+import type { Connection, Transaction } from "@solana/web3.js";
+import { sendAndConfirmSolanaTx } from "$lib/utils/solanaTx";
 
 /** Convert a 0x-prefixed hex string (32 bytes) to a number[] */
 function hexToBytes32(hex: `0x${string}`): number[] {
@@ -188,7 +189,6 @@ export async function finaliseSolanaEscrow(params: {
 	tx.feePayer = solverPubkey;
 	tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
 
-	const signature = await provider.sendAndConfirm(tx, [], { commitment: "confirmed" });
-
-	return signature;
+	const signedTx = await walletAdapter.signTransaction(tx);
+	return sendAndConfirmSolanaTx(connection, signedTx.serialize());
 }

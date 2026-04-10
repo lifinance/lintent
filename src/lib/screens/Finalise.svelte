@@ -85,8 +85,16 @@
 	const fillTransactionHashesFor = (container: OrderContainer) =>
 		container.order.outputs.map((output) => store.fillTransactions[outputKey(output)]);
 
-	const isValidFillTxHash = (hash: unknown): hash is `0x${string}` =>
-		typeof hash === "string" && hash.startsWith("0x") && hash.length === 66;
+	const isValidFillTxHash = (hash: unknown): hash is `0x${string}` | string =>
+		typeof hash === "string" && hash.length > 0;
+
+	const hasEvmInputs = $derived(
+		"originChainId" in orderContainer.order && !isSolanaChain(orderContainer.order.originChainId)
+	);
+	const hasSolanaOutputs = $derived(
+		orderContainer.order.outputs.some((o) => isSolanaChain(o.chainId))
+	);
+	const isEvmToSolana = $derived(hasEvmInputs && hasSolanaOutputs);
 
 	// Order status enum
 	const OrderStatus_Claimed = 2;

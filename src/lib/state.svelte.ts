@@ -23,8 +23,10 @@ import { initDb, db } from "./db";
 import {
 	intents,
 	fillTransactions as fillTransactionsTable,
-	transactionReceipts as transactionReceiptsTable
+	transactionReceipts as transactionReceiptsTable,
+	solanaFillRecords as solanaFillRecordsTable
 } from "./schema";
+import type { SolanaSubmittedFillRecord } from "./libraries/solanaFillLib";
 import { and, eq } from "drizzle-orm";
 import { containerToIntent } from "./utils/intent";
 import { reviveOrderBigInts } from "./utils/reviveOrderBigInts";
@@ -204,6 +206,51 @@ class Store {
 		}
 	}
 
+	async loadSolanaFillRecordsFromDb() {
+		if (!browser) return;
+		if (!db) await initDb();
+		if (!db) return;
+		const rows = await db!.select().from(solanaFillRecordsTable);
+		const loaded: Record<string, SolanaSubmittedFillRecord> = {};
+		for (const row of rows) {
+			try {
+				loaded[row.recordKey] = JSON.parse(row.data) as SolanaSubmittedFillRecord;
+			} catch {
+				console.warn("Failed to parse solana fill record", row.recordKey);
+			}
+		}
+		this.solanaFillRecords = loaded;
+	}
+
+	async saveSolanaFillRecord(key: string, record: SolanaSubmittedFillRecord) {
+		if (!browser) return;
+		if (!db) await initDb();
+		if (!db) return;
+		const data = JSON.stringify(record);
+		const existing = await db!
+			.select()
+			.from(solanaFillRecordsTable)
+			.where(eq(solanaFillRecordsTable.recordKey, key));
+		if (existing.length > 0) {
+			await db!
+				.update(solanaFillRecordsTable)
+				.set({ data })
+				.where(eq(solanaFillRecordsTable.recordKey, key));
+		} else {
+			await db!.insert(solanaFillRecordsTable).values({
+				id: typeof crypto !== "undefined" ? crypto.randomUUID() : String(Date.now()),
+				recordKey: key,
+				data,
+				createdAt: Math.floor(Date.now() / 1000)
+			});
+		}
+		this.solanaFillRecords[key] = record;
+	}
+
+	getSolanaFillRecord(key: string): SolanaSubmittedFillRecord | undefined {
+		return this.solanaFillRecords[key];
+	}
+
 	walletConnection = $state<WalletConnection>(getCurrentConnection());
 	connectedAccount = $derived(
 		this.walletConnection.status === "connected"
@@ -215,8 +262,9 @@ class Store {
 
 	inputTokens = $state<AppTokenContext[]>([]);
 	outputTokens = $state<AppTokenContext[]>([]);
-	fillTransactions = $state<{ [outputId: string]: `0x${string}` }>({});
+	fillTransactions = $state<{ [outputId: string]: `0x${string}` | string }>({});
 	transactionReceipts = $state<Record<string, string>>({});
+	solanaFillRecords = $state<Record<string, SolanaSubmittedFillRecord>>({});
 
 	refreshEpoch = $state(0);
 	rpcRefreshMs = 45_000;
@@ -461,6 +509,9 @@ class Store {
 					),
 					this.loadTransactionReceiptsFromDb().catch((e) =>
 						console.warn("loadTransactionReceiptsFromDb error", e)
+					),
+					this.loadSolanaFillRecordsFromDb().catch((e) =>
+						console.warn("loadSolanaFillRecordsFromDb error", e)
 					)
 				]).then(() => {})
 			: Promise.resolve();

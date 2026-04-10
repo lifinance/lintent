@@ -4,7 +4,8 @@ import idl from "../abi/polymer.json";
 import { SOLANA_INTENTS_PROTOCOL, SOLANA_POLYMER_ORACLE } from "../config";
 import type { MandateOutput } from "@lifi/intent";
 import type { SignerWalletAdapter } from "@solana/wallet-adapter-base";
-import type { Connection } from "@solana/web3.js";
+import type { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
+import { sendAndConfirmSolanaTx } from "$lib/utils/solanaTx";
 
 const POLYMER_PROVER_PROGRAM = "CdvSq48QUukYuMczgZAVNZrwcHNshBdtqrjW26sQiGPs";
 
@@ -256,7 +257,7 @@ export async function submitProofToSolanaOracle(params: {
 	const computeIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 });
 
 	/* eslint-disable @typescript-eslint/no-explicit-any */
-	return await program.methods
+	const tx = await program.methods
 		.receive([proofBytes] as any)
 		.accounts({
 			signer: signerPubkey,
@@ -271,6 +272,12 @@ export async function submitProofToSolanaOracle(params: {
 		} as any)
 		.remainingAccounts([{ pubkey: attestationPda, isWritable: true, isSigner: false }])
 		.preInstructions([computeIx])
-		.rpc({ commitment: "confirmed" });
+		.transaction();
 	/* eslint-enable @typescript-eslint/no-explicit-any */
+
+	const { blockhash } = await params.connection.getLatestBlockhash("confirmed");
+	tx.feePayer = signerPubkey;
+	tx.recentBlockhash = blockhash;
+	const signedTx = await params.walletAdapter.signTransaction(tx);
+	return sendAndConfirmSolanaTx(params.connection, signedTx.serialize());
 }

@@ -1,4 +1,13 @@
-import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
+import {
+	BYTES32_ZERO,
+	COIN_FILLER,
+	getChain,
+	getClient,
+	getOracle,
+	isSolanaChain,
+	SOLANA_POLYMER_ORACLE,
+	type WC
+} from "$lib/config";
 import { hashStruct, maxUint256, parseEventLogs } from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import { addressToBytes32, bytes32ToAddress, StandardSolanaIntent } from "@lifi/intent";
@@ -10,6 +19,9 @@ import { containerToIntent } from "$lib/utils/intent";
 import { compactTypes } from "@lifi/intent";
 import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
+import { isSolanaSubmittedFillRecord } from "./solanaFillLib";
+
+export const SOLANA_POLYMER_SOURCE_CHAIN_ID = 2;
 
 /**
  * @notice Class for solving intents. Functions called by solvers.
@@ -136,6 +148,95 @@ export class Solver {
 		};
 	}
 
+	/**
+	 * Validate a fill that was done on Solana (EVM→Solana path).
+	 * Fetches Polymer proof for the Solana submit tx, then calls receiveSolanaMessage on the EVM input oracle.
+	 */
+	static validateSolanaFill(
+		walletClient: WC,
+		args: {
+			output: MandateOutput;
+			orderContainer: OrderContainer;
+			fillRecordKey: string;
+			sourceChainId: number | bigint;
+			mainnet: boolean;
+		},
+		opts: {
+			preHook?: (chainId: number) => Promise<any>;
+			postHook?: () => Promise<any>;
+			account: () => `0x${string}`;
+		}
+	) {
+		return async () => {
+			const { preHook, postHook, account } = opts;
+			const {
+				orderContainer: { order },
+				fillRecordKey,
+				sourceChainId,
+				mainnet
+			} = args;
+
+			const record = store.getSolanaFillRecord(fillRecordKey);
+			if (!record || !isSolanaSubmittedFillRecord(record)) {
+				throw new Error(`Missing Solana fill metadata for key ${fillRecordKey}`);
+			}
+
+			let proof: string | undefined;
+			let polymerIndex: number | undefined;
+			for (const waitMs of [1000, 2000, 4000, 8000, 16000, 32000]) {
+				await Solver.sleep(waitMs);
+				const response = await axios.post(
+					`/polymer`,
+					{
+						srcChainId: SOLANA_POLYMER_SOURCE_CHAIN_ID,
+						txSignature: record.submitSignature,
+						programID: SOLANA_POLYMER_ORACLE,
+						polymerIndex,
+						mainnet
+					},
+					{ timeout: 15_000 }
+				);
+				const dat = response.data as {
+					proof: undefined | string;
+					polymerIndex: number;
+					error?: string;
+				};
+				if (dat.error) throw new Error(`Polymer: ${dat.error}`);
+				polymerIndex = dat.polymerIndex;
+				if (dat.proof) {
+					proof = dat.proof;
+					break;
+				}
+			}
+			if (!proof) {
+				throw new Error(
+					`Polymer proof unavailable for Solana output. txSignature=${record.submitSignature}. Try again after the submit transaction is indexed.`
+				);
+			}
+
+			if (preHook) await preHook(Number(sourceChainId));
+
+			const transactionHash = await walletClient.writeContract({
+				chain: getChain(sourceChainId),
+				account: account(),
+				address: order.inputOracle,
+				abi: POLYMER_ORACLE_ABI,
+				functionName: "receiveSolanaMessage",
+				args: [`0x${proof.replace("0x", "")}`]
+			});
+
+			const result = await getClient(sourceChainId).waitForTransactionReceipt({
+				hash: transactionHash,
+				timeout: 120_000,
+				pollingInterval: 2_000
+			});
+
+			await Solver.persistReceipt(sourceChainId, transactionHash, result);
+			if (postHook) await postHook();
+			return result;
+		};
+	}
+
 	static validate(
 		walletClient: WC,
 		args: {
@@ -178,7 +279,6 @@ export class Solver {
 					throw new Error(`Invalid fill transaction hash: ${fillTransactionHash}`);
 				}
 
-				// Get the output filled event.
 				const transactionReceipt = await Solver.getReceiptCachedOrRpc(
 					output.chainId,
 					fillTransactionHash as `0x${string}`
@@ -189,11 +289,9 @@ export class Solver {
 					eventName: "OutputFilled",
 					logs: transactionReceipt.logs
 				});
-				// We need to search through each log until we find one matching our output.
 				let logIndex = -1;
 				for (const log of logs) {
 					const logOutput = log.args.output;
-					// TODO: Optimise by comparing the dicts.
 					const logOutputHash = hashStruct({
 						types: compactTypes,
 						primaryType: "MandateOutput",
@@ -320,25 +418,64 @@ export class Solver {
 					`Fill transaction hash count (${fillTransactionHashes.length}) does not match output count (${order.outputs.length}).`
 				);
 			}
-			for (let i = 0; i < fillTransactionHashes.length; i++) {
-				const hash = fillTransactionHashes[i];
-				if (!hash || !hash.startsWith("0x") || hash.length !== 66) {
-					throw new Error(`Invalid fill tx hash at index ${i}: ${hash}`);
-				}
-			}
-			const transactionReceipts = await Promise.all(
-				fillTransactionHashes.map((fth, i) =>
-					Solver.getReceiptCachedOrRpc(order.outputs[i].chainId, fth as `0x${string}`)
-				)
-			);
-			const blocks = await Promise.all(
-				transactionReceipts.map((r, i) => {
-					return getClient(order.outputs[i].chainId).getBlock({
-						blockHash: r.blockHash
+
+			const orderId = intent.orderId();
+			const solveParams = await Promise.all(
+				order.outputs.map(async (output, i) => {
+					const txRef = fillTransactionHashes[i];
+					if (!txRef) throw new Error(`Missing fill transaction reference at index ${i}`);
+
+					if (isSolanaChain(output.chainId)) {
+						const oKey = hashStruct({
+							data: output,
+							types: compactTypes,
+							primaryType: "MandateOutput"
+						});
+						const record = store.getSolanaFillRecord(`${orderId}:${oKey}`);
+						if (!record || !isSolanaSubmittedFillRecord(record)) {
+							throw new Error(`Missing Solana fill metadata at index ${i}`);
+						}
+						return {
+							timestamp: record.fillTimestamp,
+							solver: record.solverBytes32 as `0x${string}`
+						};
+					}
+
+					if (!txRef.startsWith("0x") || txRef.length !== 66) {
+						throw new Error(`Invalid fill tx hash at index ${i}: ${txRef}`);
+					}
+
+					const receipt = await Solver.getReceiptCachedOrRpc(
+						output.chainId,
+						txRef as `0x${string}`
+					);
+					const logs = parseEventLogs({
+						abi: COIN_FILLER_ABI,
+						eventName: "OutputFilled",
+						logs: receipt.logs
 					});
+					const expectedOutputHash = hashStruct({
+						types: compactTypes,
+						primaryType: "MandateOutput",
+						data: output
+					});
+					const matchingLog = logs.find((log) => {
+						const h = hashStruct({
+							types: compactTypes,
+							primaryType: "MandateOutput",
+							data: log.args.output
+						});
+						return h === expectedOutputHash;
+					});
+					if (!matchingLog)
+						throw new Error(`Could not find matching OutputFilled log for output ${i}`);
+
+					return {
+						timestamp: Number(matchingLog.args.timestamp),
+						solver: matchingLog.args.solver as `0x${string}`
+					};
 				})
 			);
-			const fillTimestamps = blocks.map((b) => b.timestamp);
 
 			if (preHook) await preHook(Number(sourceChainId));
 			const expectedChainId = Number(sourceChainId);
@@ -348,13 +485,6 @@ export class Solver {
 					`Wallet is on chain ${connectedChainId}, expected ${expectedChainId} before finalise`
 				);
 			}
-
-			const solveParams = fillTimestamps.map((fillTimestamp) => {
-				return {
-					timestamp: Number(fillTimestamp),
-					solver: addressToBytes32(account())
-				};
-			});
 
 			const transactionHash = await finaliseIntent({
 				intent,

@@ -22,4 +22,11 @@ export const transactionReceipts = pgTable("transaction_receipts", {
 	createdAt: bigint("created_at", { mode: "number" }).notNull()
 });
 
-export const schema = { intents, fillTransactions, transactionReceipts };
+export const solanaFillRecords = pgTable("solana_fill_records", {
+	id: text("id").primaryKey(),
+	recordKey: text("record_key").notNull().unique(),
+	data: text("data").notNull(),
+	createdAt: bigint("created_at", { mode: "number" }).notNull()
+});
+
+export const schema = { intents, fillTransactions, transactionReceipts, solanaFillRecords };

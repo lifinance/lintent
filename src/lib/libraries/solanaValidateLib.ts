@@ -2,9 +2,9 @@ import axios from "axios";
 import { keccak256 } from "viem";
 import idl from "../abi/polymer.json";
 import {
-	SOLANA_INTENTS_PROTOCOL,
-	SOLANA_POLYMER_ORACLE,
-	SOLANA_POLYMER_PROVER_PROGRAM
+	SOLANA_DEVNET_INTENTS_PROTOCOL,
+	SOLANA_DEVNET_POLYMER_ORACLE,
+	SOLANA_DEVNET_POLYMER_PROVER_PROGRAM
 } from "../config";
 import type { MandateOutput } from "@lifi/intent";
 import type { SignerWalletAdapter } from "@solana/wallet-adapter-base";
@@ -70,7 +70,7 @@ export function encodeFillDescription(
 /**
  * Derive the attestation PDA for a given fill.
  * Seeds: [b"attestation", oracle_polymer_pda, evmChainId_le16, output.oracle, output.settler, payloadHash]
- * Program: SOLANA_INTENTS_PROTOCOL
+ * Program: SOLANA_DEVNET_INTENTS_PROTOCOL
  */
 export async function deriveAttestationPda(params: {
 	evmChainId: bigint;
@@ -82,8 +82,8 @@ export async function deriveAttestationPda(params: {
 	emittingContract?: `0x${string}`;
 }): Promise<string> {
 	const { PublicKey } = await import("@solana/web3.js");
-	const polymerOracleProgram = new PublicKey(SOLANA_POLYMER_ORACLE);
-	const intentsProtocol = new PublicKey(SOLANA_INTENTS_PROTOCOL);
+	const polymerOracleProgram = new PublicKey(SOLANA_DEVNET_POLYMER_ORACLE);
+	const intentsProtocol = new PublicKey(SOLANA_DEVNET_INTENTS_PROTOCOL);
 
 	const [oraclePolymerPda] = PublicKey.findProgramAddressSync(
 		[Buffer.from("polymer")],
@@ -144,9 +144,9 @@ export async function submitProofToSolanaOracle(params: {
 	const { PublicKey, SystemProgram, ComputeBudgetProgram } = await import("@solana/web3.js");
 
 	const signerPubkey = new PublicKey(params.solanaPublicKey);
-	const polymerOracleProgram = new PublicKey(SOLANA_POLYMER_ORACLE);
-	const polymerProverProgramId = new PublicKey(SOLANA_POLYMER_PROVER_PROGRAM);
-	const intentsProtocolId = new PublicKey(SOLANA_INTENTS_PROTOCOL);
+	const polymerOracleProgram = new PublicKey(SOLANA_DEVNET_POLYMER_ORACLE);
+	const polymerProverProgramId = new PublicKey(SOLANA_DEVNET_POLYMER_PROVER_PROGRAM);
+	const intentsProtocolId = new PublicKey(SOLANA_DEVNET_INTENTS_PROTOCOL);
 
 	// Fetch Polymer proof via /polymer route (returns hex-encoded bytes)
 	let proof: string | undefined;

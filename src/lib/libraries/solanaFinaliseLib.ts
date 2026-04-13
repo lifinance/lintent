@@ -1,9 +1,9 @@
 import { keccak256 } from "viem";
 import idl from "../abi/input_settler_escrow.json";
 import {
-	SOLANA_INPUT_SETTLER_ESCROW,
-	SOLANA_INTENTS_PROTOCOL,
-	SOLANA_POLYMER_ORACLE
+	SOLANA_DEVNET_INPUT_SETTLER_ESCROW,
+	SOLANA_DEVNET_INTENTS_PROTOCOL,
+	SOLANA_DEVNET_POLYMER_ORACLE
 } from "../config";
 import { borshEncodeSolanaOrder } from "@lifi/intent";
 import type { MandateOutput, StandardSolana } from "@lifi/intent";
@@ -27,7 +27,7 @@ function bigintToBeBytes32(n: bigint | string | number): number[] {
  */
 export async function deriveOrderContextPda(order: StandardSolana): Promise<string> {
 	const { PublicKey } = await import("@solana/web3.js");
-	const inputSettlerProgramId = new PublicKey(SOLANA_INPUT_SETTLER_ESCROW);
+	const inputSettlerProgramId = new PublicKey(SOLANA_DEVNET_INPUT_SETTLER_ESCROW);
 
 	const encoded = borshEncodeSolanaOrder(order);
 	const orderIdHex = keccak256(encoded);
@@ -68,9 +68,9 @@ export async function finaliseSolanaEscrow(params: {
 		params;
 
 	const solverPubkey = new PublicKey(solanaPublicKey);
-	const inputSettlerProgramId = new PublicKey(SOLANA_INPUT_SETTLER_ESCROW);
-	const polymerOracleProgram = new PublicKey(SOLANA_POLYMER_ORACLE);
-	const intentsProtocolId = new PublicKey(SOLANA_INTENTS_PROTOCOL);
+	const inputSettlerProgramId = new PublicKey(SOLANA_DEVNET_INPUT_SETTLER_ESCROW);
+	const polymerOracleProgram = new PublicKey(SOLANA_DEVNET_POLYMER_ORACLE);
+	const intentsProtocolId = new PublicKey(SOLANA_DEVNET_INTENTS_PROTOCOL);
 
 	const anchorWallet = {
 		publicKey: solverPubkey,

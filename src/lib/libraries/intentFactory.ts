@@ -3,7 +3,7 @@ import {
 	getClient,
 	getSolanaConnection,
 	isSolanaChain,
-	SOLANA_INPUT_SETTLER_ESCROW,
+	SOLANA_DEVNET_INPUT_SETTLER_ESCROW,
 	INPUT_SETTLER_COMPACT_LIFI,
 	INPUT_SETTLER_ESCROW_LIFI,
 	MULTICHAIN_INPUT_SETTLER_ESCROW,
@@ -252,7 +252,7 @@ export class IntentFactory {
 
 				this.saveOrder({
 					order: solanaOrder,
-					inputSettler: solanaAddressToBytes32(SOLANA_INPUT_SETTLER_ESCROW)
+					inputSettler: solanaAddressToBytes32(SOLANA_DEVNET_INPUT_SETTLER_ESCROW)
 				});
 			} else {
 				if (this.preHook) await this.preHook(inputChain);

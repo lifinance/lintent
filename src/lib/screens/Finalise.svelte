@@ -10,7 +10,7 @@
 	import { deriveAttestationPda } from "$lib/libraries/solanaValidateLib";
 	import { findOutputFilledLog } from "$lib/libraries/evmFillLib";
 	import { finaliseSolanaEscrow, deriveOrderContextPda } from "$lib/libraries/solanaFinaliseLib";
-	import type { MandateOutput, OrderContainer, StandardSolana } from "@lifi/intent";
+	import type { OrderContainer, StandardSolana } from "@lifi/intent";
 	import {
 		chainMap,
 		COMPACT,

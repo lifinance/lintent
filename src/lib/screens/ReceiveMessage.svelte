@@ -10,15 +10,15 @@
 	} from "$lib/config";
 	import { addressToBytes32 } from "@lifi/intent";
 	import { encodeMandateOutput } from "@lifi/intent";
-	import { hashStruct, keccak256, parseEventLogs } from "viem";
+	import { hashStruct, keccak256 } from "viem";
 	import type { MandateOutput, OrderContainer } from "@lifi/intent";
 	import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
-	import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 	import { Solver } from "$lib/libraries/solver";
 	import {
 		submitProofToSolanaOracle,
 		deriveAttestationPda
 	} from "$lib/libraries/solanaValidateLib";
+	import { findOutputFilledLog } from "$lib/libraries/evmFillLib";
 	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
 	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
@@ -88,48 +88,23 @@
 		fillTransactionHash: `0x${string}`,
 		chainId: bigint
 	): Promise<boolean> {
-		try {
-			const { PublicKey } = await import("@solana/web3.js");
-			const outputClient = getClient(output.chainId);
-			const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
-			const logs = parseEventLogs({
-				abi: COIN_FILLER_ABI,
-				eventName: "OutputFilled",
-				logs: receipt.logs
-			});
-			const expectedHash = hashStruct({
-				types: compactTypes,
-				primaryType: "MandateOutput",
-				data: output
-			});
-			const matchingLog = logs.find((log) => {
-				const logHash = hashStruct({
-					types: compactTypes,
-					primaryType: "MandateOutput",
-					data: log.args.output
-				});
-				return logHash === expectedHash;
-			});
-			if (!matchingLog) return false;
-			const solverBytes32 = matchingLog.args.solver as `0x${string}`;
-			const fillTimestamp =
-				typeof matchingLog.args.timestamp === "number"
-					? matchingLog.args.timestamp
-					: Number(matchingLog.args.timestamp);
-			const attestationPda = await deriveAttestationPda({
-				evmChainId: output.chainId,
-				output,
-				proofOutput: matchingLog.args.output as MandateOutput,
-				orderId,
-				fillTimestamp,
-				solverBytes32,
-				emittingContract: matchingLog.address as `0x${string}`
-			});
-			const info = await getSolanaConnection(chainId).getAccountInfo(new PublicKey(attestationPda));
-			return info !== null;
-		} catch {
-			return false;
-		}
+		const { PublicKey } = await import("@solana/web3.js");
+		const outputClient = getClient(output.chainId);
+		const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
+		const match = findOutputFilledLog(receipt, output);
+		if (!match) throw new Error("OutputFilled event not found in fill receipt");
+		const attestationPda = await deriveAttestationPda({
+			evmChainId: output.chainId,
+			output,
+			proofOutput: match.proofOutput,
+			orderId,
+			fillTimestamp: match.fillTimestamp,
+			solverBytes32: match.solverBytes32,
+			emittingContract: match.emittingContract
+		});
+		// getAccountInfo returning null means the PDA doesn't exist yet (proof not yet submitted)
+		const info = await getSolanaConnection(chainId).getAccountInfo(new PublicKey(attestationPda));
+		return info !== null;
 	}
 
 	async function isValidated(
@@ -197,41 +172,19 @@
 			}
 			const outputClient = getClient(output.chainId);
 			const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
-			const logs = parseEventLogs({
-				abi: COIN_FILLER_ABI,
-				eventName: "OutputFilled",
-				logs: receipt.logs
-			});
-			const expectedHash = hashStruct({
-				types: compactTypes,
-				primaryType: "MandateOutput",
-				data: output
-			});
-			const matchingLog = logs.find((log) => {
-				const logHash = hashStruct({
-					types: compactTypes,
-					primaryType: "MandateOutput",
-					data: log.args.output
-				});
-				return logHash === expectedHash;
-			});
-			if (!matchingLog) throw new Error("Could not find OutputFilled event for this output");
-			const solverBytes32 = matchingLog.args.solver as `0x${string}`;
-			const fillTimestamp =
-				typeof matchingLog.args.timestamp === "number"
-					? matchingLog.args.timestamp
-					: Number(matchingLog.args.timestamp);
+			const match = findOutputFilledLog(receipt, output);
+			if (!match) throw new Error("Could not find OutputFilled event for this output");
 			const orderId = containerToIntent(orderContainer).orderId();
 			await submitProofToSolanaOracle({
 				evmChainId: output.chainId,
 				output,
-				proofOutput: matchingLog.args.output as MandateOutput,
+				proofOutput: match.proofOutput,
 				orderId,
-				fillTimestamp,
-				solverBytes32,
-				emittingContract: matchingLog.address as `0x${string}`,
+				fillTimestamp: match.fillTimestamp,
+				solverBytes32: match.solverBytes32,
+				emittingContract: match.emittingContract,
 				fillBlockNumber: Number(receipt.blockNumber),
-				globalLogIndex: matchingLog.logIndex,
+				globalLogIndex: match.logIndex,
 				mainnet: store.mainnet,
 				solanaPublicKey: solanaWallet.publicKey,
 				walletAdapter: solanaWallet.adapter!,

@@ -5,10 +5,7 @@ import {
 	type OrderContainer,
 	type StandardSolana
 } from "@lifi/intent";
-import {
-	normalizeOrderContainer,
-	reviveOrderBigInts
-} from "../../src/lib/utils/reviveOrderBigInts";
+import { parseOrderBigInts } from "../../src/lib/utils/parseOrderBigInts";
 
 const DEVNET_CHAIN_ID = 1151111081099712n;
 const FAKE_ORACLE = ("0x" + "ab".repeat(32)) as `0x${string}`;
@@ -51,7 +48,7 @@ function makeContainer(order: StandardSolana): OrderContainer {
 	};
 }
 
-describe("reviveOrderBigInts", () => {
+describe("parseOrderBigInts", () => {
 	let prevToJson: unknown;
 
 	beforeEach(() => {
@@ -77,7 +74,7 @@ describe("reviveOrderBigInts", () => {
 			.padStart(64, "0");
 
 		const raw = JSON.parse(JSON.stringify(live)) as OrderContainer;
-		const revived = reviveOrderBigInts(raw);
+		const revived = parseOrderBigInts(raw);
 		const sol = revived.order as StandardSolana;
 
 		expect(computeStandardSolanaId(sol)).toBe(idBefore);
@@ -88,13 +85,5 @@ describe("reviveOrderBigInts", () => {
 		expect(sol.originChainId).toBe(DEVNET_CHAIN_ID);
 		expect(sol.outputs[0].amount).toBe(1_000_000n);
 		expect(sol.outputs[0].chainId).toBe(84532n);
-	});
-
-	it("normalizeOrderContainer revives bigints from an in-memory JSON round-trip", () => {
-		const live = makeContainer(makeSolanaOrder());
-		const normalized = normalizeOrderContainer(live);
-		expect(computeStandardSolanaId(normalized.order as StandardSolana)).toBe(
-			computeStandardSolanaId(live.order as StandardSolana)
-		);
 	});
 });

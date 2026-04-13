@@ -13,13 +13,15 @@ import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COMPACT_ABI } from "$lib/abi/compact";
-import { hashStruct, keccak256, parseEventLogs } from "viem";
+import { hashStruct, keccak256 } from "viem";
+import type { TransactionReceipt } from "viem";
 import { compactTypes } from "@lifi/intent";
 import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
 import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
 import { containerToIntent } from "$lib/utils/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import { deriveAttestationPda } from "$lib/libraries/solanaValidateLib";
+import { findOutputFilledLog } from "$lib/libraries/evmFillLib";
 import { deriveOrderContextPda } from "$lib/libraries/solanaFinaliseLib";
 import type { MandateOutput, OrderContainer, StandardSolana } from "@lifi/intent";
 import store from "$lib/state.svelte";
@@ -87,10 +89,7 @@ async function isOutputValidatedOnChain(
 					},
 					{ ttlMs: PROGRESS_TTL_MS }
 				)
-	) as {
-		blockHash: `0x${string}`;
-		from: `0x${string}`;
-	};
+	) as TransactionReceipt;
 	if (!cachedReceipt) {
 		store
 			.saveTransactionReceipt(output.chainId, fillTransactionHash, receipt)
@@ -102,39 +101,16 @@ async function isOutputValidatedOnChain(
 		return getOrFetchRpc(
 			`progress:solana-proven:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`,
 			async () => {
-				const logs = parseEventLogs({
-					abi: COIN_FILLER_ABI,
-					eventName: "OutputFilled",
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					logs: (receipt as any).logs
-				});
-				const expectedHash = hashStruct({
-					types: compactTypes,
-					primaryType: "MandateOutput",
-					data: output
-				});
-				const matchingLog = logs.find((log) => {
-					const logOutputHash = hashStruct({
-						types: compactTypes,
-						primaryType: "MandateOutput",
-						data: log.args.output
-					});
-					return logOutputHash === expectedHash;
-				});
-				if (!matchingLog) return false;
-				const solverBytes32 = matchingLog.args.solver as `0x${string}`;
-				const fillTimestamp =
-					typeof matchingLog.args.timestamp === "number"
-						? matchingLog.args.timestamp
-						: Number(matchingLog.args.timestamp);
+				const match = findOutputFilledLog(receipt, output);
+				if (!match) throw new Error("OutputFilled event not found in fill receipt");
 				const attestationPda = await deriveAttestationPda({
 					evmChainId: output.chainId,
 					output,
-					proofOutput: matchingLog.args.output as MandateOutput,
+					proofOutput: match.proofOutput,
 					orderId,
-					fillTimestamp,
-					solverBytes32,
-					emittingContract: matchingLog.address as `0x${string}`
+					fillTimestamp: match.fillTimestamp,
+					solverBytes32: match.solverBytes32,
+					emittingContract: match.emittingContract
 				});
 				const { PublicKey } = await import("@solana/web3.js");
 				const info = await getSolanaConnection(inputChain).getAccountInfo(
@@ -253,50 +229,39 @@ export async function getOrderProgressChecks(
 	orderContainer: OrderContainer,
 	fillTransactions: Record<string, `0x${string}`>
 ): Promise<FlowCheckState> {
-	try {
-		const intent = containerToIntent(orderContainer);
-		const orderId = intent.orderId();
-		const inputChains = intent.inputChains();
-		const outputs = orderContainer.order.outputs;
+	const intent = containerToIntent(orderContainer);
+	const orderId = intent.orderId();
+	const inputChains = intent.inputChains();
+	const outputs = orderContainer.order.outputs;
 
-		const filledStates = await Promise.all(
-			outputs.map((output) => isOutputFilled(orderId, output))
+	const filledStates = await Promise.all(outputs.map((output) => isOutputFilled(orderId, output)));
+	const allFilled = outputs.length > 0 && filledStates.every(Boolean);
+
+	let allValidated = false;
+	if (allFilled && inputChains.length > 0) {
+		const validatedPairs = await Promise.all(
+			inputChains.flatMap((inputChain) =>
+				outputs.map(async (output) => {
+					const fillHash = fillTransactions[getOutputStorageKey(output)];
+					if (!isValidHash(fillHash)) return false;
+					return isOutputValidatedOnChain(orderId, inputChain, orderContainer, output, fillHash);
+				})
+			)
 		);
-		const allFilled = outputs.length > 0 && filledStates.every(Boolean);
-
-		let allValidated = false;
-		if (allFilled && inputChains.length > 0) {
-			const validatedPairs = await Promise.all(
-				inputChains.flatMap((inputChain) =>
-					outputs.map(async (output) => {
-						const fillHash = fillTransactions[getOutputStorageKey(output)];
-						if (!isValidHash(fillHash)) return false;
-						return isOutputValidatedOnChain(orderId, inputChain, orderContainer, output, fillHash);
-					})
-				)
-			);
-			allValidated = validatedPairs.length > 0 && validatedPairs.every(Boolean);
-		}
-
-		let allFinalised = false;
-		if (allValidated && inputChains.length > 0) {
-			const finalisedStates = await Promise.all(
-				inputChains.map((chainId) => isInputChainFinalised(chainId, orderContainer))
-			);
-			allFinalised = finalisedStates.every(Boolean);
-		}
-
-		return {
-			allFilled,
-			allValidated,
-			allFinalised
-		};
-	} catch (error) {
-		console.warn("progress checks failed", error);
-		return {
-			allFilled: false,
-			allValidated: false,
-			allFinalised: false
-		};
+		allValidated = validatedPairs.length > 0 && validatedPairs.every(Boolean);
 	}
+
+	let allFinalised = false;
+	if (allValidated && inputChains.length > 0) {
+		const finalisedStates = await Promise.all(
+			inputChains.map((chainId) => isInputChainFinalised(chainId, orderContainer))
+		);
+		allFinalised = finalisedStates.every(Boolean);
+	}
+
+	return {
+		allFilled,
+		allValidated,
+		allFinalised
+	};
 }

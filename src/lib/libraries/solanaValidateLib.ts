@@ -1,12 +1,14 @@
 import axios from "axios";
 import { keccak256 } from "viem";
 import idl from "../abi/polymer.json";
-import { SOLANA_INTENTS_PROTOCOL, SOLANA_POLYMER_ORACLE } from "../config";
+import {
+	SOLANA_INTENTS_PROTOCOL,
+	SOLANA_POLYMER_ORACLE,
+	SOLANA_POLYMER_PROVER_PROGRAM
+} from "../config";
 import type { MandateOutput } from "@lifi/intent";
 import type { SignerWalletAdapter } from "@solana/wallet-adapter-base";
 import type { Connection } from "@solana/web3.js";
-
-const POLYMER_PROVER_PROGRAM = "CdvSq48QUukYuMczgZAVNZrwcHNshBdtqrjW26sQiGPs";
 
 /** Convert a bigint (or number) to a 16-byte little-endian Buffer (u128 LE) */
 function u128ToLeBytes(n: bigint | number): Buffer {
@@ -143,7 +145,7 @@ export async function submitProofToSolanaOracle(params: {
 
 	const signerPubkey = new PublicKey(params.solanaPublicKey);
 	const polymerOracleProgram = new PublicKey(SOLANA_POLYMER_ORACLE);
-	const polymerProverProgramId = new PublicKey(POLYMER_PROVER_PROGRAM);
+	const polymerProverProgramId = new PublicKey(SOLANA_POLYMER_PROVER_PROGRAM);
 	const intentsProtocolId = new PublicKey(SOLANA_INTENTS_PROTOCOL);
 
 	// Fetch Polymer proof via /polymer route (returns hex-encoded bytes)

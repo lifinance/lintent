@@ -8,6 +8,7 @@
 
 	import { Solver } from "$lib/libraries/solver";
 	import { deriveAttestationPda } from "$lib/libraries/solanaValidateLib";
+	import { findOutputFilledLog } from "$lib/libraries/evmFillLib";
 	import { finaliseSolanaEscrow, deriveOrderContextPda } from "$lib/libraries/solanaFinaliseLib";
 	import type { MandateOutput, OrderContainer, StandardSolana } from "@lifi/intent";
 	import {
@@ -26,9 +27,8 @@
 	} from "$lib/config";
 	import { COMPACT_ABI } from "$lib/abi/compact";
 	import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
-	import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 	import { idToToken } from "@lifi/intent";
-	import { parseEventLogs, hashStruct } from "viem";
+	import { hashStruct } from "viem";
 	import { compactTypes } from "@lifi/intent";
 	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 	import store from "$lib/state.svelte";
@@ -88,7 +88,9 @@
 	const isValidFillTxHash = (hash: unknown): hash is `0x${string}` =>
 		typeof hash === "string" && hash.startsWith("0x") && hash.length === 66;
 
-	// Order status enum
+	// Order status enum (mirrors InputSettlerEscrow.OrderStatus on-chain)
+	const OrderStatus_None = 0;
+	const OrderStatus_Deposited = 1;
 	const OrderStatus_Claimed = 2;
 	const OrderStatus_Refunded = 3;
 
@@ -177,48 +179,23 @@
 			const solveParams: { solver: number[]; timestamp: number }[] = [];
 			const attestationPdas: string[] = [];
 
-			for (let i = 0; i < outputs.length; i++) {
-				const output = outputs[i];
-				const receipt = receipts[i];
-				const logs = parseEventLogs({
-					abi: COIN_FILLER_ABI,
-					eventName: "OutputFilled",
-					logs: receipt.logs
-				});
-				const expectedHash = hashStruct({
-					types: compactTypes,
-					primaryType: "MandateOutput",
-					data: output
-				});
-				const matchingLog = logs.find((log) => {
-					const logHash = hashStruct({
-						types: compactTypes,
-						primaryType: "MandateOutput",
-						data: log.args.output
-					});
-					return logHash === expectedHash;
-				});
-				if (!matchingLog) throw new Error(`Could not find OutputFilled event for output ${i}`);
-
-				const solverBytes32 = matchingLog.args.solver as `0x${string}`;
-				const fillTimestamp =
-					typeof matchingLog.args.timestamp === "number"
-						? matchingLog.args.timestamp
-						: Number(matchingLog.args.timestamp);
+			for (const [output, receipt] of outputs.map((o, idx) => [o, receipts[idx]] as const)) {
+				const match = findOutputFilledLog(receipt, output);
+				if (!match) throw new Error(`Could not find OutputFilled event for output`);
 
 				solveParams.push({
-					solver: Array.from(Buffer.from(solverBytes32.slice(2), "hex")),
-					timestamp: fillTimestamp
+					solver: Array.from(Buffer.from(match.solverBytes32.slice(2), "hex")),
+					timestamp: match.fillTimestamp
 				});
 
 				const attestationPda = await deriveAttestationPda({
 					evmChainId: output.chainId,
 					output,
-					proofOutput: matchingLog.args.output as MandateOutput,
+					proofOutput: match.proofOutput,
 					orderId,
-					fillTimestamp,
-					solverBytes32,
-					emittingContract: matchingLog.address as `0x${string}`
+					fillTimestamp: match.fillTimestamp,
+					solverBytes32: match.solverBytes32,
+					emittingContract: match.emittingContract
 				});
 				attestationPdas.push(attestationPda);
 			}

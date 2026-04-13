@@ -1,0 +1,444 @@
+{
+	"address": "58CsNaufL383JL7J1jafGW4eWgeQFX5vSZssjsk4WKXd",
+	"metadata": {
+		"name": "output_settler_simple",
+		"version": "0.0.0",
+		"spec": "0.1.0"
+	},
+	"instructions": [
+		{
+			"name": "fill",
+			"docs": [
+				"Fill an order output.",
+				"`order_id` is the input chain order identifier. Is not validated.",
+				"`output` is the output mandate to be filled.",
+				"`fill_deadline` is the maximum time in seconds the fill may be executed at.",
+				"`filler_data` contains the solver identifier sent to the input chain."
+			],
+			"discriminator": [168, 96, 183, 163, 92, 10, 40, 160],
+			"accounts": [
+				{
+					"name": "filler",
+					"writable": true,
+					"signer": true
+				},
+				{
+					"name": "recipient",
+					"writable": true
+				},
+				{
+					"name": "output_settler_simple",
+					"pda": {
+						"seeds": [
+							{
+								"kind": "const",
+								"value": [
+									111, 117, 116, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 115, 105,
+									109, 112, 108, 101
+								]
+							}
+						]
+					}
+				},
+				{
+					"name": "filler_token_account",
+					"writable": true,
+					"pda": {
+						"seeds": [
+							{
+								"kind": "account",
+								"path": "filler"
+							},
+							{
+								"kind": "const",
+								"value": [
+									6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28,
+									180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169
+								]
+							},
+							{
+								"kind": "account",
+								"path": "mint"
+							}
+						],
+						"program": {
+							"kind": "const",
+							"value": [
+								140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+								153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+							]
+						}
+					}
+				},
+				{
+					"name": "recipient_token_account",
+					"writable": true,
+					"pda": {
+						"seeds": [
+							{
+								"kind": "account",
+								"path": "recipient"
+							},
+							{
+								"kind": "const",
+								"value": [
+									6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28,
+									180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169
+								]
+							},
+							{
+								"kind": "account",
+								"path": "mint"
+							}
+						],
+						"program": {
+							"kind": "const",
+							"value": [
+								140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+								153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+							]
+						}
+					}
+				},
+				{
+					"name": "mint"
+				},
+				{
+					"name": "fill_id",
+					"writable": true,
+					"pda": {
+						"seeds": [
+							{
+								"kind": "arg",
+								"path": "order_id"
+							},
+							{
+								"kind": "arg",
+								"path": "output"
+							}
+						]
+					}
+				},
+				{
+					"name": "local_attestation",
+					"writable": true
+				},
+				{
+					"name": "intents_protocol_program",
+					"address": "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz"
+				},
+				{
+					"name": "token_program"
+				},
+				{
+					"name": "associated_token_program",
+					"address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+				},
+				{
+					"name": "system_program",
+					"address": "11111111111111111111111111111111"
+				}
+			],
+			"args": [
+				{
+					"name": "order_id",
+					"type": {
+						"array": ["u8", 32]
+					}
+				},
+				{
+					"name": "mandate_output",
+					"type": {
+						"defined": {
+							"name": "MandateOutput"
+						}
+					}
+				},
+				{
+					"name": "fill_deadline",
+					"type": "u64"
+				},
+				{
+					"name": "filler_data",
+					"type": "bytes"
+				}
+			],
+			"returns": "pubkey"
+		},
+		{
+			"name": "initialize",
+			"docs": [
+				"Initializes the `OutputSettlerSimple` program.",
+				"Creates `OutputSettlerSimple` PDA.",
+				"`OutputSettlerSimple` PDA is used to store the chain identifier."
+			],
+			"discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+			"accounts": [
+				{
+					"name": "deployer",
+					"writable": true,
+					"signer": true
+				},
+				{
+					"name": "chain_id"
+				},
+				{
+					"name": "output_settler_simple",
+					"writable": true,
+					"pda": {
+						"seeds": [
+							{
+								"kind": "const",
+								"value": [
+									111, 117, 116, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 115, 105,
+									109, 112, 108, 101
+								]
+							}
+						]
+					}
+				},
+				{
+					"name": "intents_protocol_program",
+					"address": "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz"
+				},
+				{
+					"name": "system_program",
+					"address": "11111111111111111111111111111111"
+				}
+			],
+			"args": [],
+			"returns": "pubkey"
+		},
+		{
+			"name": "native_fill",
+			"docs": [
+				"Fill an order output with native SOL.",
+				"`order_id` is the input chain order identifier. Is not validated.",
+				"`output` is the output mandate to be filled.",
+				"`fill_deadline` is the maximum time in seconds the fill may be executed at.",
+				"`filler_data` contains the solver identifier sent to the input chain."
+			],
+			"discriminator": [49, 10, 255, 151, 120, 148, 73, 30],
+			"accounts": [
+				{
+					"name": "filler",
+					"writable": true,
+					"signer": true
+				},
+				{
+					"name": "recipient",
+					"writable": true
+				},
+				{
+					"name": "output_settler_simple",
+					"pda": {
+						"seeds": [
+							{
+								"kind": "const",
+								"value": [
+									111, 117, 116, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 115, 105,
+									109, 112, 108, 101
+								]
+							}
+						]
+					}
+				},
+				{
+					"name": "fill_id",
+					"writable": true,
+					"pda": {
+						"seeds": [
+							{
+								"kind": "arg",
+								"path": "order_id"
+							},
+							{
+								"kind": "arg",
+								"path": "output"
+							}
+						]
+					}
+				},
+				{
+					"name": "local_attestation",
+					"writable": true
+				},
+				{
+					"name": "intents_protocol_program",
+					"address": "H1dVz9YXVys8c4tAihD14M5jnrUQi1MFsA65YQ92oCCz"
+				},
+				{
+					"name": "system_program",
+					"address": "11111111111111111111111111111111"
+				}
+			],
+			"args": [
+				{
+					"name": "order_id",
+					"type": {
+						"array": ["u8", 32]
+					}
+				},
+				{
+					"name": "mandate_output",
+					"type": {
+						"defined": {
+							"name": "MandateOutput"
+						}
+					}
+				},
+				{
+					"name": "fill_deadline",
+					"type": "u64"
+				},
+				{
+					"name": "filler_data",
+					"type": "bytes"
+				}
+			],
+			"returns": "pubkey"
+		}
+	],
+	"accounts": [
+		{
+			"name": "ChainId",
+			"discriminator": [203, 146, 201, 161, 230, 71, 157, 218]
+		},
+		{
+			"name": "FillId",
+			"discriminator": [94, 253, 27, 18, 238, 120, 79, 78]
+		},
+		{
+			"name": "OutputSettlerSimpleAccount",
+			"discriminator": [227, 35, 185, 166, 177, 53, 143, 129]
+		}
+	],
+	"errors": [
+		{
+			"code": 6000,
+			"name": "NotImplemented",
+			"msg": "Order type not implemented."
+		},
+		{
+			"code": 6001,
+			"name": "AmountTooLarge",
+			"msg": "Amount is too large."
+		},
+		{
+			"code": 6002,
+			"name": "ArithmeticOverflow",
+			"msg": "Arithmetic overflow."
+		},
+		{
+			"code": 6003,
+			"name": "InvalidFillerData",
+			"msg": "Invalid filler data."
+		},
+		{
+			"code": 6004,
+			"name": "InvalidContextDataLength",
+			"msg": "Invalid context data length."
+		},
+		{
+			"code": 6005,
+			"name": "ExclusiveTo",
+			"msg": "Order is exclusive to another solver or time passed."
+		}
+	],
+	"types": [
+		{
+			"name": "ChainId",
+			"docs": ["Type used to store the chain id of the chain."],
+			"type": {
+				"kind": "struct",
+				"fields": [
+					{
+						"name": "chain_id",
+						"type": "u128"
+					},
+					{
+						"name": "bump",
+						"type": "u8"
+					}
+				]
+			}
+		},
+		{
+			"name": "FillId",
+			"docs": ["Created during fill to ensure no double fill for the same output."],
+			"type": {
+				"kind": "struct",
+				"fields": []
+			}
+		},
+		{
+			"name": "MandateOutput",
+			"type": {
+				"kind": "struct",
+				"fields": [
+					{
+						"name": "oracle",
+						"type": {
+							"array": ["u8", 32]
+						}
+					},
+					{
+						"name": "settler",
+						"type": {
+							"array": ["u8", 32]
+						}
+					},
+					{
+						"name": "chain_id",
+						"type": {
+							"array": ["u8", 32]
+						}
+					},
+					{
+						"name": "token",
+						"type": {
+							"array": ["u8", 32]
+						}
+					},
+					{
+						"name": "amount",
+						"type": {
+							"array": ["u8", 32]
+						}
+					},
+					{
+						"name": "recipient",
+						"type": {
+							"array": ["u8", 32]
+						}
+					},
+					{
+						"name": "callback_data",
+						"type": "bytes"
+					},
+					{
+						"name": "context",
+						"type": "bytes"
+					}
+				]
+			}
+		},
+		{
+			"name": "OutputSettlerSimpleAccount",
+			"docs": ["The output settler PDA to sign for local attestation creation."],
+			"type": {
+				"kind": "struct",
+				"fields": [
+					{
+						"name": "chain_id",
+						"type": "u128"
+					},
+					{
+						"name": "bump",
+						"type": "u8"
+					}
+				]
+			}
+		}
+	]
+}

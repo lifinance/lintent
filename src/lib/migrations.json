@@ -36,5 +36,13 @@
 		"bps": true,
 		"folderMillis": 1771060000000,
 		"hash": "8f048c5d64c44d6c89c970f44a52e1fdbaf3de8f4052145cfd90f50822ab95f1"
+	},
+	{
+		"sql": [
+			"CREATE TABLE \"solana_fill_records\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"record_key\" text NOT NULL,\n\t\"data\" text NOT NULL,\n\t\"created_at\" bigint NOT NULL,\n\tCONSTRAINT \"solana_fill_records_record_key_unique\" UNIQUE(\"record_key\")\n);\n"
+		],
+		"bps": true,
+		"folderMillis": 1775810000000,
+		"hash": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
 	}
 ]

@@ -84,6 +84,32 @@ export const POLYMER_ORACLE_ABI = [
 		stateMutability: "nonpayable"
 	},
 	{
+		type: "function",
+		name: "receiveSolanaMessage",
+		inputs: [
+			{
+				name: "proof",
+				type: "bytes",
+				internalType: "bytes"
+			}
+		],
+		outputs: [],
+		stateMutability: "nonpayable"
+	},
+	{
+		type: "function",
+		name: "receiveSolanaMessage",
+		inputs: [
+			{
+				name: "proofs",
+				type: "bytes[]",
+				internalType: "bytes[]"
+			}
+		],
+		outputs: [],
+		stateMutability: "nonpayable"
+	},
+	{
 		type: "event",
 		name: "OutputProven",
 		inputs: [

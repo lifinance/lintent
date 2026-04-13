@@ -47,6 +47,7 @@ function isValidHash(hash: string | undefined): hash is `0x${string}` {
 }
 
 async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
+	if (isSolanaChain(output.chainId)) return true;
 	const outputKey = getOutputStorageKey(output);
 	return getOrFetchRpc(
 		`progress:filled:${orderId}:${outputKey}`,
@@ -72,6 +73,9 @@ async function isOutputValidatedOnChain(
 	output: MandateOutput,
 	fillTransactionHash: `0x${string}`
 ) {
+	// Solana outputs don't have EVM fill receipts — skip validation progress for them
+	if (isSolanaChain(output.chainId)) return true;
+
 	const outputKey = getOutputStorageKey(output);
 	const cachedReceipt = store.getTransactionReceipt(output.chainId, fillTransactionHash);
 	const receipt = (

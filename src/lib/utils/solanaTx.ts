@@ -6,6 +6,9 @@ const MAX_RETRIES = 1;
 /**
  * Sends a serialized signed Solana transaction and waits for on-chain confirmation.
  *
+ * Handles "already processed" gracefully — if the RPC reports the tx was already
+ * included (e.g. Phantom sent it during signing), confirms it instead of throwing.
+ *
  * If confirmation does not arrive within `confirmTimeoutMs` (default 30 s), the same
  * transaction is re-submitted once more and the wait is repeated. Throws if all
  * attempts are exhausted without confirmation.
@@ -28,14 +31,41 @@ export async function sendAndConfirmSolanaTx(
 	let lastError: Error | undefined;
 
 	for (let attempt = 0; attempt <= maxRetries; attempt++) {
-		// Fetch a fresh blockhash anchor for the confirmation polling window.
-		// The transaction's own embedded blockhash (valid ~90 slots / ~60 s) remains unchanged.
 		const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
 
-		const signature = await connection.sendRawTransaction(rawTransaction, {
-			skipPreflight: false,
-			preflightCommitment: "confirmed"
-		});
+		let signature: string;
+		try {
+			signature = await connection.sendRawTransaction(rawTransaction, {
+				skipPreflight: false,
+				preflightCommitment: "confirmed"
+			});
+		} catch (sendErr: unknown) {
+			const msg = sendErr instanceof Error ? sendErr.message : String(sendErr);
+			if (msg.includes("already been processed") || msg.includes("AlreadyProcessed")) {
+				const { base58 } = await import("@scure/base");
+				const { Transaction } = await import("@solana/web3.js");
+				try {
+					const tx = Transaction.from(rawTransaction);
+					const sig = base58.encode(tx.signature!);
+					const status = await connection.getSignatureStatus(sig);
+					if (
+						status?.value?.confirmationStatus === "confirmed" ||
+						status?.value?.confirmationStatus === "finalized"
+					) {
+						return sig;
+					}
+					await connection.confirmTransaction(sig, "confirmed");
+					return sig;
+				} catch {
+					// Fall through to retry
+				}
+			}
+			if (attempt < maxRetries) {
+				lastError = sendErr instanceof Error ? sendErr : new Error(msg);
+				continue;
+			}
+			throw sendErr;
+		}
 
 		try {
 			const result = await Promise.race([
@@ -55,7 +85,6 @@ export async function sendAndConfirmSolanaTx(
 			return signature;
 		} catch (err) {
 			const error = err instanceof Error ? err : new Error(String(err));
-			// Program / simulation errors are not retriable — surface them immediately.
 			if (!error.message.startsWith("Confirmation timed out")) {
 				throw error;
 			}

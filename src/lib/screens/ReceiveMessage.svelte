@@ -1,12 +1,27 @@
 <script lang="ts">
-	import { formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
+	import {
+		chainMap,
+		formatTokenAmount,
+		getChainName,
+		getClient,
+		getCoin,
+		getSolanaConnection,
+		isSolanaChain
+	} from "$lib/config";
 	import { addressToBytes32 } from "@lifi/intent";
 	import { encodeMandateOutput } from "@lifi/intent";
 	import { hashStruct, keccak256 } from "viem";
 	import type { MandateOutput, OrderContainer } from "@lifi/intent";
 	import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 	import { Solver } from "$lib/libraries/solver";
+	import {
+		submitProofToSolanaOracle,
+		deriveAttestationPda
+	} from "$lib/libraries/solanaValidateLib";
+	import { findOutputFilledLog } from "$lib/libraries/evmFillLib";
+	import solanaWallet from "$lib/utils/solana-wallet.svelte";
 	import AwaitButton from "$lib/components/AwaitButton.svelte";
+	import SolanaWalletButton from "$lib/components/SolanaWalletButton.svelte";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
 	import SectionCard from "$lib/components/ui/SectionCard.svelte";
 	import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
@@ -14,8 +29,6 @@
 	import store from "$lib/state.svelte";
 	import { containerToIntent } from "$lib/utils/intent";
 	import { compactTypes } from "@lifi/intent";
-
-	// This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 
 	let {
 		scroll,
@@ -30,6 +43,11 @@
 		postHook: () => Promise<any>;
 		account: () => `0x${string}`;
 	} = $props();
+
+	// Solana→EVM: input chain is Solana
+	const isSolanaToEvm = $derived(
+		"originChainId" in orderContainer.order && isSolanaChain(orderContainer.order.originChainId)
+	);
 
 	let refreshValidation = $state(0);
 	let autoScrolledOrderId = $state<`0x${string}` | null>(null);
@@ -48,6 +66,47 @@
 	const validationKey = (inputChain: bigint, output: MandateOutput) =>
 		`${inputChain.toString()}:${outputKey(output)}`;
 
+	function markOutputValidated(output: MandateOutput, inputChain: bigint, orderId: `0x${string}`) {
+		const nextStatuses = { ...validationStatuses };
+		nextStatuses[validationKey(inputChain, output)] = true;
+		validationStatuses = nextStatuses;
+		const allValidated = orderContainer.order.outputs.every(
+			(candidate) => nextStatuses[validationKey(inputChain, candidate)] === true
+		);
+		if (allValidated) {
+			autoScrolledOrderId = orderId;
+			scroll(5)();
+		}
+	}
+
+	/**
+	 * Check if a Solana attestation PDA exists for this fill (Solana→EVM path).
+	 */
+	async function isValidatedSolana(
+		orderId: `0x${string}`,
+		output: MandateOutput,
+		fillTransactionHash: `0x${string}`,
+		chainId: bigint
+	): Promise<boolean> {
+		const { PublicKey } = await import("@solana/web3.js");
+		const outputClient = getClient(output.chainId);
+		const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
+		const match = findOutputFilledLog(receipt, output);
+		if (!match) throw new Error("OutputFilled event not found in fill receipt");
+		const attestationPda = await deriveAttestationPda({
+			evmChainId: output.chainId,
+			output,
+			proofOutput: match.proofOutput,
+			orderId,
+			fillTimestamp: match.fillTimestamp,
+			solverBytes32: match.solverBytes32,
+			emittingContract: match.emittingContract
+		});
+		// getAccountInfo returning null means the PDA doesn't exist yet (proof not yet submitted)
+		const info = await getSolanaConnection(chainId).getAccountInfo(new PublicKey(attestationPda));
+		return info !== null;
+	}
+
 	async function isValidated(
 		orderId: `0x${string}`,
 		chainId: bigint,
@@ -56,13 +115,18 @@
 		fillTransactionHash: `0x${string}`,
 		_?: any
 	) {
-		if (!fillTransactionHash) return false;
 		if (
 			!fillTransactionHash ||
 			!fillTransactionHash.startsWith("0x") ||
 			fillTransactionHash.length != 66
 		)
 			return false;
+
+		// Solana input chain: check attestation PDA on Solana
+		if (isSolanaChain(chainId)) {
+			return isValidatedSolana(orderId, output, fillTransactionHash, chainId);
+		}
+
 		const { order } = orderContainer;
 		const outputClient = getClient(output.chainId);
 		const transactionReceipt = await outputClient.getTransactionReceipt({
@@ -88,24 +152,50 @@
 		});
 	}
 
-	// const validations = $derived(
-	// 	orderContainer.order.outputs.map((output) => {
-	// 		return orderToIntent(orderContainer)
-	// 			.inputChains()
-	// 			.map((inputChain) => {
-	// 				return isValidated(
-	// 					orderToIntent(orderContainer).orderId(),
-	// 					inputChain,
-	// 					orderContainer,
-	// 					output,
-	// 					store.fillTransactions[
-	// 						hashStruct({ data: output, types: compactTypes, primaryType: "MandateOutput" })
-	// 					],
-	// 					refreshValidation
-	// 				);
-	// 			});
-	// 	})
-	// );
+	/**
+	 * Returns a button function for submitting a Polymer proof to the Solana oracle (Solana→EVM).
+	 */
+	function solanaValidateButtonFn(output: MandateOutput, inputChain: bigint) {
+		return async () => {
+			if (!solanaWallet.connected || !solanaWallet.publicKey) {
+				throw new Error("Connect your Solana wallet first");
+			}
+			const fillTransactionHash = store.fillTransactions[outputKey(output)];
+			if (
+				!fillTransactionHash ||
+				!fillTransactionHash.startsWith("0x") ||
+				fillTransactionHash.length !== 66
+			) {
+				throw new Error(
+					"Fill transaction hash not available. Please wait for the fill to be recorded."
+				);
+			}
+			const outputClient = getClient(output.chainId);
+			const receipt = await outputClient.getTransactionReceipt({ hash: fillTransactionHash });
+			const match = findOutputFilledLog(receipt, output);
+			if (!match) throw new Error("Could not find OutputFilled event for this output");
+			const orderId = containerToIntent(orderContainer).orderId();
+			await submitProofToSolanaOracle({
+				evmChainId: output.chainId,
+				output,
+				proofOutput: match.proofOutput,
+				orderId,
+				fillTimestamp: match.fillTimestamp,
+				solverBytes32: match.solverBytes32,
+				emittingContract: match.emittingContract,
+				fillBlockNumber: Number(receipt.blockNumber),
+				globalLogIndex: match.logIndex,
+				mainnet: store.mainnet,
+				solanaPublicKey: solanaWallet.publicKey,
+				walletAdapter: solanaWallet.adapter!,
+				connection: getSolanaConnection(
+					store.mainnet ? chainMap.solanaMainnet.id : chainMap.solanaDevnet.id
+				)
+			});
+			markOutputValidated(output, inputChain, orderId);
+			await postHookRefreshValidate();
+		};
+	}
 
 	$effect(() => {
 		refreshValidation;
@@ -113,6 +203,20 @@
 		const intent = containerToIntent(orderContainer);
 		const orderId = intent.orderId();
 		if (autoScrolledOrderId === orderId) return;
+
+		if (isSolanaToEvm) {
+			// For Solana→EVM, initialize statuses to false so buttons render.
+			// Status polling happens via the button click (manual step).
+			const inputChains = intent.inputChains();
+			const nextStatuses: Record<string, boolean> = {};
+			for (const inputChain of inputChains) {
+				for (const output of orderContainer.order.outputs) {
+					nextStatuses[validationKey(inputChain, output)] = false;
+				}
+			}
+			validationStatuses = nextStatuses;
+			return;
+		}
 
 		const inputChains = intent.inputChains();
 		const outputs = orderContainer.order.outputs;
@@ -185,46 +289,51 @@
 									symbol={getCoin({ address: output.token, chainId: output.chainId }).name}
 									tone="warning"
 								/>
+							{:else if isSolanaToEvm && !solanaWallet.connected}
+								<SolanaWalletButton />
 							{:else}
+								{@const fillTxHash =
+									store.fillTransactions[
+										hashStruct({ data: output, types: compactTypes, primaryType: "MandateOutput" })
+									]}
 								<AwaitButton
 									size="sm"
 									variant={status ? "success" : "warning"}
 									baseClass={["min-w-[6.5rem] justify-center"]}
 									buttonFunction={status
 										? async () => {}
-										: Solver.validate(
-												store.walletClient,
-												{
-													output,
-													orderContainer,
-													fillTransactionHash:
-														store.fillTransactions[
-															hashStruct({
-																data: output,
-																types: compactTypes,
-																primaryType: "MandateOutput"
-															})
-														],
-													sourceChainId: Number(inputChain),
-													mainnet: store.mainnet
-												},
-												{
-													preHook,
-													postHook: postHookRefreshValidate,
-													account
-												}
-											)}
+										: isSolanaToEvm
+											? solanaValidateButtonFn(output, inputChain)
+											: Solver.validate(
+													store.walletClient,
+													{
+														output,
+														orderContainer,
+														fillTransactionHash: fillTxHash,
+														sourceChainId: Number(inputChain),
+														mainnet: store.mainnet
+													},
+													{
+														preHook,
+														postHook: postHookRefreshValidate,
+														account
+													}
+												)}
 								>
 									{#snippet name()}
-										{formatTokenAmount(
-											output.amount,
-											getCoin({ address: output.token, chainId: output.chainId }).decimals
-										)}
-										&nbsp;
-										{getCoin({
-											address: output.token,
-											chainId: output.chainId
-										}).name.toUpperCase()}
+										{#if status}
+											Validated
+										{:else}
+											{formatTokenAmount(
+												output.amount,
+												getCoin({ address: output.token, chainId: output.chainId }).decimals
+											)}
+											&nbsp;
+											{getCoin({
+												address: output.token,
+												chainId: output.chainId
+											}).name.toUpperCase()}
+										{/if}
 									{/snippet}
 									{#snippet awaiting()}
 										Validating...

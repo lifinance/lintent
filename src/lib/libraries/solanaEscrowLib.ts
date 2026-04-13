@@ -1,6 +1,6 @@
 import { keccak256 } from "viem";
 import idl from "../abi/input_settler_escrow.json";
-import { SOLANA_INPUT_SETTLER_ESCROW, SOLANA_POLYMER_ORACLE } from "../config";
+import { SOLANA_DEVNET_INPUT_SETTLER_ESCROW, SOLANA_DEVNET_POLYMER_ORACLE } from "../config";
 import type { MandateOutput, StandardSolana } from "@lifi/intent";
 import type { SignerWalletAdapter } from "@solana/wallet-adapter-base";
 import type { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
@@ -46,8 +46,8 @@ export async function openSolanaEscrow(params: {
 		await import("@solana/spl-token");
 
 	const userPubkey = new PublicKey(solanaPublicKey);
-	const inputSettlerProgramId = new PublicKey(SOLANA_INPUT_SETTLER_ESCROW);
-	const polymerProgramId = new PublicKey(SOLANA_POLYMER_ORACLE);
+	const inputSettlerProgramId = new PublicKey(SOLANA_DEVNET_INPUT_SETTLER_ESCROW);
+	const polymerProgramId = new PublicKey(SOLANA_DEVNET_POLYMER_ORACLE);
 
 	// Wrap the wallet adapter as an Anchor-compatible wallet.
 	const anchorWallet = {
@@ -70,13 +70,13 @@ export async function openSolanaEscrow(params: {
 	// Program converts the IDL to camelCase internally; its coder uses camelCase field names.
 	const program = new Program(typedIdl, provider);
 
-	// Derive polymer oracle PDA (seed: "polymer", program: SOLANA_POLYMER_ORACLE)
+	// Derive polymer oracle PDA (seed: "polymer", program: SOLANA_DEVNET_POLYMER_ORACLE)
 	const [polymerOraclePda] = PublicKey.findProgramAddressSync(
 		[Buffer.from("polymer")],
 		polymerProgramId
 	);
 
-	// Derive input settler escrow PDA (seed: "input_settler_escrow", program: SOLANA_INPUT_SETTLER_ESCROW)
+	// Derive input settler escrow PDA (seed: "input_settler_escrow", program: SOLANA_DEVNET_INPUT_SETTLER_ESCROW)
 	const [inputSettlerEscrowPda] = PublicKey.findProgramAddressSync(
 		[Buffer.from("input_settler_escrow")],
 		inputSettlerProgramId
@@ -85,7 +85,11 @@ export async function openSolanaEscrow(params: {
 	// Extract input token from StandardSolana.
 	// Solana token IDs are full 32-byte public keys stored as bigint — do NOT use idToToken()
 	// which strips the first 12 bytes (EVM-only helper that returns 20-byte addresses).
-	const tokenIdHex = order.inputs[0][0].toString(16).padStart(64, "0");
+	const rawToken = order.inputs[0][0];
+	if (rawToken === undefined || rawToken === null) {
+		throw new Error("StandardSolana order is missing inputs[0][0] (token)");
+	}
+	const tokenIdHex = BigInt(rawToken).toString(16).padStart(64, "0");
 	const inputMint = new PublicKey(Buffer.from(tokenIdHex, "hex"));
 	const inputAmount = new BN(order.inputs[0][1].toString());
 
@@ -123,7 +127,7 @@ export async function openSolanaEscrow(params: {
 	const orderIdHex = keccak256(encoded);
 	const orderId = Buffer.from(orderIdHex.slice(2), "hex");
 
-	// Derive orderContext PDA (seeds: ["order_context", orderId], program: SOLANA_INPUT_SETTLER_ESCROW)
+	// Derive orderContext PDA (seeds: ["order_context", orderId], program: SOLANA_DEVNET_INPUT_SETTLER_ESCROW)
 	const [orderContext] = PublicKey.findProgramAddressSync(
 		[Buffer.from("order_context"), orderId],
 		inputSettlerProgramId

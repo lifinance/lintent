@@ -27,6 +27,7 @@ import {
 } from "./schema";
 import { and, eq } from "drizzle-orm";
 import { containerToIntent } from "./utils/intent";
+import { parseOrderBigInts } from "./utils/parseOrderBigInts";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {
 	getCurrentConnection,
@@ -46,7 +47,7 @@ class Store {
 		if (!db) await initDb();
 		if (!db) return;
 		const rows = await db!.select().from(intents);
-		this.orders = rows.map((r: any) => JSON.parse(r.data) as OrderContainer);
+		this.orders = rows.map((r: any) => parseOrderBigInts(JSON.parse(r.data) as OrderContainer));
 	}
 
 	async saveOrderToDb(order: OrderContainer) {

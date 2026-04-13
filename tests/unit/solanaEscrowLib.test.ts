@@ -129,6 +129,15 @@ describe("openSolanaEscrow", () => {
 		mock.module("@solana/web3.js", () => {
 			class FakePublicKey {
 				constructor(public key: unknown) {}
+				toBase58() {
+					return String(this.key);
+				}
+				toBuffer() {
+					return Buffer.alloc(32);
+				}
+				equals(other: FakePublicKey) {
+					return this.key === other.key;
+				}
 				static findProgramAddressSync() {
 					return [new FakePublicKey("pda"), 255];
 				}

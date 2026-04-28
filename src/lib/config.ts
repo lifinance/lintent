@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, custom, fallback, http } from "viem";
+import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
 import {
 	arbitrum,
 	arbitrumSepolia,
@@ -12,6 +12,15 @@ import {
 	katana,
 	megaeth
 } from "viem/chains";
+
+export const pharos = defineChain({
+	id: 1672,
+	name: "Pharos",
+	nativeCurrency: { name: "PROS", symbol: "PROS", decimals: 18 },
+	rpcUrls: {
+		default: { http: ["https://rpc.pharos.xyz"] }
+	}
+});
 
 export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000" as const;
 export const BYTES32_ZERO =
@@ -39,6 +48,7 @@ export const POLYMER_ORACLE = {
 	katana: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
 	polygon: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
 	bsc: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	pharos: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
 	// testnet
 	sepolia: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
 	baseSepolia: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
@@ -62,13 +72,14 @@ export const chainMap = {
 	katana,
 	megaeth,
 	bsc,
-	polygon
+	polygon,
+	pharos
 } as const;
 export const chains = Object.keys(chainMap) as (keyof typeof chainMap)[];
 export type chain = (typeof chains)[number];
 export const chainList = (mainnet: boolean) => {
 	if (mainnet == true) {
-		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc"];
+		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc", "pharos"];
 	} else return ["sepolia", "optimismSepolia", "baseSepolia", "arbitrumSepolia"];
 };
 
@@ -185,6 +196,12 @@ export const coinList = (mainnet: boolean) => {
 				name: "usdc.e",
 				chain: "polygon",
 				decimals: 6
+			},
+			{
+				address: `0xc879c018db60520f4355c26ed1a6d572cdac1815`,
+				name: "usdc",
+				chain: "pharos",
+				decimals: 6
 			}
 		] as const;
 	else
@@ -300,7 +317,8 @@ export const polymerChainIds = {
 	megaeth: megaeth.id,
 	katana: katana.id,
 	bsc: bsc.id,
-	polygon: polygon.id
+	polygon: polygon.id,
+	pharos: pharos.id
 } as const;
 
 export type Verifier = "wormhole" | "polymer";
@@ -405,6 +423,10 @@ export const clients = {
 	katana: createPublicClient({
 		chain: katana,
 		transport: fallback([...katana.rpcUrls.default.http.map((v) => http(v))])
+	}),
+	pharos: createPublicClient({
+		chain: pharos,
+		transport: fallback([...pharos.rpcUrls.default.http.map((v) => http(v))])
 	}),
 	// Testnet
 	sepolia: createPublicClient({

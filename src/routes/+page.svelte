@@ -36,7 +36,7 @@
     });
   });
 
-  const intentApi = $derived(new IntentApi(store.mainnet));
+  const intentApi = $derived(new IntentApi(store.useProductionApi ?? store.mainnet));
 
   let disconnectWs: (() => void) | undefined;
 

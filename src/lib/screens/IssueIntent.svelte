@@ -67,6 +67,7 @@
   const intentFactory = $derived(
     new IntentFactory({
       mainnet: store.mainnet,
+      useProductionApi: store.useProductionApi,
       walletClient: store.walletClient,
       preHook,
       postHook: postHookScroll,
@@ -222,6 +223,7 @@
             bind:exclusiveFor={store.exclusiveFor}
             useExclusiveForQuoteRequest={store.useExclusiveForQuoteRequest}
             mainnet={store.mainnet}
+            useProductionApi={store.useProductionApi}
             inputTokens={store.inputTokens}
             bind:outputTokens={store.outputTokens}
             {account}

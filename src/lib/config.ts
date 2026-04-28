@@ -11,7 +11,8 @@ import {
   bsc,
   katana,
   megaeth,
-  optimism
+  optimism,
+  arcTestnet
 } from "viem/chains";
 
 export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000" as const;
@@ -41,10 +42,11 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   // testnet
-  [sepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-  [baseSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-  [arbitrumSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00",
-  [optimismSepolia.id]: "0x00d5b500ECa100F7cdeDC800eC631Aca00BaAC00"
+  [sepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
+  [baseSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
+  [arbitrumSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
+  [optimismSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
+  [arcTestnet.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
 };
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
@@ -64,14 +66,22 @@ export const chainMap = {
   katana,
   megaeth,
   bsc,
-  polygon
+  polygon,
+  arcTestnet
 } as const;
 type ChainName = keyof typeof chainMap;
 export const chains = Object.keys(chainMap) as ChainName[];
 export const chainList = (mainnet: boolean) => {
   if (mainnet == true) {
     return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc"] as ChainName[];
-  } else return ["sepolia", "optimismSepolia", "baseSepolia", "arbitrumSepolia"] as ChainName[];
+  } else
+    return [
+      "sepolia",
+      "optimismSepolia",
+      "baseSepolia",
+      "arbitrumSepolia",
+      "arcTestnet"
+    ] as ChainName[];
 };
 
 export const chainIdList = (mainnet: boolean) => {
@@ -281,6 +291,12 @@ export const coinList = (mainnet: boolean) => {
         name: "weth",
         chainId: arbitrumSepolia.id,
         decimals: 18
+      },
+      {
+        address: `0x3600000000000000000000000000000000000000`,
+        name: "usdc",
+        chainId: arcTestnet.id,
+        decimals: 6
       }
     ] as const;
 };
@@ -323,7 +339,8 @@ export const polymerChainIds = {
   megaeth: megaeth.id,
   katana: katana.id,
   bsc: bsc.id,
-  polygon: polygon.id
+  polygon: polygon.id,
+  arcTestnet: arcTestnet.id
 } as const;
 
 export type Verifier = "wormhole" | "polymer";
@@ -490,6 +507,10 @@ export const clients = {
       http("https://optimism-sepolia-rpc.publicnode.com"),
       ...optimismSepolia.rpcUrls.default.http.map((v) => http(v))
     ])
+  }),
+  arcTestnet: createPublicClient({
+    chain: arcTestnet,
+    transport: fallback([...arcTestnet.rpcUrls.default.http.map((v) => http(v))])
   })
 } as const;
 

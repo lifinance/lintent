@@ -46,6 +46,7 @@ function generateUUID(): string {
 
 class Store {
   mainnet = $state<boolean>(true);
+  useProductionApi = $state<boolean | null>(null);
   orders = $state<OrderContainer[]>([]);
 
   async loadOrdersFromDb() {

@@ -8,7 +8,7 @@
 		<a
 			class="font-bold text-blue-700 hover:text-blue-500"
 			href="https://github.com/Uniswap/the-compact/tree/v1">The Compact</a
-		> and a ERC 7683-compliant escrow flow.
+		> and an ERC 7683-compliant escrow flow.
 	</p>
 
 	<br />
@@ -77,8 +77,8 @@
 	<p>
 		A multichain intent is an intent that collects inputs on multiple chains, providing the result
 		on one or more chains. In other words, a multichain intent is an <i>any to any</i> intent.
-		Multichain intents are currently work in progress and will break in the future. If you are using
-		this interface for testing, ensure the <b>multichain</b> flag is not shown.
+		Multichain intents are currently a work in progress and will break in the future. If you are
+		using this interface for testing, ensure the <b>multichain</b> flag is not shown.
 	</p>
 
 	<br />

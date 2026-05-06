@@ -1,24 +1,14 @@
 <div class="px-2">
 	<p>
-		This webapp demonstrates chain abstraction using the
+		This web app showcases a chain-abstracted flow using the
 		<a
 			class="font-bold text-blue-700 hover:text-blue-500"
 			href="https://github.com/openintentsframework/oif-contracts">Open Intents Framework</a
-		>. It currently support a seamless resource lock flow using
+		>. It currently supports a Resource Lock flow using
 		<a
 			class="font-bold text-blue-700 hover:text-blue-500"
 			href="https://github.com/Uniswap/the-compact/tree/v1">The Compact</a
-		> and a traditional escrow flow, along with a work in progress multichain flow.
-	</p>
-
-	<br />
-
-	<h3 class="font-semibold">Multichain</h3>
-	<p>
-		A multichain intent is an intent that collects inputs on multiple chains, providing the result
-		on one or more chains. In other words, a multichain intent is an <i>any to any</i> intent.
-		Multichain intents are currently work in progress and will break in the future. If you are using
-		this interface for testing, ensure the <b>multichain</b> flag is not shown.
+		> and an ERC 7683-compliant escrow flow.
 	</p>
 
 	<br />
@@ -38,7 +28,7 @@
 		<li>No upfront deposit or initiation transaction are required.</li>
 		<li>Fully composable with other protocols and settlement layers.</li>
 	</ul>
-
+	<br />
 	<p>
 		Learn more about
 		<a
@@ -61,6 +51,7 @@
 		<li>Create a reference implementation for cross-chain solvers & searchers.</li>
 		<li>Provide tooling for wallet and app developers.</li>
 	</ul>
+	<br />
 	<p>
 		Learn more about
 		<a class="text-blue-700 hover:text-blue-500" href="https://openintents.xyz"
@@ -79,4 +70,16 @@
 			>explore a demo</a
 		> of how to collect inputs before delivering outputs.
 	</p>
+
+	<br />
+
+	<h3 class="font-semibold">Multichain</h3>
+	<p>
+		A multichain intent is an intent that collects inputs on multiple chains, providing the result
+		on one or more chains. In other words, a multichain intent is an <i>any to any</i> intent.
+		Multichain intents are currently a work in progress and will break in the future. If you are
+		using this interface for testing, ensure the <b>multichain</b> flag is not shown.
+	</p>
+
+	<br />
 </div>

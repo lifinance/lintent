@@ -174,7 +174,7 @@
 
 <main class="main">
 	<h1 class="mb-1 pt-3 text-center align-middle text-xl font-medium text-gray-900">
-		Resource lock intents using OIF
+		Intents with Open Intents Framework
 	</h1>
 	<div
 		class="mx-auto flex flex-col-reverse items-center px-4 pt-2 md:max-w-[80rem] md:flex-row md:items-start md:px-10 md:pt-3"

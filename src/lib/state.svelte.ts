@@ -25,7 +25,7 @@ import {
   tokens as tokensTable
 } from "./schema";
 import { and, eq, ne, notInArray } from "drizzle-orm";
-import { orderToIntent } from "@lifi/intent";
+import { containerToIntent } from "./utils/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {
   getCurrentConnection,
@@ -60,7 +60,7 @@ class Store {
   async saveOrderToDb(order: OrderContainer) {
     if (!browser) return;
     if (!db) await initDb();
-    const orderId = orderToIntent(order).orderId();
+    const orderId = containerToIntent(order).orderId();
     const now = Math.floor(Date.now() / 1000);
     const id = (order as any).id ?? generateUUID();
     const intentType = (order as any).intentType ?? "escrow";
@@ -99,7 +99,7 @@ class Store {
         console.warn("saveOrderToDb db write failed", { orderId, error });
       }
     }
-    const idx = this.orders.findIndex((o) => orderToIntent(o).orderId() === orderId);
+    const idx = this.orders.findIndex((o) => containerToIntent(o).orderId() === orderId);
     if (idx >= 0) this.orders[idx] = order;
     else this.orders.push(order);
   }
@@ -285,6 +285,7 @@ class Store {
   allocatorId = $state<availableAllocators>(ALWAYS_OK_ALLOCATOR);
   verifier = $state<Verifier>("polymer");
   exclusiveFor: string = $state("");
+  recipient: string = $state("");
   useExclusiveForQuoteRequest = $state(false);
 
   invalidateWalletReadCache(scope: "all" | "balance" | "allowance" | "compact" = "all") {

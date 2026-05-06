@@ -16,13 +16,25 @@ import type {
   Signature,
   StandardOrder
 } from "@lifi/intent";
+import {
+  Intent,
+  IntentApi,
+  StandardSolanaIntent,
+  SOLANA_MAINNET_CHAIN_ID,
+  SOLANA_TESTNET_CHAIN_ID,
+  SOLANA_DEVNET_CHAIN_ID
+} from "@lifi/intent";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
-import { Intent } from "@lifi/intent";
-import { IntentApi } from "@lifi/intent";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
 import { intentDeps } from "./coreDeps";
+
+const SOLANA_CHAIN_IDS = new Set([
+  SOLANA_MAINNET_CHAIN_ID,
+  SOLANA_TESTNET_CHAIN_ID,
+  SOLANA_DEVNET_CHAIN_ID
+]);
 
 const SAME_CHAIN_DURATION_SECONDS = 10 * 60; // 10 minutes
 const SAME_CHAIN_EXCLUSIVITY_SECONDS = 12 * 3; // 36 seconds
@@ -55,12 +67,14 @@ function applyExclusivityOverride(
 }
 
 function toCoreTokenContext(input: AppTokenContext): TokenContext {
+  const chainId = BigInt(input.token.chainId);
   return {
     token: {
       address: input.token.address,
       name: input.token.name,
-      chainId: BigInt(input.token.chainId),
-      decimals: input.token.decimals
+      chainId,
+      decimals: input.token.decimals,
+      chainNamespace: SOLANA_CHAIN_IDS.has(chainId) ? "solana" : "eip155"
     },
     amount: input.amount
   };
@@ -75,6 +89,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
       outputTokens: opts.outputTokens.map(toCoreTokenContext),
       verifier: opts.verifier,
       account,
+      outputRecipient: opts.outputRecipient,
       lock: {
         type: "compact",
         resetPeriod: opts.lock.resetPeriod,
@@ -89,6 +104,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
     outputTokens: opts.outputTokens.map(toCoreTokenContext),
     verifier: opts.verifier,
     account,
+    outputRecipient: opts.outputRecipient,
     lock: {
       type: "escrow"
     }
@@ -161,6 +177,8 @@ export class IntentFactory {
       applySameChainTimings(intentInstance);
       const sameChain = intentInstance.isSameChain();
       const intent = intentInstance.order();
+      if (intent instanceof StandardSolanaIntent)
+        throw new Error("Compact signing is not supported for Solana intents.");
       applyExclusivityOverride(intent, opts.exclusiveFor, sameChain);
 
       const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
@@ -203,6 +221,8 @@ export class IntentFactory {
       applySameChainTimings(intentInstance2);
       const sameChain2 = intentInstance2.isSameChain();
       const intent = intentInstance2.singlechain();
+      if (intent instanceof StandardSolanaIntent)
+        throw new Error("Compact deposit and register is not supported for Solana intents.");
       applyExclusivityOverride(intent, opts.exclusiveFor, sameChain2);
 
       if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
@@ -242,6 +262,8 @@ export class IntentFactory {
       applySameChainTimings(intentInstance3);
       const sameChain3 = intentInstance3.isSameChain();
       const intent = intentInstance3.order();
+      if (intent instanceof StandardSolanaIntent)
+        throw new Error("openEscrowIntent is not supported for Solana intents.");
       applyExclusivityOverride(intent, opts.exclusiveFor, sameChain3);
 
       const inputChain = inputTokens[0].token.chainId;

@@ -34,12 +34,16 @@
   const resolveExclusiveFor = (value: string): `0x${string}` | undefined =>
     isAddress(value, { strict: false }) ? value : undefined;
 
+  const resolveRecipient = (value: string): `0x${string}` | undefined =>
+    isAddress(value, { strict: false }) ? value : undefined;
+
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({
       exclusiveFor: resolveExclusiveFor(store.exclusiveFor),
       inputTokens: store.inputTokens,
       outputTokens: store.outputTokens,
       verifier: store.verifier,
+      outputRecipient: resolveRecipient(store.recipient),
       lock:
         store.intentType === "compact"
           ? {
@@ -293,6 +297,19 @@
 
     <SectionCard compact>
       <div class="flex flex-col gap-2">
+        <div class="flex min-w-0 items-center gap-1">
+          <span class="text-[11px] font-semibold whitespace-nowrap text-gray-500">Recipient</span>
+          <FormControl
+            type="text"
+            size="sm"
+            className="flex-1"
+            placeholder="0x... (optional)"
+            state={store.recipient.length > 0 && !resolveRecipient(store.recipient)
+              ? "error"
+              : "default"}
+            bind:value={store.recipient}
+          />
+        </div>
         <div class="flex items-center gap-1">
           <span class="text-[11px] font-semibold text-gray-500">Verifier</span>
           {#if sameChain}
@@ -330,15 +347,7 @@
     </SectionCard>
 
     <div class="mt-2 flex justify-center">
-      {#if !true}
-        <button
-          type="button"
-          class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
-          disabled
-        >
-          Input must be exactly raw 100 USDC
-        </button>
-      {:else if !allowanceCheck}
+      {#if !allowanceCheck}
         <AwaitButton buttonFunction={approveFunction}>
           {#snippet name()}
             Set allowance

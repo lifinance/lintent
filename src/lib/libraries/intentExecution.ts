@@ -16,7 +16,7 @@ import {
 import { compact_type_hash } from "@lifi/intent";
 import { addressToBytes32 } from "@lifi/intent";
 import { signMultichainCompact, signStandardCompact } from "@lifi/intent";
-import { MultichainOrderIntent, StandardOrderIntent } from "@lifi/intent";
+import { MultichainOrderIntent, StandardEVMIntent as StandardOrderIntent } from "@lifi/intent";
 import type { NoSignature, Signature } from "@lifi/intent";
 import type { TypedDataSigner } from "@lifi/intent";
 import { switchWalletChain } from "$lib/utils/walletClientRuntime";

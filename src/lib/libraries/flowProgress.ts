@@ -15,7 +15,7 @@ import { hashStruct, keccak256 } from "viem";
 import { compactTypes } from "@lifi/intent";
 import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
 import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
-import { orderToIntent } from "@lifi/intent";
+import { containerToIntent } from "$lib/utils/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import store from "$lib/state.svelte";
@@ -128,7 +128,7 @@ async function isOutputValidatedOnChain(
 async function isInputChainFinalised(chainId: bigint, container: OrderContainer) {
   const { order, inputSettler } = container;
   const inputChainClient = getClient(chainId);
-  const intent = orderToIntent(container);
+  const intent = containerToIntent(container);
   const orderId = intent.orderId();
 
   if (
@@ -185,7 +185,7 @@ export async function getOrderProgressChecks(
   fillTransactions: Record<string, `0x${string}`>
 ): Promise<FlowCheckState> {
   try {
-    const intent = orderToIntent(orderContainer);
+    const intent = containerToIntent(orderContainer);
     const orderId = intent.orderId();
     const inputChains = intent.inputChains();
     const outputs = orderContainer.order.outputs;

@@ -12,7 +12,7 @@
   import ConnectWallet from "$lib/screens/ConnectWallet.svelte";
   import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
   import store from "$lib/state.svelte";
-  import { orderToIntent } from "@lifi/intent";
+  import { containerToIntent } from "$lib/utils/intent";
 
   // Fix bigint so we can json serialize it:
   (BigInt.prototype as any).toJSON = function () {
@@ -70,8 +70,8 @@
         const orderContainer = { ...order, allocatorSignature, sponsorSignature };
 
         // Deduplicate: only add if not already present
-        const orderId = orderToIntent(orderContainer).orderId();
-        const alreadyExists = store.orders.some((o) => orderToIntent(o).orderId() === orderId);
+        const orderId = containerToIntent(orderContainer).orderId();
+        const alreadyExists = store.orders.some((o) => containerToIntent(o).orderId() === orderId);
         if (alreadyExists) return;
 
         store.orders.push(orderContainer);
@@ -103,18 +103,18 @@
   let scrollStepProgress = $state(0);
   async function importOrderById(orderId: `0x${string}`): Promise<"inserted" | "updated"> {
     const importedOrder = await intentApi.getOrderByOnChainOrderId(orderId);
-    const importedOrderId = orderToIntent(importedOrder).orderId();
+    const importedOrderId = containerToIntent(importedOrder).orderId();
     const existingIndex = store.orders.findIndex(
-      (o) => orderToIntent(o).orderId() === importedOrderId
+      (o) => containerToIntent(o).orderId() === importedOrderId
     );
     await store.saveOrderToDb(importedOrder);
     selectedOrder =
-      store.orders.find((o) => orderToIntent(o).orderId() === importedOrderId) ?? importedOrder;
+      store.orders.find((o) => containerToIntent(o).orderId() === importedOrderId) ?? importedOrder;
     return existingIndex >= 0 ? "updated" : "inserted";
   }
   async function deleteOrderById(orderId: `0x${string}`): Promise<void> {
     await store.deleteOrderFromDb(orderId);
-    if (selectedOrder && orderToIntent(selectedOrder).orderId() === orderId) {
+    if (selectedOrder && containerToIntent(selectedOrder).orderId() === orderId) {
       selectedOrder = undefined;
     }
   }

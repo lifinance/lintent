@@ -11,7 +11,7 @@
   import ChainActionRow from "$lib/components/ui/ChainActionRow.svelte";
   import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
   import store from "$lib/state.svelte";
-  import { orderToIntent } from "@lifi/intent";
+  import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
   import { hashStruct } from "viem";
 
@@ -110,7 +110,7 @@
   $effect(() => {
     refreshValidation;
 
-    const orderId = orderToIntent(orderContainer).orderId();
+    const orderId = containerToIntent(orderContainer).orderId();
     if (autoScrolledOrderId === orderId) return;
 
     const outputs = sortOutputsByChain(orderContainer).flatMap(([, chainOutputs]) => chainOutputs);

@@ -259,7 +259,8 @@ export class Solver {
             `Polymer proof unavailable for output on ${output.chainId.toString()}. Try again after the fill attestation is indexed.`
           );
         } else if (order.inputOracle === COIN_FILLER) {
-          const log = logs.find((log) => log.logIndex === logIndex)!;
+          const log = logs.find((log) => log.logIndex === logIndex);
+          if (!log) throw new Error(`Log with index ${logIndex} not found`);
           if (preHook) await preHook(Number(sourceChainId));
           const transactionHash = await walletClient.writeContract({
             chain: getChain(sourceChainId),

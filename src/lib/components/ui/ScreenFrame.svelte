@@ -8,8 +8,8 @@
     bodyClass = "mt-2 h-[22rem] overflow-y-auto pr-1",
     children
   }: {
-    title: string;
-    description: string;
+    title?: string;
+    description?: string;
     contentClass?: string;
     bodyClass?: string;
     children?: Snippet;

@@ -41,8 +41,9 @@ const SAME_CHAIN_EXCLUSIVITY_SECONDS = 12 * 3; // 36 seconds
 
 function applySameChainTimings(intent: Intent): void {
   if (!intent.isSameChain()) return;
-  (intent as any).expiry = SAME_CHAIN_DURATION_SECONDS;
-  (intent as any).fillDeadline = SAME_CHAIN_DURATION_SECONDS;
+  const mutable = intent as unknown as { expiry: number; fillDeadline: number };
+  mutable.expiry = SAME_CHAIN_DURATION_SECONDS;
+  mutable.fillDeadline = SAME_CHAIN_DURATION_SECONDS;
 }
 
 function applyExclusivityOverride(
@@ -61,7 +62,7 @@ function applyExclusivityOverride(
   );
   for (const output of order.outputs) {
     if (output.context !== "0x") {
-      (output as any).context = newContext;
+      output.context = newContext;
     }
   }
 }
@@ -144,7 +145,7 @@ export class IntentFactory {
     if (ordersPointer) this.orders = ordersPointer;
   }
 
-  private saveOrder(options: {
+  private async saveOrder(options: {
     order: StandardOrder | MultichainOrder;
     inputSettler: `0x${string}`;
     sponsorSignature?: Signature | NoSignature;
@@ -165,7 +166,7 @@ export class IntentFactory {
       }
     };
     this.orders.push(orderContainer);
-    store.saveOrderToDb(orderContainer).catch((e) => console.warn("saveOrderToDb error", e));
+    await store.saveOrderToDb(orderContainer);
   }
 
   compact(opts: AppCreateIntentOptions) {
@@ -188,7 +189,7 @@ export class IntentFactory {
         sponsorSignature
       });
 
-      this.saveOrder({
+      await this.saveOrder({
         order: intent.asOrder(),
         inputSettler: intent.inputSettler,
         sponsorSignature: {
@@ -237,7 +238,7 @@ export class IntentFactory {
       // You may consider getting the allocator signature before you call depositAndRegisterCompact
 
       // Add the order to our local order list.
-      this.saveOrder({
+      await this.saveOrder({
         order: intent.asOrder(),
         inputSettler: INPUT_SETTLER_COMPACT_LIFI
       });
@@ -281,7 +282,7 @@ export class IntentFactory {
 
       if (this.postHook) await this.postHook();
 
-      this.saveOrder({
+      await this.saveOrder({
         order: intent.asOrder(),
         inputSettler: store.inputSettler
       });

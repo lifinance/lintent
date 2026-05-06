@@ -42,7 +42,7 @@ export class Solver {
       Array.isArray((cached as { logs?: unknown[] }).logs) &&
       (cached as { logs?: unknown[] }).logs!.length > 0
     )
-      return cached as any;
+      return cached;
     const receipt = await getClient(chainId).getTransactionReceipt({ hash: txHash });
     await Solver.persistReceipt(chainId, txHash, receipt);
     return receipt;

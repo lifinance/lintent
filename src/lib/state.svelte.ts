@@ -1,5 +1,8 @@
 import type { OrderContainer } from "@lifi/intent";
+import type { GetTransactionReceiptReturnType } from "viem";
 import type { AppTokenContext } from "./appTypes";
+
+type OrderContainerWithMeta = OrderContainer & { id?: string; intentType?: string };
 import {
   ALWAYS_OK_ALLOCATOR,
   clientsById,
@@ -54,16 +57,16 @@ class Store {
     if (!db) await initDb();
     if (!db) return;
     const rows = await db!.select().from(intents);
-    this.orders = rows.map((r: any) => JSON.parse(r.data) as OrderContainer);
+    this.orders = rows.map((r) => JSON.parse(r.data) as OrderContainer);
   }
 
-  async saveOrderToDb(order: OrderContainer) {
+  async saveOrderToDb(order: OrderContainerWithMeta) {
     if (!browser) return;
     if (!db) await initDb();
     const orderId = containerToIntent(order).orderId();
     const now = Math.floor(Date.now() / 1000);
-    const id = (order as any).id ?? generateUUID();
-    const intentType = (order as any).intentType ?? "escrow";
+    const id = order.id ?? generateUUID();
+    const intentType = order.intentType ?? "escrow";
     const data = JSON.stringify(order);
     if (db) {
       try {
@@ -199,7 +202,7 @@ class Store {
     const serialized = this.transactionReceipts[`${Number(chainId)}:${txHash}`];
     if (!serialized) return undefined;
     try {
-      return JSON.parse(serialized) as unknown;
+      return JSON.parse(serialized) as GetTransactionReceiptReturnType;
     } catch (error) {
       console.warn("parse cached transaction receipt failed", {
         chainId: Number(chainId),

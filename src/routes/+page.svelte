@@ -14,8 +14,7 @@
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
 
-  // Fix bigint so we can json serialize it:
-  (BigInt.prototype as any).toJSON = function () {
+  BigInt.prototype.toJSON = function () {
     return this.toString();
   };
 

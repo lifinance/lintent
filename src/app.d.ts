@@ -8,6 +8,9 @@ declare global {
     // interface PageState {}
     // interface Platform {}
   }
+  interface BigInt {
+    toJSON(): string;
+  }
 }
 
 export {};

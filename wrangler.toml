@@ -1,0 +1,32 @@
+name = "lintent-worker"
+main = ".svelte-kit/cloudflare/_worker.js"
+compatibility_date = "2026-03-06"
+compatibility_flags = ["nodejs_compat"]
+
+# account_id is NOT set here — passed via CLOUDFLARE_ACCOUNT_ID in CI
+
+[assets]
+binding = "ASSETS"
+directory = ".svelte-kit/cloudflare"
+
+[build]
+command = "bun run build"
+
+[env.production]
+name = "lintent-worker"
+vars = { ENVIRONMENT = "production" }
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[tags]
+lifi = "true"
+lintent = "true"
+
+[placement]
+mode = "smart"

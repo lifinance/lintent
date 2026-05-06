@@ -273,6 +273,7 @@ class Store {
 	allocatorId = $state<availableAllocators>(ALWAYS_OK_ALLOCATOR);
 	verifier = $state<Verifier>("polymer");
 	exclusiveFor: string = $state("");
+	recipient: string = $state("");
 	useExclusiveForQuoteRequest = $state(false);
 
 	invalidateWalletReadCache(scope: "all" | "balance" | "allowance" | "compact" = "all") {

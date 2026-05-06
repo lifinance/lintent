@@ -58,8 +58,7 @@
       });
       if (response?.quotes?.length ?? 0) {
         const quote = response.quotes[0];
-        quoteExpires = quote.validUntil ?? new Date().getTime() + 30 * 1000;
-        if (quoteExpires < new Date().getTime()) quoteExpires = new Date().getTime() + 30 * 1000;
+        quoteExpires = new Date().getTime() + 30 * 1000;
         quoteDuration = quoteExpires - new Date().getTime();
         outputTokens[0].amount = BigInt(quote.preview.outputs[0].amount);
         exclusiveFor = Array.isArray(quote.metadata.exclusiveFor)

@@ -7,7 +7,6 @@
   import type { AppTokenContext } from "$lib/appTypes";
   import store from "$lib/state.svelte";
   import { toBigIntWithDecimals } from "@lifi/intent";
-  import { type InteropableAddress, getInteropableAddress } from "@lifi/intent";
 
   const v = (num: number | null) => (num ? num : 0);
   const formatBalance = (value: bigint, decimals: number) =>
@@ -21,20 +20,17 @@
     currentInputTokens: AppTokenContext[];
   } = $props();
 
-  let inputs = $state<{ [index: InteropableAddress]: number | null }>(
+  let inputs = $state<{ [index: string]: number | null }>(
     Object.fromEntries(
       (currentInputTokens ?? []).map(({ token, amount }) => [
-        getInteropableAddress(token.address, token.chainId),
+        `${token.chainId}:${token.address}`,
         Number(amount) / 10 ** token.decimals
       ])
     )
   );
-  let enabledByToken = $state<{ [index: InteropableAddress]: boolean }>(
+  let enabledByToken = $state<{ [index: string]: boolean }>(
     Object.fromEntries(
-      (currentInputTokens ?? []).map(({ token }) => [
-        getInteropableAddress(token.address, token.chainId),
-        true
-      ])
+      (currentInputTokens ?? []).map(({ token }) => [`${token.chainId}:${token.address}`, true])
     )
   );
   // svelte-ignore state_referenced_locally
@@ -43,11 +39,11 @@
   type SortOrder = "largest" | "smallest";
   let sortOrder = $state<SortOrder>("largest");
   const rowColumns = "4.5rem minmax(0,1fr) 2rem";
-  const iaddrFor = (token: Token) => getInteropableAddress(token.address, token.chainId);
+  const iaddrFor = (token: Token) => `${token.chainId}:${token.address}`;
 
-  const isEnabled = (address: InteropableAddress) => enabledByToken[address] ?? true;
+  const isEnabled = (address: string) => enabledByToken[address] ?? true;
 
-  function getTokenFor(address: InteropableAddress): Token | undefined {
+  function getTokenFor(address: string): Token | undefined {
     for (const token of tokenSet) {
       const iaddr = iaddrFor(token);
       if (iaddr === address) return token;
@@ -56,7 +52,7 @@
 
   function save() {
     // Go over every single non-0 instance in the array:
-    const inputKeys = Object.keys(inputs) as InteropableAddress[];
+    const inputKeys = Object.keys(inputs);
     const inputTokens: AppTokenContext[] = [];
     for (const key of inputKeys) {
       // Check that key is a number

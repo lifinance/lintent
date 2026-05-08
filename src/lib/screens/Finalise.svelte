@@ -27,6 +27,7 @@
   import { compactTypes } from "@lifi/intent";
   import { isTronChain } from "$lib/utils/chainType";
   import { readTronOrderStatus } from "$lib/libraries/tronSolver";
+  import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 
   let {
     orderContainer,
@@ -93,7 +94,11 @@
     const orderId = intent.orderId();
 
     if (isTronChain(chainId)) {
-      const orderStatus = await readTronOrderStatus(orderId);
+      const orderStatus = await getOrFetchRpc(
+        `claim:tron:${orderId}`,
+        () => readTronOrderStatus(orderId),
+        { ttlMs: 30_000 }
+      );
       return orderStatus === OrderStatus_Claimed || orderStatus === OrderStatus_Refunded;
     }
 
@@ -154,7 +159,13 @@
         for (const [key, value] of entries) next[key] = value;
         claimedByChain = next;
       })
-      .catch((e) => console.warn("claim status refresh failed", e));
+      .catch((e) => {
+        console.warn("claim status refresh failed", e);
+        if (currentRun !== claimStatusRun) return;
+        const next: Record<string, boolean> = {};
+        for (const chain of inputChains) next[chain.toString()] = false;
+        claimedByChain = next;
+      });
   });
 </script>
 

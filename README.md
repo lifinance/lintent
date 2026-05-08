@@ -96,13 +96,13 @@ The app exposes six sequential screens, each representing one step in the OIF fl
 
 The app interacts with the following deployed contracts (ABIs are inlined in `src/lib/abi/`).
 
-| Contract | Purpose |
-|---|---|
-| The Compact | ERC-6909 resource lock registry for compact-based intents |
-| Input Settler (Escrow) | Opens and finalises escrow-based intents (single-chain and multichain variants) |
-| Input Settler (Compact) | Finalises compact-based intents using combined sponsor and allocator signatures |
-| CoinFiller | Output settlement where solvers deliver tokens, also handles same-chain attestations |
-| Polymer Oracle | Verifies cross-chain fill proofs submitted via Polymer |
+| Contract                | Purpose                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| The Compact             | ERC-6909 resource lock registry for compact-based intents                            |
+| Input Settler (Escrow)  | Opens and finalises escrow-based intents (single-chain and multichain variants)      |
+| Input Settler (Compact) | Finalises compact-based intents using combined sponsor and allocator signatures      |
+| CoinFiller              | Output settlement where solvers deliver tokens, also handles same-chain attestations |
+| Polymer Oracle          | Verifies cross-chain fill proofs submitted via Polymer                               |
 
 ## Project Structure
 

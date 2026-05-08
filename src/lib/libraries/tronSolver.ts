@@ -1,5 +1,5 @@
 import { getTronWeb } from "$lib/utils/tronlink";
-import { COIN_FILLER, TRON_MAINNET_INPUT_SETTLER } from "$lib/config";
+import { TRON_MAINNET_INPUT_SETTLER } from "$lib/config";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
@@ -51,14 +51,26 @@ export async function fillTronOutputs(
     }
   }
 
-  const coinFillerBase58 = toTronAddress(tw, COIN_FILLER);
   const fillerContract = await tw.contract(
     [...COIN_FILLER_ABI] as Record<string, unknown>[],
-    coinFillerBase58
+    settlerBase58
   );
 
+  // TronLink's ethers.js v6 strips localName from coders in nested tuples,
+  // so named objects fail — pass as positional arrays.
+  const outputTuples = outputs.map((o) => [
+    o.oracle,
+    o.settler,
+    o.chainId,
+    o.token,
+    o.amount,
+    o.recipient,
+    o.callbackData,
+    o.context
+  ]);
+
   const txId = await fillerContract
-    .fillOrderOutputs(orderId, outputs, order.fillDeadline, addressToBytes32(accountHex))
+    .fillOrderOutputs(orderId, outputTuples, order.fillDeadline, addressToBytes32(accountHex))
     .send({ feeLimit: 150_000_000 });
 
   return txId;

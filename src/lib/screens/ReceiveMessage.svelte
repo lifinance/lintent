@@ -16,6 +16,7 @@
   import { compactTypes } from "@lifi/intent";
   import { isTronChain } from "$lib/utils/chainType";
   import { readTronIsProven } from "$lib/libraries/tronSolver";
+  import { getTronBlockTimestamp } from "$lib/libraries/tronExecution";
 
   // This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 
@@ -70,13 +71,19 @@
     const transactionReceipt = await outputClient.getTransactionReceipt({
       hash: fillTransactionHash
     });
-    const block = await (transactionReceipt.blockNumber !== undefined
-      ? outputClient.getBlock({ blockNumber: transactionReceipt.blockNumber })
-      : outputClient.getBlock({ blockHash: transactionReceipt.blockHash }));
+    let timestamp: number;
+    if (isTronChain(output.chainId)) {
+      timestamp = await getTronBlockTimestamp(Number(transactionReceipt.blockNumber));
+    } else {
+      const block = await (transactionReceipt.blockNumber !== undefined
+        ? outputClient.getBlock({ blockNumber: transactionReceipt.blockNumber })
+        : outputClient.getBlock({ blockHash: transactionReceipt.blockHash }));
+      timestamp = Number(block.timestamp);
+    }
     const encodedOutput = encodeMandateOutput({
       solver: addressToBytes32(transactionReceipt.from),
       orderId,
-      timestamp: Number(block.timestamp),
+      timestamp,
       output
     });
     const outputHash = keccak256(encodedOutput);

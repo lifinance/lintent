@@ -19,6 +19,8 @@ import { containerToIntent } from "$lib/utils/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import store from "$lib/state.svelte";
+import { isTronChain } from "$lib/utils/chainType";
+import { getTronBlockTimestamp } from "$lib/libraries/tronExecution";
 
 const PROGRESS_TTL_MS = 30_000;
 const OrderStatus_Claimed = 2;
@@ -93,22 +95,33 @@ async function isOutputValidatedOnChain(
       .catch((error) => console.warn("saveTransactionReceipt error", error));
   }
 
-  const block = await getOrFetchRpc(
-    `progress:block:${output.chainId.toString()}:${(receipt as { blockNumber?: unknown }).blockNumber ?? receipt.blockHash}`,
-    async () => {
-      const outputClient = getClient(output.chainId);
-      const blockNumber = (receipt as { blockNumber?: bigint }).blockNumber;
-      return blockNumber !== undefined
-        ? outputClient.getBlock({ blockNumber })
-        : outputClient.getBlock({ blockHash: receipt.blockHash });
-    },
-    { ttlMs: PROGRESS_TTL_MS }
-  );
+  let timestamp: number;
+  if (isTronChain(output.chainId)) {
+    const blockNumber = (receipt as { blockNumber?: bigint }).blockNumber;
+    timestamp = await getOrFetchRpc(
+      `progress:block:${output.chainId.toString()}:${blockNumber}`,
+      () => getTronBlockTimestamp(Number(blockNumber)),
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  } else {
+    const block = await getOrFetchRpc(
+      `progress:block:${output.chainId.toString()}:${(receipt as { blockNumber?: unknown }).blockNumber ?? receipt.blockHash}`,
+      async () => {
+        const outputClient = getClient(output.chainId);
+        const blockNumber = (receipt as { blockNumber?: bigint }).blockNumber;
+        return blockNumber !== undefined
+          ? outputClient.getBlock({ blockNumber })
+          : outputClient.getBlock({ blockHash: receipt.blockHash });
+      },
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+    timestamp = Number(block.timestamp);
+  }
 
   const encodedOutput = encodeMandateOutput({
     solver: addressToBytes32(receipt.from),
     orderId,
-    timestamp: Number(block.timestamp),
+    timestamp,
     output
   });
   const outputHash = keccak256(encodedOutput);

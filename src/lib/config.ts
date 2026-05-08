@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, custom, fallback, http } from "viem";
+import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
 import type { HttpTransport } from "viem";
 import {
   arbitrum,
@@ -29,6 +29,15 @@ function routemeshRpc(chainId: number): HttpTransport[] {
   return [http(`https://lb.routeme.sh/rpc/${chainId}/${routemeshApiKey}`)];
 }
 
+export const pharos = defineChain({
+  id: 1672,
+  name: "Pharos",
+  nativeCurrency: { name: "PROS", symbol: "PROS", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.pharos.xyz"] }
+  }
+});
+
 export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000" as const;
 export const BYTES32_ZERO =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as const;
@@ -56,6 +65,7 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [katana.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+  [pharos.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [tron.id]: "0xfa5fabd73c86e1822fda06418c332800c0d7d73b",
   // testnet
   [sepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
@@ -83,6 +93,7 @@ export const chainMap = {
   megaeth,
   bsc,
   polygon,
+  pharos,
   arcTestnet,
   tron
 } as const;
@@ -98,6 +109,7 @@ export const chainList = (mainnet: boolean) => {
       "katana",
       "polygon",
       "bsc",
+      "pharos",
       "tron"
     ] as ChainName[];
   } else
@@ -384,6 +396,7 @@ export const polymerChainIds = {
   katana: katana.id,
   bsc: bsc.id,
   polygon: polygon.id,
+  pharos: pharos.id,
   arcTestnet: arcTestnet.id,
   tron: tron.id
 } as const;
@@ -535,6 +548,10 @@ export const clients = {
       ...routemeshRpc(katana.id),
       ...katana.rpcUrls.default.http.map((v) => http(v))
     ])
+  }),
+  pharos: createPublicClient({
+    chain: pharos,
+    transport: fallback([...pharos.rpcUrls.default.http.map((v) => http(v))])
   }),
   // Testnet
   sepolia: createPublicClient({

@@ -1,5 +1,5 @@
 import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
-import { hashStruct, maxUint256, parseEventLogs } from "viem";
+import { encodeFunctionData, hashStruct, maxUint256, parseEventLogs } from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import { addressToBytes32, bytes32ToAddress, StandardSolanaIntent } from "@lifi/intent";
 import axios from "axios";
@@ -10,6 +10,14 @@ import { containerToIntent } from "$lib/utils/intent";
 import { compactTypes } from "@lifi/intent";
 import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
+import { isTronChain } from "$lib/utils/chainType";
+import {
+  fillTronOutputs,
+  claimTronIntent,
+  submitTronReceiveMessage,
+  getTronTransactionInfo
+} from "./tronSolver";
+import { getTronBlockTimestamp } from "./tronExecution";
 
 /**
  * @notice Class for solving intents. Functions called by solvers.
@@ -20,6 +28,25 @@ export class Solver {
 
   private static sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private static extractRevertReason(error: unknown): string {
+    if (
+      error &&
+      typeof error === "object" &&
+      "cause" in error &&
+      error.cause &&
+      typeof error.cause === "object" &&
+      "data" in error.cause
+    ) {
+      const reverted = error.cause as { data?: { errorName?: string; args?: unknown[] } };
+      if (reverted.data?.errorName) {
+        const args = reverted.data.args?.length ? ` (${reverted.data.args.join(", ")})` : "";
+        return `${reverted.data.errorName}${args}`;
+      }
+    }
+    if (error instanceof Error) return error.message;
+    return String(error);
   }
 
   private static async persistReceipt(
@@ -69,6 +96,13 @@ export class Solver {
       const orderId = containerToIntent(args.orderContainer).orderId();
 
       const outputChainId = Number(outputs[0].chainId);
+
+      if (isTronChain(outputChainId)) {
+        const txId = await fillTronOutputs(args.orderContainer, outputs, account());
+        if (postHook) await postHook();
+        return `0x${txId.replace("0x", "")}` as `0x${string}`;
+      }
+
       const outputChain = getChain(outputChainId);
       // Always attempt chain switch before fill, including native-token fills.
       if (preHook) await preHook(outputChain.id);
@@ -235,7 +269,32 @@ export class Solver {
             await Solver.sleep(waitMs);
           }
           if (proof) {
+            if (isTronChain(sourceChainId)) {
+              const txId = await submitTronReceiveMessage(order.inputOracle, proof);
+              if (postHook) await postHook();
+              return { transactionHash: `0x${txId.replace("0x", "")}` };
+            }
+
             if (preHook) await preHook(Number(sourceChainId));
+
+            const proofHex = `0x${proof.replace("0x", "")}` as `0x${string}`;
+            const simCalldata = encodeFunctionData({
+              abi: POLYMER_ORACLE_ABI,
+              functionName: "receiveMessage",
+              args: [proofHex]
+            });
+            try {
+              await getClient(sourceChainId).call({
+                to: order.inputOracle,
+                data: simCalldata,
+                account: account()
+              });
+            } catch (simError) {
+              throw new Error(
+                `receiveMessage simulation failed on chain ${Number(sourceChainId)}: ${Solver.extractRevertReason(simError)}`,
+                { cause: simError as Error }
+              );
+            }
 
             const transactionHash = await walletClient.writeContract({
               chain: getChain(sourceChainId),
@@ -243,7 +302,7 @@ export class Solver {
               address: order.inputOracle,
               abi: POLYMER_ORACLE_ABI,
               functionName: "receiveMessage",
-              args: [`0x${proof.replace("0x", "")}`]
+              args: [proofHex]
             });
 
             const result = await getClient(sourceChainId).waitForTransactionReceipt({
@@ -314,6 +373,7 @@ export class Solver {
       const intent = containerToIntent(orderContainer);
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Finalise is not supported for Solana input intents.");
+
       if (fillTransactionHashes.length !== order.outputs.length) {
         throw new Error(
           `Fill transaction hash count (${fillTransactionHashes.length}) does not match output count (${order.outputs.length}).`
@@ -325,19 +385,36 @@ export class Solver {
           throw new Error(`Invalid fill tx hash at index ${i}: ${hash}`);
         }
       }
-      const transactionReceipts = await Promise.all(
-        fillTransactionHashes.map((fth, i) =>
-          Solver.getReceiptCachedOrRpc(order.outputs[i].chainId, fth as `0x${string}`)
-        )
-      );
-      const blocks = await Promise.all(
-        transactionReceipts.map((r, i) => {
-          return getClient(order.outputs[i].chainId).getBlock({
-            blockHash: r.blockHash
-          });
+      const fillTimestamps = await Promise.all(
+        fillTransactionHashes.map(async (fth, i) => {
+          const outputChainId = order.outputs[i].chainId;
+          if (isTronChain(outputChainId)) {
+            const txInfo = await getTronTransactionInfo(fth.replace("0x", ""));
+            return getTronBlockTimestamp(Number(txInfo.blockNumber));
+          }
+          const receipt = await Solver.getReceiptCachedOrRpc(outputChainId, fth as `0x${string}`);
+          // Prefer blockNumber — eth_getBlockByHash is unreliable on many public RPCs.
+          // Coerce to bigint in case the cached receipt deserialized blockNumber as a number.
+          const blockNumber = receipt.blockNumber != null ? BigInt(receipt.blockNumber) : null;
+          const block =
+            blockNumber != null
+              ? await getClient(outputChainId).getBlock({ blockNumber })
+              : await getClient(outputChainId).getBlock({
+                  blockHash: receipt.blockHash as `0x${string}`
+                });
+          return Number(block.timestamp);
         })
       );
-      const fillTimestamps = blocks.map((b) => b.timestamp);
+
+      if (isTronChain(sourceChainId)) {
+        const txId = await claimTronIntent({
+          orderContainer,
+          fillTimestamps: fillTimestamps.map(Number),
+          account: account()
+        });
+        if (postHook) await postHook();
+        return `0x${txId.replace("0x", "")}`;
+      }
 
       if (preHook) await preHook(Number(sourceChainId));
       const expectedChainId = Number(sourceChainId);

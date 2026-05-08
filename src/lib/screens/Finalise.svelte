@@ -25,6 +25,8 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { hashStruct } from "viem";
   import { compactTypes } from "@lifi/intent";
+  import { isTronChain } from "$lib/utils/chainType";
+  import { readTronOrderStatus } from "$lib/libraries/tronSolver";
 
   let {
     orderContainer,
@@ -87,10 +89,15 @@
 
   async function isClaimed(chainId: bigint, container: OrderContainer, _: any) {
     const { order, inputSettler } = container;
-    const inputChainClient = getClient(chainId);
-
     const intent = containerToIntent(container);
     const orderId = intent.orderId();
+
+    if (isTronChain(chainId)) {
+      const orderStatus = await readTronOrderStatus(orderId);
+      return orderStatus === OrderStatus_Claimed || orderStatus === OrderStatus_Refunded;
+    }
+
+    const inputChainClient = getClient(chainId);
     // Determine the order type.
     if (
       inputSettler === INPUT_SETTLER_ESCROW_LIFI ||

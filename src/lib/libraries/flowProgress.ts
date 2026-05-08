@@ -94,10 +94,13 @@ async function isOutputValidatedOnChain(
   }
 
   const block = await getOrFetchRpc(
-    `progress:block:${output.chainId.toString()}:${receipt.blockHash}`,
+    `progress:block:${output.chainId.toString()}:${(receipt as { blockNumber?: unknown }).blockNumber ?? receipt.blockHash}`,
     async () => {
       const outputClient = getClient(output.chainId);
-      return outputClient.getBlock({ blockHash: receipt.blockHash });
+      const blockNumber = (receipt as { blockNumber?: bigint }).blockNumber;
+      return blockNumber !== undefined
+        ? outputClient.getBlock({ blockNumber })
+        : outputClient.getBlock({ blockHash: receipt.blockHash });
     },
     { ttlMs: PROGRESS_TTL_MS }
   );

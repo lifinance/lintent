@@ -13,6 +13,8 @@
   import { ResetPeriod } from "@lifi/intent";
   import type { AppCreateIntentOptions } from "$lib/appTypes";
   import { isAddress } from "viem";
+  import { isTronBase58Address } from "$lib/utils/chainType";
+  import { tronBase58ToHex } from "@lifi/intent";
 
   const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
   const REQUIRED_INPUT_USDC_RAW = 100n;
@@ -31,11 +33,16 @@
 
   let inputTokenSelectorActive = $state<boolean>(false);
   let outputTokenSelectorActive = $state<boolean>(false);
-  const resolveExclusiveFor = (value: string): `0x${string}` | undefined =>
-    isAddress(value, { strict: false }) ? value : undefined;
 
-  const resolveRecipient = (value: string): `0x${string}` | undefined =>
-    isAddress(value, { strict: false }) ? value : undefined;
+  function resolveAddress(value: string): `0x${string}` | undefined {
+    if (isAddress(value, { strict: false })) return value;
+    if (isTronBase58Address(value)) return tronBase58ToHex(value);
+    return undefined;
+  }
+
+  const resolveExclusiveFor = (value: string): `0x${string}` | undefined => resolveAddress(value);
+
+  const resolveRecipient = (value: string): `0x${string}` | undefined => resolveAddress(value);
 
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({

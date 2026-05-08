@@ -14,6 +14,8 @@
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
+  import { isTronChain } from "$lib/utils/chainType";
+  import { readTronIsProven } from "$lib/libraries/tronSolver";
 
   // This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 
@@ -68,10 +70,9 @@
     const transactionReceipt = await outputClient.getTransactionReceipt({
       hash: fillTransactionHash
     });
-    const blockHashOfFill = transactionReceipt.blockHash;
-    const block = await outputClient.getBlock({
-      blockHash: blockHashOfFill
-    });
+    const block = await (transactionReceipt.blockNumber !== undefined
+      ? outputClient.getBlock({ blockNumber: transactionReceipt.blockNumber })
+      : outputClient.getBlock({ blockHash: transactionReceipt.blockHash }));
     const encodedOutput = encodeMandateOutput({
       solver: addressToBytes32(transactionReceipt.from),
       orderId,
@@ -79,6 +80,15 @@
       output
     });
     const outputHash = keccak256(encodedOutput);
+    if (isTronChain(chainId)) {
+      return await readTronIsProven(
+        order.inputOracle,
+        output.chainId,
+        output.oracle,
+        output.settler,
+        outputHash
+      );
+    }
     const sourceChainClient = getClient(chainId);
     return await sourceChainClient.readContract({
       address: order.inputOracle,
@@ -142,17 +152,24 @@
           )
       }))
     );
-    Promise.all(pairs.map(async (pair) => [pair.key, await pair.run()] as const))
-      .then((entries) => {
-        if (currentRun !== validationRun) return;
-        const nextStatuses: Record<string, boolean> = {};
-        for (const [key, validated] of entries) nextStatuses[key] = validated;
-        validationStatuses = nextStatuses;
-        if (entries.length === 0 || !entries.every(([, validated]) => validated)) return;
-        autoScrolledOrderId = orderId;
-        scroll(5)();
+    Promise.all(
+      pairs.map(async (pair) => {
+        try {
+          return [pair.key, await pair.run()] as const;
+        } catch (e) {
+          console.warn(`validation check failed for ${pair.key}`, e);
+          return [pair.key, false] as const;
+        }
       })
-      .catch((e) => console.warn("auto-scroll validation check failed", e));
+    ).then((entries) => {
+      if (currentRun !== validationRun) return;
+      const nextStatuses: Record<string, boolean> = {};
+      for (const [key, validated] of entries) nextStatuses[key] = validated;
+      validationStatuses = nextStatuses;
+      if (entries.length === 0 || !entries.every(([, validated]) => validated)) return;
+      autoScrolledOrderId = orderId;
+      scroll(5)();
+    });
   });
 </script>
 

@@ -10,6 +10,7 @@
   import ReceiveMessage from "$lib/screens/ReceiveMessage.svelte";
   import Finalise from "$lib/screens/Finalise.svelte";
   import ConnectWallet from "$lib/screens/ConnectWallet.svelte";
+  import WalletStatus from "$lib/components/WalletStatus.svelte";
   import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
@@ -95,7 +96,10 @@
   // --- Execute Transaction Variables --- //
   const preHook = (chainId: number) => store.setWalletToCorrectChain(chainId);
   const postHook = async () => store.forceUpdate();
-  const account = () => store.connectedAccount?.address!;
+  const account = () => {
+    const inputChainId = store.inputTokens[0]?.token.chainId;
+    return store.accountForChain(inputChainId) ?? store.connectedAccount?.address!;
+  };
 
   let selectedOrder = $state<OrderContainer | undefined>(undefined);
   let currentScreenIndex = $state(0);
@@ -168,9 +172,14 @@
 </script>
 
 <main class="main">
-  <h1 class="mb-1 pt-3 text-center align-middle text-xl font-medium text-gray-900">
-    Resource lock intents using OIF
-  </h1>
+  <div class="flex items-center justify-between px-4 pt-3 md:px-10">
+    <h1 class="mb-1 flex-1 text-center align-middle text-xl font-medium text-gray-900">
+      Resource lock intents using OIF
+    </h1>
+    {#if store.anyWalletConnected}
+      <WalletStatus />
+    {/if}
+  </div>
   <div
     class="mx-auto flex flex-col-reverse items-center px-4 pt-2 md:max-w-[80rem] md:flex-row md:items-start md:px-10 md:pt-3"
   >
@@ -194,7 +203,7 @@
             Preview by LI.FI
           </a>
 
-          {#if !(!store.connectedAccount || !store.walletClient)}
+          {#if store.anyWalletConnected}
             <!-- Right Button -->
             <button
               class="absolute top-1.5 right-2 z-50 cursor-pointer rounded bg-sky-50 px-1"
@@ -211,7 +220,7 @@
             </button>
           {/if}
           <div class="flex h-full w-max flex-row">
-            {#if !store.connectedAccount || !store.walletClient}
+            {#if !store.anyWalletConnected}
               <ConnectWallet></ConnectWallet>
             {:else}
               <ManageDeposit {scroll} {preHook} {postHook} {account}></ManageDeposit>

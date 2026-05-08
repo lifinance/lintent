@@ -4,6 +4,7 @@ import {
   INPUT_SETTLER_COMPACT_LIFI,
   INPUT_SETTLER_ESCROW_LIFI,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
+  TRON_MAINNET_INPUT_SETTLER,
   type WC
 } from "$lib/config";
 import { encodePacked, maxUint256 } from "viem";
@@ -24,10 +25,12 @@ import {
   SOLANA_TESTNET_CHAIN_ID,
   SOLANA_DEVNET_CHAIN_ID
 } from "@lifi/intent";
+import { isTronChain } from "$lib/utils/chainType";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
+import { approveTronToken } from "./tronExecution";
 import { intentDeps } from "./coreDeps";
 
 const SOLANA_CHAIN_IDS = new Set([
@@ -75,7 +78,11 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
       name: input.token.name,
       chainId,
       decimals: input.token.decimals,
-      chainNamespace: SOLANA_CHAIN_IDS.has(chainId) ? "solana" : "eip155"
+      chainNamespace: SOLANA_CHAIN_IDS.has(chainId)
+        ? "solana"
+        : isTronChain(chainId)
+          ? "tron"
+          : "eip155"
     },
     amount: input.amount
   };
@@ -173,6 +180,11 @@ export class IntentFactory {
     return async () => {
       const { account, inputTokens } = opts;
       const inputChain = inputTokens[0].token.chainId;
+      if (isTronChain(inputChain)) {
+        throw new Error(
+          "Compact intents are not supported for Tron — pending protocol decision on signing scheme"
+        );
+      }
       if (this.preHook) await this.preHook(inputChain);
       const intentInstance = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
       applySameChainTimings(intentInstance);
@@ -218,6 +230,11 @@ export class IntentFactory {
   compactDepositAndRegister(opts: AppCreateIntentOptions) {
     return async () => {
       const { inputTokens, account } = opts;
+      if (isTronChain(inputTokens[0].token.chainId)) {
+        throw new Error(
+          "Compact intents are not supported for Tron — pending protocol decision on signing scheme"
+        );
+      }
       const intentInstance2 = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
       applySameChainTimings(intentInstance2);
       const sameChain2 = intentInstance2.isSameChain();
@@ -308,6 +325,12 @@ export function escrowApprove(
     for (let i = 0; i < inputTokens.length; ++i) {
       const { token, amount } = inputTokens[i];
       if (preHook) await preHook(token.chainId);
+
+      if (isTronChain(token.chainId)) {
+        await approveTronToken(token.address, TRON_MAINNET_INPUT_SETTLER, amount);
+        continue;
+      }
+
       const publicClient = getClient(token.chainId);
       const currentAllowance = await publicClient.readContract({
         address: token.address,

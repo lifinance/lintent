@@ -14,6 +14,7 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
   import { hashStruct } from "viem";
+  import { isTronChain } from "$lib/utils/chainType";
 
   let {
     scroll,
@@ -77,8 +78,16 @@
       types: compactTypes,
       primaryType: "MandateOutput"
     });
-  const isValidFillTxHash = (value: string): value is `0x${string}` =>
-    value.startsWith("0x") && value.length === 66;
+  const isValidFillTxHash = (value: string, chainId?: bigint): value is `0x${string}` => {
+    if (value.startsWith("0x") && value.length === 66) return true;
+    if (chainId !== undefined && isTronChain(chainId) && /^[0-9a-fA-F]{64}$/.test(value))
+      return true;
+    return false;
+  };
+  const normalizeTxHash = (value: string, chainId?: bigint): `0x${string}` => {
+    if (value.startsWith("0x")) return value as `0x${string}`;
+    return `0x${value}` as `0x${string}`;
+  };
   const getManualFillTxInputValue = (output: MandateOutput) => {
     const key = outputKey(output);
     return manualFillTxInputs[key] ?? store.fillTransactions[key] ?? "";
@@ -86,16 +95,19 @@
   const saveManualFillTransaction = async (output: MandateOutput) => {
     const key = outputKey(output);
     const txHash = getManualFillTxInputValue(output).trim();
-    if (!isValidFillTxHash(txHash)) {
-      manualFillTxErrors[key] = "Use a 0x-prefixed 66-char tx hash.";
+    if (!isValidFillTxHash(txHash, output.chainId)) {
+      manualFillTxErrors[key] = isTronChain(output.chainId)
+        ? "Use a 64-char hex Tron tx ID or 0x-prefixed hash."
+        : "Use a 0x-prefixed 66-char tx hash.";
       manualFillTxSaved[key] = false;
       return;
     }
     manualFillTxSaving[key] = true;
     manualFillTxErrors[key] = "";
     try {
-      store.fillTransactions[key] = txHash;
-      await store.saveFillTransaction(key, txHash);
+      const normalizedHash = normalizeTxHash(txHash, output.chainId);
+      store.fillTransactions[key] = normalizedHash;
+      await store.saveFillTransaction(key, normalizedHash);
       manualFillTxSaved[key] = true;
       refreshValidation += 1;
     } catch (error) {

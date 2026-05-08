@@ -267,6 +267,7 @@ class Store {
     return this.mapOverCoinsCached({
       bucket: "balance",
       ttlMs: 30_000,
+      tronTtlMs: 120_000,
       isMainnet: this.mainnet,
       scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}`,
       fetcher: (asset, client, chainId) => {
@@ -289,6 +290,7 @@ class Store {
     return this.mapOverCoinsCached({
       bucket: "allowance",
       ttlMs: 60_000,
+      tronTtlMs: 180_000,
       isMainnet: this.mainnet,
       scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${spender}`,
       fetcher: (asset, client, chainId) => {
@@ -557,6 +559,7 @@ class Store {
   mapOverCoinsCached<T>(opts: {
     bucket: "balance" | "allowance" | "compact";
     ttlMs: number;
+    tronTtlMs?: number;
     isMainnet: boolean;
     scopeKey: string;
     fetcher: (
@@ -565,15 +568,16 @@ class Store {
       chainId: number
     ) => Promise<T>;
   }) {
-    const { bucket, ttlMs, isMainnet, scopeKey, fetcher } = opts;
+    const { bucket, ttlMs, tronTtlMs, isMainnet, scopeKey, fetcher } = opts;
     const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
     for (const token of this.availableTokens) {
       if (!resolved[token.chainId]) resolved[token.chainId] = {};
       const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${scopeKey}`;
+      const effectiveTtl = tronTtlMs && isTronChain(token.chainId) ? tronTtlMs : ttlMs;
       resolved[token.chainId][token.address] = getOrFetchRpc(
         key,
         () => fetcher(token.address, clientsById[token.chainId], token.chainId),
-        { ttlMs }
+        { ttlMs: effectiveTtl }
       );
     }
     return resolved;

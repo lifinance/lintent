@@ -1,5 +1,5 @@
 import { getTronWeb } from "$lib/utils/tronlink";
-import { TRON_MAINNET_INPUT_SETTLER } from "$lib/config";
+import { BYTES32_ZERO, TRON_MAINNET_INPUT_SETTLER } from "$lib/config";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
@@ -156,6 +156,31 @@ export async function readTronIsProven(
     .isProven(remoteChainId.toString(), remoteOracle, application, dataHash)
     .call();
   return Boolean(result);
+}
+
+export async function readTronIsOutputFilled(
+  orderId: `0x${string}`,
+  outputSettlerBytes32: `0x${string}`,
+  outputHash: `0x${string}`
+): Promise<boolean> {
+  const tw = requireTronWeb();
+  const settlerBase58 = toTronAddress(tw, bytes32ToAddress(outputSettlerBytes32));
+  const contract = await tw.contract(
+    [...COIN_FILLER_ABI] as Record<string, unknown>[],
+    settlerBase58
+  );
+  const result = await contract.getFillRecord(orderId, outputHash).call();
+  return result !== BYTES32_ZERO;
+}
+
+export async function getTronTransactionFrom(txId: string): Promise<`0x${string}`> {
+  const tw = requireTronWeb();
+  const tx = await tw.trx.getTransaction(txId);
+  const rawData = tx.raw_data as {
+    contract: [{ parameter: { value: { owner_address: string } } }];
+  };
+  const ownerAddress = rawData.contract[0].parameter.value.owner_address;
+  return `0x${ownerAddress.replace(/^41/, "")}` as `0x${string}`;
 }
 
 // Use only the single-bytes overload to avoid TronLink's ethers.js picking bytes[]

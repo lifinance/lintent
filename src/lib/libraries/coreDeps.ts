@@ -3,6 +3,7 @@ import {
   INPUT_SETTLER_COMPACT_LIFI,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   POLYMER_ORACLE,
+  TRON_MAINNET_OUTPUT_SETTLER,
   WORMHOLE_ORACLE
 } from "$lib/config";
 import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
@@ -42,13 +43,17 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     if (!Number.isFinite(key)) return undefined;
     const polymer = POLYMER_ORACLE[key];
     const wormhole = WORMHOLE_ORACLE[key];
-    const allowed: `0x${string}`[] = [];
-    if (polymer) allowed.push(polymer);
+    if (!polymer && !isNonZeroAddress(wormhole)) return undefined;
+    // For Polymer cross-chain, output.oracle is the INPUT chain's oracle,
+    // so all Polymer oracle addresses are valid.
+    const allPolymerOracles = [
+      ...new Set(Object.values(POLYMER_ORACLE).filter((v): v is `0x${string}` => !!v))
+    ];
+    const allowed: `0x${string}`[] = [...allPolymerOracles];
     if (isNonZeroAddress(wormhole)) allowed.push(wormhole);
-    if (allowed.length === 0) return undefined;
     return allowed;
   },
   allowedOutputSettlers() {
-    return [COIN_FILLER];
+    return [COIN_FILLER, TRON_MAINNET_OUTPUT_SETTLER];
   }
 };

@@ -1,10 +1,13 @@
 <script lang="ts">
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import { connectWith, listWalletConnectors, walletConnectProjectId } from "$lib/utils/wagmi";
+  import { isTronLinkAvailable, connectTronLink } from "$lib/utils/tronlink";
+  import store from "$lib/state.svelte";
 
   const connectors = listWalletConnectors();
   let connectingId = $state<string | null>(null);
   let errorMessage = $state<string | null>(null);
+  let tronLinkAvailable = $state(isTronLinkAvailable());
 
   const connectWallet = async (connectorId: string) => {
     try {
@@ -14,6 +17,20 @@
     } catch (error) {
       console.warn(`connectWith failed for connector ${connectorId}`, error);
       errorMessage = "Could not connect wallet. Please try again.";
+    } finally {
+      connectingId = null;
+    }
+  };
+
+  const connectTron = async () => {
+    try {
+      connectingId = "tronlink";
+      errorMessage = null;
+      const connection = await connectTronLink();
+      store.tronWalletConnection = connection;
+    } catch (error) {
+      console.warn("connectTronLink failed", error);
+      errorMessage = error instanceof Error ? error.message : "Could not connect TronLink.";
     } finally {
       connectingId = null;
     }
@@ -36,6 +53,27 @@
         {/if}
       </button>
     {/each}
+
+    {#if tronLinkAvailable}
+      <button
+        type="button"
+        class="w-full cursor-pointer rounded border border-gray-300 px-4 py-3 text-base font-semibold text-gray-700 hover:border-sky-500 hover:text-sky-700 disabled:cursor-not-allowed disabled:text-gray-400"
+        disabled={connectingId !== null}
+        onclick={() => connectTron()}
+      >
+        {#if connectingId === "tronlink"}
+          Connecting TronLink...
+        {:else if store.tronConnectedAccount}
+          TronLink Connected ({store.tronConnectedAccount.base58Address.slice(0, 6)}...)
+        {:else}
+          Connect TronLink
+        {/if}
+      </button>
+    {:else}
+      <p class="text-center text-xs text-gray-400">
+        TronLink not detected — install it to use Tron chains.
+      </p>
+    {/if}
 
     {#if !walletConnectProjectId}
       <p class="text-center text-xs text-gray-500">

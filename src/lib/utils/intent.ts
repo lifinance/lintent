@@ -8,6 +8,7 @@ import {
   MultichainOrderIntent
 } from "@lifi/intent";
 import type { OrderContainer } from "@lifi/intent";
+import { isTronChain } from "./chainType";
 
 const SOLANA_CHAIN_IDS = new Set([
   SOLANA_MAINNET_CHAIN_ID,
@@ -24,6 +25,9 @@ export function containerToIntent(
   }
   if (SOLANA_CHAIN_IDS.has(order.originChainId)) {
     return orderToIntent({ namespace: "solana", inputSettler, order });
+  }
+  if (isTronChain(order.originChainId)) {
+    return orderToIntent({ namespace: "tron", inputSettler, order });
   }
   return orderToIntent({ namespace: "eip155", inputSettler, order });
 }

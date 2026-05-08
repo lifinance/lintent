@@ -47,7 +47,7 @@
     selectedOrder;
     selectedOutputFillHashSignature;
 
-    if (!store.connectedAccount || !store.walletClient || !selectedOrder) {
+    if (!store.anyWalletConnected || !selectedOrder) {
       flowChecks = {
         allFilled: false,
         allValidated: false,
@@ -74,7 +74,7 @@
   });
 
   const progressSteps = $derived.by(() => {
-    const connected = !!store.connectedAccount && !!store.walletClient;
+    const connected = store.anyWalletConnected;
     if (!connected) {
       return [
         {
@@ -216,7 +216,7 @@
   });
 
   const progressConnectorPosition = $derived.by(() => {
-    if (!store.connectedAccount || !store.walletClient) return 0;
+    if (!store.anyWalletConnected) return 0;
     const maxIndex = Math.max(progressSteps.length - 1, 0);
     return Math.max(0, Math.min(scrollStepProgress, maxIndex));
   });

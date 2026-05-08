@@ -14,6 +14,8 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
   import { hashStruct } from "viem";
+  import { isTronChain, isTronBase58Address } from "$lib/utils/chainType";
+  import { tronBase58ToHex } from "@lifi/intent";
 
   let {
     scroll,
@@ -37,6 +39,16 @@
   let manualFillTxSaving = $state<Record<string, boolean>>({});
   let manualFillTxSaved = $state<Record<string, boolean>>({});
   let manualFillTxErrors = $state<Record<string, string>>({});
+  let solverOverride = $state("");
+  const parsedSolver = $derived.by((): `0x${string}` | undefined => {
+    const trimmed = solverOverride.trim();
+    if (!trimmed) return undefined;
+    if (/^0x[0-9a-fA-F]{40}$/.test(trimmed)) return trimmed as `0x${string}`;
+    if (isTronBase58Address(trimmed)) return tronBase58ToHex(trimmed);
+    if (/^41[0-9a-fA-F]{40}$/.test(trimmed)) return `0x${trimmed.slice(2)}` as `0x${string}`;
+    return undefined;
+  });
+  const solverGetter = $derived(parsedSolver ? () => parsedSolver : undefined);
   const postHookScroll = async () => {
     await postHook();
     refreshValidation += 1;
@@ -77,8 +89,16 @@
       types: compactTypes,
       primaryType: "MandateOutput"
     });
-  const isValidFillTxHash = (value: string): value is `0x${string}` =>
-    value.startsWith("0x") && value.length === 66;
+  const isValidFillTxHash = (value: string, chainId?: bigint): value is `0x${string}` => {
+    if (value.startsWith("0x") && value.length === 66) return true;
+    if (chainId !== undefined && isTronChain(chainId) && /^[0-9a-fA-F]{64}$/.test(value))
+      return true;
+    return false;
+  };
+  const normalizeTxHash = (value: string, chainId?: bigint): `0x${string}` => {
+    if (value.startsWith("0x")) return value as `0x${string}`;
+    return `0x${value}` as `0x${string}`;
+  };
   const getManualFillTxInputValue = (output: MandateOutput) => {
     const key = outputKey(output);
     return manualFillTxInputs[key] ?? store.fillTransactions[key] ?? "";
@@ -86,16 +106,19 @@
   const saveManualFillTransaction = async (output: MandateOutput) => {
     const key = outputKey(output);
     const txHash = getManualFillTxInputValue(output).trim();
-    if (!isValidFillTxHash(txHash)) {
-      manualFillTxErrors[key] = "Use a 0x-prefixed 66-char tx hash.";
+    if (!isValidFillTxHash(txHash, output.chainId)) {
+      manualFillTxErrors[key] = isTronChain(output.chainId)
+        ? "Use a 64-char hex Tron tx ID or 0x-prefixed hash."
+        : "Use a 0x-prefixed 66-char tx hash.";
       manualFillTxSaved[key] = false;
       return;
     }
     manualFillTxSaving[key] = true;
     manualFillTxErrors[key] = "";
     try {
-      store.fillTransactions[key] = txHash;
-      await store.saveFillTransaction(key, txHash);
+      const normalizedHash = normalizeTxHash(txHash, output.chainId);
+      store.fillTransactions[key] = normalizedHash;
+      await store.saveFillTransaction(key, normalizedHash);
       manualFillTxSaved[key] = true;
       refreshValidation += 1;
     } catch (error) {
@@ -156,6 +179,23 @@
   description="Fill each chain once and continue to the right. If you refreshed the page provide your fill tx hash in the input box."
 >
   <div class="space-y-2">
+    <SectionCard compact title="Solver Address">
+      <div class="flex items-center gap-2">
+        <input
+          type="text"
+          class="h-7 min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 font-mono text-xs text-gray-700 outline-none focus:border-sky-300"
+          placeholder={account()}
+          bind:value={solverOverride}
+        />
+        {#if solverOverride.trim() && !solverGetter}
+          <span class="text-[11px] font-semibold text-rose-600">Invalid address</span>
+        {:else if solverGetter}
+          <span class="text-[11px] font-semibold text-emerald-700">Override active</span>
+        {:else}
+          <span class="text-[11px] text-gray-400">Using connected wallet</span>
+        {/if}
+      </div>
+    </SectionCard>
     <SectionCard compact title="Add Fill Tx Hash">
       <div class="space-y-2">
         {#each orderContainer.order.outputs as output}
@@ -229,7 +269,8 @@
                         {
                           preHook,
                           postHook: postHookScroll,
-                          account
+                          account,
+                          solver: solverGetter
                         }
                       )
                     )

@@ -1,4 +1,5 @@
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
+import type { HttpTransport } from "viem";
 import {
   arbitrum,
   arbitrumSepolia,
@@ -12,8 +13,21 @@ import {
   katana,
   megaeth,
   optimism,
-  arcTestnet
+  arcTestnet,
+  tron
 } from "viem/chains";
+import {
+  TRON_MAINNET_INPUT_SETTLER,
+  TRON_MAINNET_OUTPUT_SETTLER,
+  tronBase58ToHex
+} from "@lifi/intent";
+const routemeshApiKey: string | undefined =
+  import.meta.env?.PUBLIC_ROUTEMESH_API_KEY?.trim() || undefined;
+
+function routemeshRpc(chainId: number): HttpTransport[] {
+  if (!routemeshApiKey) return [];
+  return [http(`https://lb.routeme.sh/rpc/${chainId}/${routemeshApiKey}`)];
+}
 
 export const pharos = defineChain({
   id: 1672,
@@ -37,6 +51,7 @@ export const MULTICHAIN_INPUT_SETTLER_COMPACT =
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
 export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
+export { TRON_MAINNET_INPUT_SETTLER, TRON_MAINNET_OUTPUT_SETTLER };
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [ethereum.id]: "0x0000000000000000000000000000000000000000",
   [arbitrum.id]: "0x0000000000000000000000000000000000000000",
@@ -51,6 +66,7 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [pharos.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+  [tron.id]: "0xfa5fabd73c86e1822fda06418c332800c0d7d73b",
   // testnet
   [sepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
   [baseSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
@@ -78,7 +94,8 @@ export const chainMap = {
   bsc,
   polygon,
   pharos,
-  arcTestnet
+  arcTestnet,
+  tron
 } as const;
 type ChainName = keyof typeof chainMap;
 export const chains = Object.keys(chainMap) as ChainName[];
@@ -92,7 +109,8 @@ export const chainList = (mainnet: boolean) => {
       "katana",
       "polygon",
       "bsc",
-      "pharos"
+      "pharos",
+      "tron"
     ] as ChainName[];
   } else
     return [
@@ -236,6 +254,24 @@ export const coinList = (mainnet: boolean) => {
         name: "usdc.e",
         chainId: polygon.id,
         decimals: 6
+      },
+      {
+        address: tronBase58ToHex("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"),
+        name: "usdt",
+        chainId: tron.id,
+        decimals: 6
+      },
+      {
+        address: tronBase58ToHex("TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8"),
+        name: "usdc",
+        chainId: tron.id,
+        decimals: 6
+      },
+      {
+        address: ADDRESS_ZERO,
+        name: "trx",
+        chainId: tron.id,
+        decimals: 6
       }
     ] as const;
   else
@@ -361,7 +397,8 @@ export const polymerChainIds = {
   bsc: bsc.id,
   polygon: polygon.id,
   pharos: pharos.id,
-  arcTestnet: arcTestnet.id
+  arcTestnet: arcTestnet.id,
+  tron: tron.id
 } as const;
 
 export type Verifier = "wormhole" | "polymer";
@@ -453,6 +490,7 @@ export const clients = {
   ethereum: createPublicClient({
     chain: ethereum,
     transport: fallback([
+      ...routemeshRpc(ethereum.id),
       http("https://ethereum-rpc.publicnode.com"),
       ...ethereum.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -460,6 +498,7 @@ export const clients = {
   arbitrum: createPublicClient({
     chain: arbitrum,
     transport: fallback([
+      ...routemeshRpc(arbitrum.id),
       http("https://arbitrum-rpc.publicnode.com"),
       ...arbitrum.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -467,6 +506,7 @@ export const clients = {
   base: createPublicClient({
     chain: base,
     transport: fallback([
+      ...routemeshRpc(base.id),
       http("https://base-rpc.publicnode.com"),
       ...base.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -474,6 +514,7 @@ export const clients = {
   optimism: createPublicClient({
     chain: optimism,
     transport: fallback([
+      ...routemeshRpc(optimism.id),
       http("https://optimism-rpc.publicnode.com"),
       ...optimism.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -481,6 +522,7 @@ export const clients = {
   bsc: createPublicClient({
     chain: bsc,
     transport: fallback([
+      ...routemeshRpc(bsc.id),
       http("https://bsc-rpc.publicnode.com"),
       ...bsc.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -488,17 +530,24 @@ export const clients = {
   polygon: createPublicClient({
     chain: base,
     transport: fallback([
+      ...routemeshRpc(polygon.id),
       http("https://polygon-bor-rpc.publicnode.com"),
       ...polygon.rpcUrls.default.http.map((v) => http(v))
     ])
   }),
   megaeth: createPublicClient({
     chain: megaeth,
-    transport: fallback([...megaeth.rpcUrls.default.http.map((v) => http(v))])
+    transport: fallback([
+      ...routemeshRpc(megaeth.id),
+      ...megaeth.rpcUrls.default.http.map((v) => http(v))
+    ])
   }),
   katana: createPublicClient({
     chain: katana,
-    transport: fallback([...katana.rpcUrls.default.http.map((v) => http(v))])
+    transport: fallback([
+      ...routemeshRpc(katana.id),
+      ...katana.rpcUrls.default.http.map((v) => http(v))
+    ])
   }),
   pharos: createPublicClient({
     chain: pharos,
@@ -508,6 +557,7 @@ export const clients = {
   sepolia: createPublicClient({
     chain: sepolia,
     transport: fallback([
+      ...routemeshRpc(sepolia.id),
       http("https://ethereum-sepolia-rpc.publicnode.com"),
       ...sepolia.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -515,6 +565,7 @@ export const clients = {
   arbitrumSepolia: createPublicClient({
     chain: arbitrumSepolia,
     transport: fallback([
+      ...routemeshRpc(arbitrumSepolia.id),
       http("https://arbitrum-sepolia-rpc.publicnode.com"),
       ...arbitrumSepolia.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -522,6 +573,7 @@ export const clients = {
   baseSepolia: createPublicClient({
     chain: baseSepolia,
     transport: fallback([
+      ...routemeshRpc(baseSepolia.id),
       http("https://base-sepolia-rpc.publicnode.com"),
       ...baseSepolia.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -529,13 +581,25 @@ export const clients = {
   optimismSepolia: createPublicClient({
     chain: optimismSepolia,
     transport: fallback([
+      ...routemeshRpc(optimismSepolia.id),
       http("https://optimism-sepolia-rpc.publicnode.com"),
       ...optimismSepolia.rpcUrls.default.http.map((v) => http(v))
     ])
   }),
   arcTestnet: createPublicClient({
     chain: arcTestnet,
-    transport: fallback([...arcTestnet.rpcUrls.default.http.map((v) => http(v))])
+    transport: fallback([
+      ...routemeshRpc(arcTestnet.id),
+      ...arcTestnet.rpcUrls.default.http.map((v) => http(v))
+    ])
+  }),
+  tron: createPublicClient({
+    chain: tron,
+    transport: fallback([
+      ...routemeshRpc(tron.id),
+      ...tron.rpcUrls.default.http.map((v) => http(v, { retryCount: 0 }))
+    ]),
+    batch: { multicall: false }
   })
 } as const;
 

@@ -12,6 +12,7 @@ import {
   INPUT_SETTLER_ESCROW_LIFI,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
+  TRON_MAINNET_INPUT_SETTLER,
   isChainIdTestnet,
   type availableAllocators,
   type Token,
@@ -38,6 +39,12 @@ import {
   watchWalletConnection
 } from "./utils/wagmi";
 import { switchWalletChain } from "./utils/walletClientRuntime";
+import {
+  type TronWalletConnection,
+  getTronConnection,
+  watchTronConnection
+} from "./utils/tronlink";
+import { isTronChain } from "./utils/chainType";
 
 function generateUUID(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -222,6 +229,26 @@ class Store {
   walletClient = $state<WC>(undefined as unknown as WC);
   _unwatchWalletConnection?: () => void;
 
+  tronWalletConnection = $state<TronWalletConnection>({ status: "disconnected" });
+  tronConnectedAccount = $derived(
+    this.tronWalletConnection.status === "connected" && this.tronWalletConnection.hexAddress
+      ? {
+          address: this.tronWalletConnection.hexAddress,
+          base58Address: this.tronWalletConnection.address!
+        }
+      : undefined
+  );
+  _unwatchTronConnection?: () => void;
+
+  anyWalletConnected = $derived(
+    (!!this.connectedAccount && !!this.walletClient) || !!this.tronConnectedAccount
+  );
+
+  accountForChain(chainId: number): `0x${string}` | undefined {
+    if (isTronChain(chainId)) return this.tronConnectedAccount?.address;
+    return this.connectedAccount?.address;
+  }
+
   availableTokens = $state<Token[]>([...(coinList(true) as readonly Token[])]);
   manualTokenKeys = $state<Set<string>>(new Set());
   inputTokens = $state<AppTokenContext[]>([]);
@@ -235,19 +262,26 @@ class Store {
 
   balances = $derived.by(() => {
     this.refreshEpoch;
-    const account = this.connectedAccount?.address;
+    const evmAccount = this.connectedAccount?.address;
+    const tronAccount = this.tronConnectedAccount?.address;
     return this.mapOverCoinsCached({
       bucket: "balance",
       ttlMs: 30_000,
+      tronTtlMs: 120_000,
       isMainnet: this.mainnet,
-      scopeKey: account ?? "none",
-      fetcher: (asset, client) => getBalance(account, asset, client)
+      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}`,
+      fetcher: (asset, client, chainId) => {
+        const account = isTronChain(chainId) ? tronAccount : evmAccount;
+        if (!account) return Promise.resolve(0n);
+        return getBalance(account, asset, client);
+      }
     });
   });
 
   allowances = $derived.by(() => {
     this.refreshEpoch;
-    const account = this.connectedAccount?.address;
+    const evmAccount = this.connectedAccount?.address;
+    const tronAccount = this.tronConnectedAccount?.address;
     const spender =
       this.inputSettler === INPUT_SETTLER_COMPACT_LIFI ||
       this.inputSettler === MULTICHAIN_INPUT_SETTLER_COMPACT
@@ -256,9 +290,15 @@ class Store {
     return this.mapOverCoinsCached({
       bucket: "allowance",
       ttlMs: 60_000,
+      tronTtlMs: 180_000,
       isMainnet: this.mainnet,
-      scopeKey: `${account ?? "none"}:${spender}`,
-      fetcher: (asset, client) => getAllowance(spender)(account, asset, client)
+      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${spender}`,
+      fetcher: (asset, client, chainId) => {
+        const account = isTronChain(chainId) ? tronAccount : evmAccount;
+        if (!account) return Promise.resolve(0n);
+        const tokenSpender = isTronChain(chainId) ? TRON_MAINNET_INPUT_SETTLER : spender;
+        return getAllowance(tokenSpender)(account, asset, client);
+      }
     });
   });
 
@@ -271,7 +311,10 @@ class Store {
       ttlMs: 60_000,
       isMainnet: this.mainnet,
       scopeKey: `${account ?? "none"}:${allocatorId}`,
-      fetcher: (asset, client) => getCompactBalance(account, asset, client, allocatorId)
+      fetcher: (asset, client, chainId) => {
+        if (isTronChain(chainId)) return Promise.resolve(0n);
+        return getCompactBalance(account, asset, client, allocatorId);
+      }
     });
   });
 
@@ -501,6 +544,7 @@ class Store {
   }
 
   async setWalletToCorrectChain(chainId: number | bigint) {
+    if (isTronChain(chainId)) return;
     try {
       return await switchWalletChain(this.walletClient, Number(chainId));
     } catch (error) {
@@ -515,22 +559,25 @@ class Store {
   mapOverCoinsCached<T>(opts: {
     bucket: "balance" | "allowance" | "compact";
     ttlMs: number;
+    tronTtlMs?: number;
     isMainnet: boolean;
     scopeKey: string;
     fetcher: (
       asset: `0x${string}`,
-      client: (typeof clientsById)[keyof typeof clientsById]
+      client: (typeof clientsById)[keyof typeof clientsById],
+      chainId: number
     ) => Promise<T>;
   }) {
-    const { bucket, ttlMs, isMainnet, scopeKey, fetcher } = opts;
+    const { bucket, ttlMs, tronTtlMs, isMainnet, scopeKey, fetcher } = opts;
     const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
     for (const token of this.availableTokens) {
       if (!resolved[token.chainId]) resolved[token.chainId] = {};
       const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${scopeKey}`;
+      const effectiveTtl = tronTtlMs && isTronChain(token.chainId) ? tronTtlMs : ttlMs;
       resolved[token.chainId][token.address] = getOrFetchRpc(
         key,
-        () => fetcher(token.address, clientsById[token.chainId]),
-        { ttlMs }
+        () => fetcher(token.address, clientsById[token.chainId], token.chainId),
+        { ttlMs: effectiveTtl }
       );
     }
     return resolved;
@@ -554,6 +601,11 @@ class Store {
       this._unwatchWalletConnection = watchWalletConnection((connection) => {
         this.walletConnection = connection;
         this.syncWalletClient().catch((error) => console.warn("syncWalletClient failed", error));
+      });
+
+      this.tronWalletConnection = getTronConnection();
+      this._unwatchTronConnection = watchTronConnection((connection) => {
+        this.tronWalletConnection = connection;
       });
     }
 

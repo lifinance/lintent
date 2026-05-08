@@ -20,6 +20,8 @@ import { MultichainOrderIntent, StandardEVMIntent } from "@lifi/intent";
 import type { NoSignature, Signature } from "@lifi/intent";
 import type { TypedDataSigner } from "@lifi/intent";
 import { switchWalletChain } from "$lib/utils/walletClientRuntime";
+import { isTronChain } from "$lib/utils/chainType";
+import { openTronEscrowIntent, signTronCompact } from "./tronExecution";
 
 function combineSignatures(signatures: {
   sponsorSignature: Signature | NoSignature;
@@ -37,11 +39,13 @@ export function signIntentCompact(
   account: `0x${string}`,
   walletClient: WC
 ): Promise<`0x${string}`> {
-  const signer = walletClient as unknown as TypedDataSigner;
   if (intent instanceof StandardEVMIntent) {
     const order = intent.asOrder();
+    if (isTronChain(order.originChainId)) signTronCompact();
+    const signer = walletClient as unknown as TypedDataSigner;
     return signStandardCompact(account, signer, order.originChainId, intent.asBatchCompact());
   }
+  const signer = walletClient as unknown as TypedDataSigner;
   const order = intent.asOrder();
   return signMultichainCompact(
     account,
@@ -57,6 +61,9 @@ export async function depositAndRegisterCompact(
   walletClient: WC
 ): Promise<`0x${string}`> {
   const order = intent.asOrder();
+  if (isTronChain(order.originChainId)) {
+    throw new Error("Compact deposit and register is not supported for Tron intents");
+  }
   const chain = getChain(order.originChainId);
   return walletClient.writeContract({
     chain,
@@ -75,6 +82,10 @@ export async function openEscrowIntent(
 ): Promise<`0x${string}`[]> {
   if (intent instanceof StandardEVMIntent) {
     const order = intent.asOrder();
+    if (isTronChain(order.originChainId)) {
+      const txId = await openTronEscrowIntent(intent, account);
+      return [`0x${txId.replace("0x", "")}` as `0x${string}`];
+    }
     await switchWalletChain(walletClient, Number(order.originChainId));
     const chain = getChain(order.originChainId);
     return [

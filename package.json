@@ -7,6 +7,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
+    "prepare": "husky",
     "test": "bun run test:all",
     "test:unit": "svelte-kit sync && bun test tests/unit tests/db.test.ts --coverage",
     "test:e2e": "svelte-kit sync && bunx playwright test",
@@ -44,6 +45,9 @@
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.20.0",
     "vite": "^7.1.1"
+  },
+  "lint-staged": {
+    "*.{js,ts,svelte,css,md,json,html}": "prettier --write"
   },
   "dependencies": {
     "@base-org/account": "^2.5.1",

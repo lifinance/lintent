@@ -156,6 +156,7 @@
             class="w-full cursor-pointer rounded border border-gray-200 bg-white px-2 py-2 text-left transition-shadow ease-linear select-none hover:shadow-md focus:outline-none focus-visible:outline-none"
             style="-webkit-tap-highlight-color: transparent;"
             onclick={async () => {
+              console.log("Selected order:", row.orderContainer);
               selectedOrder = row.orderContainer;
               await tick();
               scroll(3)();

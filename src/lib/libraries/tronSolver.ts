@@ -22,7 +22,8 @@ function toTronAddress(tw: TronWeb, hex: string): string {
 export async function fillTronOutputs(
   orderContainer: OrderContainer,
   outputs: MandateOutput[],
-  accountHex: `0x${string}`
+  accountHex: `0x${string}`,
+  solverHex?: `0x${string}`
 ): Promise<string> {
   const tw = requireTronWeb();
   const { order } = orderContainer;
@@ -70,7 +71,12 @@ export async function fillTronOutputs(
   ]);
 
   const txId = await fillerContract
-    .fillOrderOutputs(orderId, outputTuples, order.fillDeadline, addressToBytes32(accountHex))
+    .fillOrderOutputs(
+      orderId,
+      outputTuples,
+      order.fillDeadline,
+      addressToBytes32(solverHex ?? accountHex)
+    )
     .send({ feeLimit: 150_000_000 });
 
   return txId;

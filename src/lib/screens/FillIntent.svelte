@@ -14,7 +14,8 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
   import { hashStruct } from "viem";
-  import { isTronChain } from "$lib/utils/chainType";
+  import { isTronChain, isTronBase58Address } from "$lib/utils/chainType";
+  import { tronBase58ToHex } from "@lifi/intent";
 
   let {
     scroll,
@@ -38,6 +39,16 @@
   let manualFillTxSaving = $state<Record<string, boolean>>({});
   let manualFillTxSaved = $state<Record<string, boolean>>({});
   let manualFillTxErrors = $state<Record<string, string>>({});
+  let solverOverride = $state("");
+  const parsedSolver = $derived.by((): `0x${string}` | undefined => {
+    const trimmed = solverOverride.trim();
+    if (!trimmed) return undefined;
+    if (/^0x[0-9a-fA-F]{40}$/.test(trimmed)) return trimmed as `0x${string}`;
+    if (isTronBase58Address(trimmed)) return tronBase58ToHex(trimmed);
+    if (/^41[0-9a-fA-F]{40}$/.test(trimmed)) return `0x${trimmed.slice(2)}` as `0x${string}`;
+    return undefined;
+  });
+  const solverGetter = $derived(parsedSolver ? () => parsedSolver : undefined);
   const postHookScroll = async () => {
     await postHook();
     refreshValidation += 1;
@@ -168,6 +179,23 @@
   description="Fill each chain once and continue to the right. If you refreshed the page provide your fill tx hash in the input box."
 >
   <div class="space-y-2">
+    <SectionCard compact title="Solver Address">
+      <div class="flex items-center gap-2">
+        <input
+          type="text"
+          class="h-7 min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 font-mono text-xs text-gray-700 outline-none focus:border-sky-300"
+          placeholder={account()}
+          bind:value={solverOverride}
+        />
+        {#if solverOverride.trim() && !solverGetter}
+          <span class="text-[11px] font-semibold text-rose-600">Invalid address</span>
+        {:else if solverGetter}
+          <span class="text-[11px] font-semibold text-emerald-700">Override active</span>
+        {:else}
+          <span class="text-[11px] text-gray-400">Using connected wallet</span>
+        {/if}
+      </div>
+    </SectionCard>
     <SectionCard compact title="Add Fill Tx Hash">
       <div class="space-y-2">
         {#each orderContainer.order.outputs as output}
@@ -241,7 +269,8 @@
                         {
                           preHook,
                           postHook: postHookScroll,
-                          account
+                          account,
+                          solver: solverGetter
                         }
                       )
                     )

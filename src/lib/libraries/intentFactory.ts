@@ -301,7 +301,7 @@ export class IntentFactory {
 
       await this.saveOrder({
         order: intent.asOrder(),
-        inputSettler: store.inputSettler
+        inputSettler: intent.inputSettler
       });
 
       return transactionHashes;

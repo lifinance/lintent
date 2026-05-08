@@ -85,10 +85,12 @@ export class Solver {
       preHook?: (chainId: number) => Promise<any>;
       postHook?: () => Promise<any>;
       account: () => `0x${string}`;
+      solver?: () => `0x${string}`;
     }
   ) {
     return async () => {
-      const { preHook, postHook, account } = opts;
+      const { preHook, postHook, account, solver } = opts;
+      const solverAddress = solver ? solver() : account();
       const {
         orderContainer: { order, inputSettler },
         outputs
@@ -98,13 +100,12 @@ export class Solver {
       const outputChainId = Number(outputs[0].chainId);
 
       if (isTronChain(outputChainId)) {
-        const txId = await fillTronOutputs(args.orderContainer, outputs, account());
+        const txId = await fillTronOutputs(args.orderContainer, outputs, account(), solverAddress);
         if (postHook) await postHook();
         return `0x${txId.replace("0x", "")}` as `0x${string}`;
       }
 
       const outputChain = getChain(outputChainId);
-      // Always attempt chain switch before fill, including native-token fills.
       if (preHook) await preHook(outputChain.id);
       const connectedChainId = await walletClient.getChainId();
       const expectedChainId = outputChain.id;
@@ -125,7 +126,6 @@ export class Solver {
           throw new Error("Different settlers on outputs, not supported");
         }
 
-        // Check allowance & set allowance if needed
         const assetAddress = bytes32ToAddress(output.token);
         const allowance = await getClient(outputChain.id).readContract({
           address: assetAddress,
@@ -156,13 +156,12 @@ export class Solver {
         value,
         abi: COIN_FILLER_ABI,
         functionName: "fillOrderOutputs",
-        args: [orderId, outputs, order.fillDeadline, addressToBytes32(account())]
+        args: [orderId, outputs, order.fillDeadline, addressToBytes32(solverAddress)]
       });
       const fillReceipt = await getClient(outputChain.id).waitForTransactionReceipt({
         hash: transactionHash
       });
       await Solver.persistReceipt(outputs[0].chainId, transactionHash, fillReceipt);
-      // orderInputs.validate[index] = transactionHash;
       if (postHook) await postHook();
       return transactionHash;
     };
@@ -471,8 +470,6 @@ export class Solver {
             return getTronBlockTimestamp(Number(txInfo.blockNumber));
           }
           const receipt = await Solver.getReceiptCachedOrRpc(outputChainId, fth as `0x${string}`);
-          // Prefer blockNumber — eth_getBlockByHash is unreliable on many public RPCs.
-          // Coerce to bigint in case the cached receipt deserialized blockNumber as a number.
           const blockNumber = receipt.blockNumber != null ? BigInt(receipt.blockNumber) : null;
           const block =
             blockNumber != null

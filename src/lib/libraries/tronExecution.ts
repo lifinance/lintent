@@ -17,15 +17,16 @@ function toTronAddress(tw: TronWeb, hex: `0x${string}`): string {
 
 // TronLink's injected ethers.js v6 can't encode named-object structs because
 // its ABI parser leaves localName empty. Convert to positional arrays so the
-// encoder uses index-based matching instead.
-function orderToTronTuple(order: EVMOrder): unknown[] {
+// encoder uses index-based matching instead. Address-typed fields must also be
+// converted to Tron base58 format or TronLink encodes them incorrectly.
+function orderToTronTuple(tw: TronWeb, order: EVMOrder): unknown[] {
   return [
-    order.user,
+    toTronAddress(tw, order.user),
     order.nonce.toString(),
     order.originChainId.toString(),
     order.expires,
     order.fillDeadline,
-    order.inputOracle,
+    toTronAddress(tw, order.inputOracle),
     order.inputs.map(([token, amount]) => [token.toString(), amount.toString()]),
     order.outputs.map((o) => [
       o.oracle,
@@ -38,6 +39,13 @@ function orderToTronTuple(order: EVMOrder): unknown[] {
       o.context
     ])
   ];
+}
+
+export async function getTronBlockTimestamp(blockNumber: number): Promise<number> {
+  const tw = requireTronWeb();
+  const block = await tw.trx.getBlock(blockNumber);
+  // Tron block timestamps are milliseconds; convert to seconds for consistency with EVM
+  return Math.floor(Number(block.block_header.raw_data.timestamp) / 1000);
 }
 
 export async function openTronEscrowIntent(
@@ -53,7 +61,7 @@ export async function openTronEscrowIntent(
     settlerAddress
   );
 
-  const txId = await contract.open(orderToTronTuple(order)).send({
+  const txId = await contract.open(orderToTronTuple(tw, order)).send({
     feeLimit: 150_000_000
   });
   return txId;

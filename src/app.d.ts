@@ -39,6 +39,9 @@ declare global {
     trx: {
       getBalance(address: string): Promise<number>;
       getTransactionInfo(txId: string): Promise<Record<string, unknown>>;
+      getBlock(blockNumber: number): Promise<{
+        block_header: { raw_data: { timestamp: number | string } };
+      }>;
       sign(message: string): Promise<string>;
     };
     contract: TronWebContractFactory;

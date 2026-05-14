@@ -4,7 +4,6 @@ import type { chain, Token } from "../../src/lib/config";
 
 const FORTY_FOUR_HOURS = 44 * 60 * 60; // 158_400
 const TWO_DAYS = 2 * 24 * 60 * 60; // 172_800
-const TEN_MINUTES = 10 * 60; // 600
 
 function token(chain: chain): Token {
 	return {
@@ -52,21 +51,21 @@ describe("Intent deadlines", () => {
 		expect(order.fillDeadline).toBeLessThanOrEqual(order.expires);
 	});
 
-	it("same-chain singlechain order uses 10m fillDeadline and 10m expires", () => {
+	it("same-chain singlechain order uses 44h fillDeadline and 2d expires", () => {
 		const before = Math.floor(Date.now() / 1000);
 		const { order } = makeIntent("base", "base").singlechain();
 		const after = Math.floor(Date.now() / 1000);
 
-		expect(order.fillDeadline).toBeGreaterThanOrEqual(before + TEN_MINUTES);
-		expect(order.fillDeadline).toBeLessThanOrEqual(after + TEN_MINUTES);
+		expect(order.fillDeadline).toBeGreaterThanOrEqual(before + FORTY_FOUR_HOURS);
+		expect(order.fillDeadline).toBeLessThanOrEqual(after + FORTY_FOUR_HOURS);
 
-		expect(order.expires).toBeGreaterThanOrEqual(before + TEN_MINUTES);
-		expect(order.expires).toBeLessThanOrEqual(after + TEN_MINUTES);
+		expect(order.expires).toBeGreaterThanOrEqual(before + TWO_DAYS);
+		expect(order.expires).toBeLessThanOrEqual(after + TWO_DAYS);
 
-		expect(order.fillDeadline).toBe(order.expires);
+		expect(order.fillDeadline).toBeLessThanOrEqual(order.expires);
 	});
 
-	it("multichain order uses cross-chain (44h / 2d) deadlines", () => {
+	it("multichain order uses 44h fillDeadline and 2d expires", () => {
 		const before = Math.floor(Date.now() / 1000);
 		const { order } = makeMultichainIntent(["base", "arbitrum"], "ethereum").multichain();
 		const after = Math.floor(Date.now() / 1000);

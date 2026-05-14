@@ -115,8 +115,12 @@ export class Intent {
 
 	private _nonce?: bigint;
 
-	private expiry = ONE_DAY;
-	private fillDeadline = 2 * ONE_HOUR;
+	private get expiry() {
+		return this.isSameChain() ? 10 * ONE_MINUTE : 2 * ONE_DAY;
+	}
+	private get fillDeadline() {
+		return this.isSameChain() ? 10 * ONE_MINUTE : 44 * ONE_HOUR;
+	}
 
 	constructor(opts: CreateIntentOptionsEscrow | CreateIntentOptionsCompact) {
 		this.lock = opts.lock;

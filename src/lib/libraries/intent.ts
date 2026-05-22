@@ -98,6 +98,7 @@ function encodeOutputs(outputs: MandateOutput[]) {
 const ONE_MINUTE = 60;
 const ONE_HOUR = 60 * ONE_MINUTE;
 const ONE_DAY = 24 * ONE_HOUR;
+const EXCLUSIVITY_WINDOW = 5 * ONE_MINUTE; // gives solvers time to fill before exclusivity ends
 
 /**
  * @notice Class representing a Li.Fi Intent. Contains intent abstractions and helpers.
@@ -179,16 +180,12 @@ export class Intent {
 	}
 
 	encodeOutputs(currentTime: number) {
-		// Get the current epoch timestamp:
-		currentTime;
-		const ONE_MINUTE = 60;
-
 		let context: `0x${string}` = "0x";
 		if (this.exclusiveFor) {
 			const paddedExclusiveFor: `0x${string}` = `0x${this.exclusiveFor.replace("0x", "").padStart(64, "0")}`;
 			context = encodePacked(
 				["bytes1", "bytes32", "uint32"],
-				["0xe0", paddedExclusiveFor, currentTime + ONE_MINUTE]
+				["0xe0", paddedExclusiveFor, currentTime + EXCLUSIVITY_WINDOW]
 			);
 		}
 

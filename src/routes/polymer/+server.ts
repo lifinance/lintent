@@ -6,6 +6,7 @@ import {
 	PRIVATE_POLYMER_TESTNET_ZONE_API_KEY
 } from "$env/static/private";
 import { toByteArray } from "base64-js";
+import { verifyOutputFilledLog } from "$lib/libraries/outputFilledVerify";
 
 function getPolymerUrl(mainnet: boolean) {
 	return mainnet
@@ -27,6 +28,14 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	let polymerRequestIndex = polymerIndex;
 	if (!polymerRequestIndex) {
+		const verification = await verifyOutputFilledLog(
+			Number(srcChainId),
+			BigInt(srcBlockNumber),
+			Number(globalLogIndex)
+		);
+		if (verification === "mismatch") {
+			return json({ error: "log is not an OutputFilled event" }, { status: 400 });
+		}
 		const requestProof = await axios.post(
 			POLYMER_URL,
 			{

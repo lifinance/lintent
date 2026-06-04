@@ -1,9 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { resolveDemoQuoteParams } from "../../src/lib/libraries/demoQuote";
-import { DEMO_EXCLUSIVE_SOLVER } from "../../src/lib/config";
 
 describe("resolveDemoQuoteParams", () => {
-  it("forces exclusivity to the demo solver and sends the integrator key in demo mode", () => {
+  it("never sets exclusiveFor and sends the integrator key in demo mode", () => {
     const result = resolveDemoQuoteParams({
       use11Demo: true,
       integratorKey: "demo-key",
@@ -11,7 +10,7 @@ describe("resolveDemoQuoteParams", () => {
       exclusiveFor: ""
     });
 
-    expect(result.exclusiveFor).toEqual([DEMO_EXCLUSIVE_SOLVER]);
+    expect(result.exclusiveFor).toBeUndefined();
     expect(result.integratorKey).toBe("demo-key");
   });
 
@@ -23,7 +22,7 @@ describe("resolveDemoQuoteParams", () => {
       exclusiveFor: "0x1111111111111111111111111111111111111111"
     });
 
-    expect(result.exclusiveFor).toEqual([DEMO_EXCLUSIVE_SOLVER]);
+    expect(result.exclusiveFor).toBeUndefined();
   });
 
   it("omits the integrator key when none is provided in demo mode", () => {
@@ -34,7 +33,7 @@ describe("resolveDemoQuoteParams", () => {
       exclusiveFor: ""
     });
 
-    expect(result.exclusiveFor).toEqual([DEMO_EXCLUSIVE_SOLVER]);
+    expect(result.exclusiveFor).toBeUndefined();
     expect(result.integratorKey).toBeUndefined();
   });
 

@@ -1,5 +1,4 @@
 import { isAddress } from "viem";
-import { DEMO_EXCLUSIVE_SOLVER } from "$lib/config";
 
 export type DemoQuoteParams = {
   /** Solver addresses to request exclusivity for, or undefined for none. */
@@ -14,9 +13,10 @@ const toRawAddress = (value: string): `0x${string}` | undefined =>
 /**
  * Resolves the exclusivity and integrator-key parameters for a quote request.
  *
- * In 1:1 demo mode the order is forced exclusive to the LI.FI demo solver (so it
- * fills 1:1 via the solver's quick fallback) and the integrator key is sent as a
- * header. Outside demo mode, behavior follows the manual "Lock Exclusive" field.
+ * In 1:1 demo mode the integrator key is sent as a header and `exclusiveFor` is
+ * never set, so the request carries no `metadata.exclusiveFor` (the integrator
+ * key alone drives the 1:1 quote). Outside demo mode, behavior follows the manual
+ * "Lock Exclusive" field.
  */
 export function resolveDemoQuoteParams(opts: {
   use11Demo: boolean;
@@ -26,7 +26,7 @@ export function resolveDemoQuoteParams(opts: {
 }): DemoQuoteParams {
   if (opts.use11Demo) {
     return {
-      exclusiveFor: [DEMO_EXCLUSIVE_SOLVER],
+      exclusiveFor: undefined,
       integratorKey: opts.integratorKey ? opts.integratorKey : undefined
     };
   }

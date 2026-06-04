@@ -4,7 +4,12 @@
   import FormControl from "$lib/components/ui/FormControl.svelte";
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
-  import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
+  import {
+    DEMO_EXCLUSIVE_SOLVER,
+    POLYMER_ALLOCATOR,
+    formatTokenAmount,
+    getChainName
+  } from "$lib/config";
   import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
   import { CompactLib } from "$lib/libraries/compactLib";
   import store from "$lib/state.svelte";
@@ -39,7 +44,11 @@
 
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({
-      exclusiveFor: resolveExclusiveFor(store.exclusiveFor),
+      // In 1:1 demo mode the quote omits exclusiveFor, but the on-chain intent
+      // must still be exclusive to the demo solver so it fills 1:1.
+      exclusiveFor: store.use11Demo
+        ? DEMO_EXCLUSIVE_SOLVER
+        : resolveExclusiveFor(store.exclusiveFor),
       inputTokens: store.inputTokens,
       outputTokens: store.outputTokens,
       verifier: store.verifier,

@@ -37,6 +37,9 @@ export const MULTICHAIN_INPUT_SETTLER_COMPACT =
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
 export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
+// LI.FI solver used for the 1:1 stablecoin demo. Quote requests in demo mode are
+// forced exclusive to this address so the solver fills 1:1 via its quick fallback.
+export const DEMO_EXCLUSIVE_SOLVER = "0x94807fE4300D15909C1a4fd39f76c61D68aee11E" as const;
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [ethereum.id]: "0x0000000000000000000000000000000000000000",
   [arbitrum.id]: "0x0000000000000000000000000000000000000000",

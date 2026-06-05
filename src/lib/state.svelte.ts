@@ -290,6 +290,11 @@ class Store {
   exclusiveFor: string = $state("");
   recipient: string = $state("");
   useExclusiveForQuoteRequest = $state(false);
+  // 1:1 stablecoin demo: when on, quote requests send the X-Integrator-Key header
+  // and never set metadata.exclusiveFor (the integrator key drives the quote), but
+  // the on-chain intent is still made exclusive to the demo solver so it fills 1:1.
+  use11Demo = $state(false);
+  integratorKey: string = $state("");
 
   invalidateWalletReadCache(scope: "all" | "balance" | "allowance" | "compact" = "all") {
     if (scope === "all" || scope === "balance") invalidateRpcPrefix("balance:");

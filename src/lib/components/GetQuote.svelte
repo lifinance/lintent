@@ -1,12 +1,14 @@
 <script lang="ts">
   import { IntentApi } from "@lifi/intent";
   import type { AppTokenContext } from "$lib/appTypes";
+  import { resolveDemoQuoteParams } from "$lib/libraries/demoQuote";
   import { interval } from "rxjs";
-  import { isAddress } from "viem";
 
   let {
     exclusiveFor = $bindable(),
     useExclusiveForQuoteRequest = false,
+    use11Demo = false,
+    integratorKey = "",
     inputTokens,
     outputTokens = $bindable(),
     account,
@@ -15,6 +17,8 @@
   }: {
     exclusiveFor: string;
     useExclusiveForQuoteRequest?: boolean;
+    use11Demo?: boolean;
+    integratorKey?: string;
     inputTokens: AppTokenContext[];
     outputTokens: AppTokenContext[];
     account: () => `0x${string}`;
@@ -22,23 +26,23 @@
     useProductionApi: boolean | null;
   } = $props();
 
-  const toRawAddress = (value: string): `0x${string}` | undefined =>
-    isAddress(value, { strict: false }) ? (value as `0x${string}`) : undefined;
-
   const intentApi = $derived(new IntentApi(useProductionApi ?? mainnet));
 
   async function getQuoteAndSet() {
     try {
-      const requestedExclusiveFor = useExclusiveForQuoteRequest
-        ? [toRawAddress(exclusiveFor)].filter(
-            (value): value is `0x${string}` => value !== undefined
-          )
-        : undefined;
+      const { exclusiveFor: requestedExclusiveFor, integratorKey: requestedIntegratorKey } =
+        resolveDemoQuoteParams({
+          use11Demo,
+          integratorKey,
+          useExclusiveForQuoteRequest,
+          exclusiveFor
+        });
 
       const response = await intentApi.getQuotes({
         user: account(),
         userChainId: inputTokens[0].token.chainId,
         exclusiveFor: requestedExclusiveFor,
+        integratorKey: requestedIntegratorKey,
         inputs: inputTokens.map(({ token, amount }) => {
           return {
             sender: account(),

@@ -8,7 +8,7 @@
         "@base-org/account": "^2.5.1",
         "@coinbase/wallet-sdk": "^4.3.6",
         "@electric-sql/pglite": "^0.3.15",
-        "@lifi/intent": "0.1.3",
+        "@lifi/intent": "0.1.4",
         "@metamask/sdk": "^0.34.0",
         "@safe-global/safe-apps-provider": "~0.18.6",
         "@safe-global/safe-apps-sdk": "^9.1.0",
@@ -231,7 +231,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.29", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-uw6guiW/gcAGPDhLmd77/6lW8QLeiV5RUTsAX46Db6oLhGaVj4lhnPwb184s1bkc8kdVg/+h988dro8GRDpmYQ=="],
 
-    "@lifi/intent": ["@lifi/intent@0.1.3", "", { "dependencies": { "borsh": "^2.0.0", "ky": "^1.12.0", "viem": "~2.45.1" } }, "sha512-kIlIUqAZFAOPzpGYH9kEjhb9xdAj5uQoBMUh2oerC0JcLHwZycN52ShztmJYVbSpzFqGcXk76h9xhX8y3HCvYA=="],
+    "@lifi/intent": ["@lifi/intent@0.1.4", "", { "dependencies": { "borsh": "^2.0.0", "ky": "^1.12.0", "viem": "~2.45.1" } }, "sha512-ZMEmPF/Oq/POkoXh320Jnf1LYQ4ZL5LRsfElZ8RymklCVRBt9RH0NmvcphL5haLKPmF7OJ90cMmgcclcPrfpOg=="],
 
     "@lit-labs/ssr-dom-shim": ["@lit-labs/ssr-dom-shim@1.5.1", "", {}, "sha512-Aou5UdlSpr5whQe8AA/bZG0jMj96CoJIWbGfZ91qieWu5AWUMKw8VR/pAkQkJYvBNhmCcWnZlyyk5oze8JIqYA=="],
 

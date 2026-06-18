@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { TimedIntentRow } from "$lib/libraries/intentList";
+	import { copyToClipboard } from "$lib/utils/clipboard";
 
 	let {
 		row,
@@ -10,6 +11,26 @@
 		rightBadge: string;
 		rightText: string;
 	} = $props();
+
+	let copied = $state(false);
+	let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+	async function handleCopyOrderId(event: Event) {
+		// Don't let the click select / toggle the parent card button.
+		event.stopPropagation();
+		if (!(await copyToClipboard(row.orderId))) return;
+		copied = true;
+		clearTimeout(copyTimer);
+		copyTimer = setTimeout(() => (copied = false), 1200);
+	}
+
+	function handleCopyKeydown(event: KeyboardEvent) {
+		if (event.key === "Enter" || event.key === " ") {
+			event.preventDefault();
+			event.stopPropagation();
+			handleCopyOrderId(event);
+		}
+	}
 </script>
 
 <div class="flex items-start justify-between gap-2">
@@ -56,7 +77,21 @@
 	{#each row.protocolBadges as badge (badge)}
 		<span class="rounded bg-gray-100 px-1.5 py-0.5">{badge}</span>
 	{/each}
-	<span class="rounded bg-gray-100 px-1.5 py-0.5">Order {row.orderIdShort}</span>
+	<span
+		role="button"
+		tabindex="0"
+		class="cursor-pointer rounded px-1.5 py-0.5 transition-colors"
+		class:bg-gray-100={!copied}
+		class:hover:bg-gray-200={!copied}
+		class:bg-emerald-100={copied}
+		class:text-emerald-800={copied}
+		style="-webkit-tap-highlight-color: transparent;"
+		title={copied ? "Copied!" : `Copy full order id (${row.orderId})`}
+		aria-label={copied ? "Order id copied" : `Copy full order id ${row.orderId}`}
+		data-testid="intent-copy-order-id"
+		onclick={handleCopyOrderId}
+		onkeydown={handleCopyKeydown}>{copied ? "Copied!" : `Order ${row.orderIdShort}`}</span
+	>
 	<span class="rounded bg-gray-100 px-1.5 py-0.5">User {row.userShort}</span>
 	<span class="rounded bg-gray-100 px-1.5 py-0.5"
 		>{row.inputCount} inputs • {row.outputCount} outputs</span

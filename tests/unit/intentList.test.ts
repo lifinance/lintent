@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import {
 	EXPIRING_THRESHOLD_SECONDS,
+	compareActiveRows,
+	compareExpiredRows,
 	formatRelativeDeadline,
 	formatRemaining,
 	withTiming,
@@ -67,5 +69,44 @@ describe("intentList timing and formatting", () => {
 		expect(formatRemaining(180)).toBe("3m");
 		expect(formatRelativeDeadline(30)).toBe("in 30s");
 		expect(formatRelativeDeadline(-30)).toBe("30s ago");
+	});
+});
+
+describe("intentList sort comparators", () => {
+	const row = (submitTime: number | undefined, fillDeadline: number): BaseIntentRow => ({
+		...baseRow,
+		submitTime,
+		fillDeadline
+	});
+
+	it("sorts the most recent submit time first (active)", () => {
+		const rows = [row(100, 10), row(300, 10), row(200, 10)];
+		rows.sort(compareActiveRows);
+		expect(rows.map((r) => r.submitTime)).toEqual([300, 200, 100]);
+	});
+
+	it("sorts the most recent submit time first (expired)", () => {
+		const rows = [row(100, 10), row(300, 10), row(200, 10)];
+		rows.sort(compareExpiredRows);
+		expect(rows.map((r) => r.submitTime)).toEqual([300, 200, 100]);
+	});
+
+	it("breaks submit-time ties by fillDeadline (active: soonest first)", () => {
+		const rows = [row(100, 30), row(100, 10), row(100, 20)];
+		rows.sort(compareActiveRows);
+		expect(rows.map((r) => r.fillDeadline)).toEqual([10, 20, 30]);
+	});
+
+	it("breaks submit-time ties by fillDeadline (expired: latest first)", () => {
+		const rows = [row(100, 10), row(100, 30), row(100, 20)];
+		rows.sort(compareExpiredRows);
+		expect(rows.map((r) => r.fillDeadline)).toEqual([30, 20, 10]);
+	});
+
+	it("sorts rows without a submit time last", () => {
+		const rows = [row(undefined, 10), row(50, 10), row(undefined, 5)];
+		rows.sort(compareActiveRows);
+		expect(rows[0].submitTime).toBe(50);
+		expect(rows.slice(1).every((r) => r.submitTime === undefined)).toBe(true);
 	});
 });

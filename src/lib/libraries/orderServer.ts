@@ -244,12 +244,23 @@ export function parseOrderStatusPayload(payload: unknown): OrderContainer {
 			? normalizeStandardOrder(rawOrder)
 			: normalizeMultichainOrder(rawOrder);
 
-	return {
+	const container: OrderContainer = {
 		inputSettler: toHexString(envelope.inputSettler, "inputSettler"),
 		order,
 		sponsorSignature: normalizeSignature(envelope.sponsorSignature),
 		allocatorSignature: normalizeSignature(envelope.allocatorSignature)
 	};
+
+	// Capture the order-server submit time so the intent list can sort by it.
+	// Normalize ms -> s defensively (the field is only typed as `number`).
+	const meta = (envelope as Record<string, unknown>).meta as { submitTime?: unknown } | undefined;
+	const rawSubmit = typeof meta?.submitTime === "number" ? meta.submitTime : undefined;
+	if (rawSubmit !== undefined) {
+		(container as { submitTime?: number }).submitTime =
+			rawSubmit > 1e12 ? Math.floor(rawSubmit / 1000) : rawSubmit;
+	}
+
+	return container;
 }
 
 export class OrderServer {

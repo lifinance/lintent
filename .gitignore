@@ -7,7 +7,8 @@ node_modules
 .wrangler
 /.svelte-kit
 /build
-.claude
+.claude/*
+!.claude/skills/
 
 # OS
 .DS_Store

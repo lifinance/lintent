@@ -8,6 +8,8 @@
 		withTiming,
 		formatRelativeDeadline,
 		formatRemaining,
+		compareActiveRows,
+		compareExpiredRows,
 		type TimedIntentRow
 	} from "$lib/libraries/intentList";
 	import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
@@ -86,21 +88,37 @@
 	}, 1000);
 	onDestroy(() => clearInterval(clock));
 
+	async function handleSelectActive(row: TimedIntentRow) {
+		selectedOrder = row.orderContainer;
+		await tick();
+		scroll(3)();
+	}
+
+	function toggleExpired(orderId: string) {
+		expandedExpiredOrderId = expandedExpiredOrderId === orderId ? undefined : orderId;
+	}
+
+	// The card wrappers use role="button" (not a native <button>) so the copy
+	// affordance inside the row is valid interactive content. Mirror native
+	// button activation for keyboard users.
+	function handleCardKeydown(event: KeyboardEvent, activate: () => void) {
+		if (event.key === "Enter" || event.key === " ") {
+			event.preventDefault();
+			activate();
+		}
+	}
+
 	const baseRows = $derived(
 		orderContainers.map((orderContainer) => buildBaseIntentRow(orderContainer))
 	);
 	const rows = $derived(baseRows.map((row) => withTiming(row, nowSeconds)));
 
 	const activeRows = $derived(
-		[...rows]
-			.filter((row) => row.status !== "expired")
-			.sort((a, b) => a.fillDeadline - b.fillDeadline)
+		[...rows].filter((row) => row.status !== "expired").sort(compareActiveRows)
 	);
 
 	const expiredRows = $derived(
-		[...rows]
-			.filter((row) => row.status === "expired")
-			.sort((a, b) => b.fillDeadline - a.fillDeadline)
+		[...rows].filter((row) => row.status === "expired").sort(compareExpiredRows)
 	);
 
 	const selectedOrderId = $derived(
@@ -150,23 +168,22 @@
 		<div class="space-y-2">
 			{#each activeRows as row (row.orderId)}
 				<div class="relative">
-					<button
+					<div
+						role="button"
+						tabindex="0"
 						class:border-amber-300={row.status === "expiring"}
 						class:bg-amber-50={row.status === "expiring"}
 						class="w-full cursor-pointer rounded border border-gray-200 bg-white px-2 py-2 text-left transition-shadow ease-linear select-none hover:shadow-md focus:outline-none focus-visible:outline-none"
 						style="-webkit-tap-highlight-color: transparent;"
-						onclick={async () => {
-							selectedOrder = row.orderContainer;
-							await tick();
-							scroll(3)();
-						}}
+						onclick={() => handleSelectActive(row)}
+						onkeydown={(event) => handleCardKeydown(event, () => handleSelectActive(row))}
 					>
 						<IntentListDetailRow
 							{row}
 							rightBadge={getActiveRightBadge(row, selectedOrderId)}
 							rightText={getActiveRightText(row, selectedOrderId)}
 						/>
-					</button>
+					</div>
 					<button
 						type="button"
 						class="absolute right-2 bottom-2 rounded border border-rose-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 hover:border-rose-300 disabled:cursor-not-allowed disabled:text-rose-300"
@@ -184,13 +201,13 @@
 		<div class="space-y-1">
 			{#each expiredRows as row (row.orderId)}
 				<div class="relative rounded border border-gray-200 bg-gray-50">
-					<button
+					<div
+						role="button"
+						tabindex="0"
 						class="w-full cursor-pointer px-2 py-1.5 text-left text-xs text-gray-500 transition-colors select-none hover:bg-gray-100 focus:outline-none focus-visible:outline-none"
 						style="-webkit-tap-highlight-color: transparent;"
-						onclick={async () => {
-							expandedExpiredOrderId =
-								expandedExpiredOrderId === row.orderId ? undefined : row.orderId;
-						}}
+						onclick={() => toggleExpired(row.orderId)}
+						onkeydown={(event) => handleCardKeydown(event, () => toggleExpired(row.orderId))}
 					>
 						{#if expandedExpiredOrderId === row.orderId}
 							<IntentListDetailRow
@@ -206,7 +223,7 @@
 								<div class="flex-shrink-0">{formatRelativeDeadline(row.secondsToDeadline)}</div>
 							</div>
 						{/if}
-					</button>
+					</div>
 					{#if expandedExpiredOrderId === row.orderId}
 						<button
 							type="button"

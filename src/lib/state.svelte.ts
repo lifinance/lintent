@@ -43,7 +43,16 @@ class Store {
 		if (!db) await initDb();
 		if (!db) return;
 		const rows = await db!.select().from(intents);
-		this.orders = rows.map((r: any) => JSON.parse(r.data) as OrderContainer);
+		this.orders = rows.map((r: any) => {
+			const order = JSON.parse(r.data) as OrderContainer;
+			// Re-attach the authoritative column values dropped by JSON.parse. The
+			// dedicated `created_at` column always wins over anything stale in the
+			// blob; `submitTime` (order-server time) round-trips inside the blob.
+			(order as any).id = r.id;
+			(order as any).intentType = r.intentType;
+			(order as any).createdAt = r.createdAt;
+			return order;
+		});
 	}
 
 	async saveOrderToDb(order: OrderContainer) {
@@ -51,6 +60,10 @@ class Store {
 		if (!db) await initDb();
 		const orderId = orderToIntent(order).orderId();
 		const now = Math.floor(Date.now() / 1000);
+		// Stamp the local "added to list" time onto the in-memory object so freshly
+		// created/imported intents sort correctly immediately (the column is only
+		// read back on reload). Guard so re-saves don't overwrite the original.
+		if ((order as any).createdAt === undefined) (order as any).createdAt = now;
 		const id =
 			(order as any).id ?? (typeof crypto !== "undefined" ? crypto.randomUUID() : String(now));
 		const intentType = (order as any).intentType ?? "escrow";

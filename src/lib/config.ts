@@ -66,7 +66,7 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [pharos.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [tron.id]: "0xfa5fabd73c86e1822fda06418c332800c0d7d73b",
+  [tron.id]: "0x1d586aa1bd8ea3fda890057bad5a7d373886dbc1",
   // testnet
   [sepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
   [baseSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",

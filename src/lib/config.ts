@@ -58,8 +58,7 @@ export const POLYMER_ORACLE = {
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
 export type availableInputSettlers =
-	| typeof INPUT_SETTLER_COMPACT_LIFI
-	| typeof INPUT_SETTLER_ESCROW_LIFI;
+	typeof INPUT_SETTLER_COMPACT_LIFI | typeof INPUT_SETTLER_ESCROW_LIFI;
 
 export const chainMap = {
 	ethereum,
@@ -410,7 +409,10 @@ export const clients = {
 	}),
 	bsc: createPublicClient({
 		chain: bsc,
-		transport: fallback([...bsc.rpcUrls.default.http.map((v) => http(v))])
+		transport: fallback([
+			http("https://bsc-rpc.publicnode.com"),
+			...bsc.rpcUrls.default.http.map((v) => http(v))
+		])
 	}),
 	polygon: createPublicClient({
 		chain: base,

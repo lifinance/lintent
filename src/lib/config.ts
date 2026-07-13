@@ -524,6 +524,10 @@ export const clients = {
     transport: fallback([
       ...routemeshRpc(bsc.id),
       http("https://bsc-rpc.publicnode.com"),
+      http("https://bsc-dataseed.bnbchain.org"),
+      http("https://bsc-dataseed1.defibit.io"),
+      http("https://bsc.drpc.org"),
+      http("https://1rpc.io/bnb"),
       ...bsc.rpcUrls.default.http.map((v) => http(v))
     ])
   }),

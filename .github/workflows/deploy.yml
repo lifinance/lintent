@@ -23,7 +23,7 @@ jobs:
           node-version: "20"
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
 
@@ -39,7 +39,7 @@ jobs:
         run: bun run build
 
       - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         env:
           PRIVATE_POLYMER_MAINNET_ZONE_API_KEY: ${{ secrets.PRIVATE_POLYMER_MAINNET_ZONE_API_KEY }}
           PRIVATE_POLYMER_TESTNET_ZONE_API_KEY: ${{ secrets.PRIVATE_POLYMER_TESTNET_ZONE_API_KEY }}

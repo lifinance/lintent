@@ -165,7 +165,8 @@ but the chain won't appear in the UI. The invariant check (Step 4) guards this.
 **Site 4 — `POLYMER_ORACLE` (L43–57):** add
 `<chainKey>: "<bucket address>"` using the deterministic per-bucket address:
 
-- mainnet → `0x0000003E06000007A224AeE90052fA6bb46d43C9`
+- mainnet → `0x008C3800F3Ad9b3B662d002E90Cc00000000eE17` (⚠️ `PolymerOracleMapped`; its
+  `chainIdMap` must be populated by the owner before proofs validate on a given chain)
 - testnet → `0xC401b53377b8A71A7cEB820e6a4dC53832343a90`
 
 **Site 5 — `coinList(mainnet)` (L95–282):** add one object per token to the correct
@@ -232,13 +233,13 @@ on the new chain vs the reference chain (`base` mainnet / `baseSepolia` testnet)
 NEW_RPC="<RPC>"
 REF_RPC="https://base-rpc.publicnode.com"          # testnet: https://base-sepolia-rpc.publicnode.com
 for a in \
-  0x0000000000eC36B683C2E6AC89e9A75989C22a2e \
+  0x75220B7600c300005038432a0000f308e0000068 \
   0x00000000000000171ede64904551eeDF3C6C9788 \
   0x0000000000cd5f7fDEc90a03a31F79E5Fbc6A9Cf \
-  0x000025c3226C00B2Cdc200005a1600509f4e00C0 \
+  0x00fC00edbe7C003b006f870068c548940000223e \
   0xb912b4c38ab54b94D45Ac001484dEBcbb519Bc2B \
   0x1fccC0807F25A58eB531a0B5b4bf3dCE88808Ed7 \
-  0x0000003E06000007A224AeE90052fA6bb46d43C9 ; do
+  0x008C3800F3Ad9b3B662d002E90Cc00000000eE17 ; do
   printf '%s new=%s ref=%s\n' "$a" "$(cast codehash $a --rpc-url "$NEW_RPC" 2>&1)" "$(cast codehash $a --rpc-url "$REF_RPC" 2>&1)"
 done
 ```
@@ -316,13 +317,13 @@ Output, concisely:
 
 ```
 ADDRESS_ZERO                      0x0000000000000000000000000000000000000000
-COIN_FILLER                       0x0000000000eC36B683C2E6AC89e9A75989C22a2e
+COIN_FILLER                       0x75220B7600c300005038432a0000f308e0000068
 COMPACT                           0x00000000000000171ede64904551eeDF3C6C9788
 INPUT_SETTLER_COMPACT_LIFI        0x0000000000cd5f7fDEc90a03a31F79E5Fbc6A9Cf
-INPUT_SETTLER_ESCROW_LIFI         0x000025c3226C00B2Cdc200005a1600509f4e00C0
+INPUT_SETTLER_ESCROW_LIFI         0x00fC00edbe7C003b006f870068c548940000223e
 MULTICHAIN_INPUT_SETTLER_ESCROW   0xb912b4c38ab54b94D45Ac001484dEBcbb519Bc2B
 MULTICHAIN_INPUT_SETTLER_COMPACT  0x1fccC0807F25A58eB531a0B5b4bf3dCE88808Ed7
-POLYMER_ORACLE (mainnet bucket)   0x0000003E06000007A224AeE90052fA6bb46d43C9
+POLYMER_ORACLE (mainnet bucket)   0x008C3800F3Ad9b3B662d002E90Cc00000000eE17
 POLYMER_ORACLE (testnet bucket)   0xC401b53377b8A71A7cEB820e6a4dC53832343a90
 ```
 

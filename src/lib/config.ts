@@ -27,28 +27,38 @@ export const BYTES32_ZERO =
 	"0x0000000000000000000000000000000000000000000000000000000000000000" as const;
 export const COMPACT = "0x00000000000000171ede64904551eeDF3C6C9788" as const;
 export const INPUT_SETTLER_COMPACT_LIFI = "0x0000000000cd5f7fDEc90a03a31F79E5Fbc6A9Cf" as const;
-export const INPUT_SETTLER_ESCROW_LIFI = "0x000025c3226C00B2Cdc200005a1600509f4e00C0" as const;
+export const INPUT_SETTLER_ESCROW_LIFI = "0x00fC00edbe7C003b006f870068c548940000223e" as const;
 export const MULTICHAIN_INPUT_SETTLER_ESCROW =
 	"0xb912b4c38ab54b94D45Ac001484dEBcbb519Bc2B" as const;
 export const MULTICHAIN_INPUT_SETTLER_COMPACT =
 	"0x1fccC0807F25A58eB531a0B5b4bf3dCE88808Ed7" as const;
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
-export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
+export const COIN_FILLER = "0x75220B7600c300005038432a0000f308e0000068" as const;
 export const WORMHOLE_ORACLE = {
 	ethereum: "0x0000000000000000000000000000000000000000",
 	arbitrum: "0x0000000000000000000000000000000000000000",
 	base: "0x0000000000000000000000000000000000000000"
 } as const;
+// ⚠️ NOT PRODUCTION-READY: the mainnet bucket below points at `PolymerOracleMapped`
+// (0x008C3800F3Ad9b3B662d002E90Cc00000000eE17), which is deployed but not yet operational.
+// It inherits `ChainMap`, and `chainIdMap`/`reverseChainIdMap` are still empty (all zero) on
+// every mainnet chain checked (ethereum, base, arbitrum, optimism, unichain, polygon), so
+// `_getMappedChainId` reverts with `ZeroValue()` and every proof validation reverts.
+// `setChainMap` is `onlyOwner` (owner 0x712E90032d8f44bE276A903E1769d64dD1C7F45a).
+// This map is what `getOracle()` feeds into `inputOracle` for freshly created orders, i.e.
+// there is no separate activation switch — do not merge until the chain maps are populated.
+// The superseded oracle 0x0000003E06000007A224AeE90052fA6bb46d43C9 is functional today.
 export const POLYMER_ORACLE = {
-	ethereum: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	arbitrum: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	base: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	ethereum: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+	arbitrum: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+	base: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+	// TODO: MegaETH is not part of the current mainnet deployment set; address below is stale.
 	megaeth: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	katana: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	polygon: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	bsc: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-	pharos: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+	katana: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+	polygon: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+	bsc: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+	pharos: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
 	// testnet
 	sepolia: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
 	baseSepolia: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",

@@ -10,14 +10,14 @@ import {
 
 const baseRow: BaseIntentRow = {
   orderContainer: {
-    inputSettler: "0x000025c3226C00B2Cdc200005a1600509f4e00C0",
+    inputSettler: "0x00fC00edbe7C003b006f870068c548940000223e",
     order: {
       user: "0x1111111111111111111111111111111111111111",
       nonce: 1n,
       originChainId: 8453n,
       expires: Math.floor(Date.now() / 1000) + 3600,
       fillDeadline: Math.floor(Date.now() / 1000) + 3600,
-      inputOracle: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+      inputOracle: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
       inputs: [[1n, 1n]],
       outputs: [
         {
@@ -73,7 +73,7 @@ describe("intentList timing and formatting", () => {
   it("builds rows for unknown chains without throwing", () => {
     const unknownChainId = 999999999n;
     const row = buildBaseIntentRow({
-      inputSettler: "0x000025c3226C00B2Cdc200005a1600509f4e00C0",
+      inputSettler: "0x00fC00edbe7C003b006f870068c548940000223e",
       order: {
         user: "0x1111111111111111111111111111111111111111",
         nonce: 1n,

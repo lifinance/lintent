@@ -40,20 +40,29 @@ export const WORMHOLE_ORACLE = {
 	arbitrum: "0x0000000000000000000000000000000000000000",
 	base: "0x0000000000000000000000000000000000000000"
 } as const;
-// ⚠️ NOT PRODUCTION-READY: the mainnet bucket below points at `PolymerOracleMapped`
-// (0x008C3800F3Ad9b3B662d002E90Cc00000000eE17), which is deployed but not yet operational.
-// It inherits `ChainMap`, and `chainIdMap`/`reverseChainIdMap` are still empty (all zero) on
-// every mainnet chain checked (ethereum, base, arbitrum, optimism, unichain, polygon), so
-// `_getMappedChainId` reverts with `ZeroValue()` and every proof validation reverts.
-// `setChainMap` is `onlyOwner` (owner 0x712E90032d8f44bE276A903E1769d64dD1C7F45a).
-// This map is what `getOracle()` feeds into `inputOracle` for freshly created orders, i.e.
-// there is no separate activation switch — do not merge until the chain maps are populated.
-// The superseded oracle 0x0000003E06000007A224AeE90052fA6bb46d43C9 is functional today.
+// The mainnet bucket points at `PolymerOracleMapped`
+// (0x008C3800F3Ad9b3B662d002E90Cc00000000eE17). It inherits `ChainMap`: `_getMappedChainId`
+// reverts with `ZeroValue()` for any protocol chain id that has not been mapped, so a route
+// only works if the *input* chain's oracle has the *output* chain mapped. `setChainMap` is
+// `onlyOwner` (0x712E90032d8f44bE276A903E1769d64dD1C7F45a) and write-once per chain.
+//
+// The maps are being populated chain by chain and were incomplete when last measured
+// (2026-07-31 ~09:40 UTC, mappings are identity: protocolId == chainId):
+//   ethereum, arbitrum, bsc  all of the chains below mapped
+//   katana                   only ethereum, polygon, pharos
+//   base                     only ethereum
+//   polygon, pharos          nothing mapped
+// Same-chain swaps are unaffected: `intent.ts` uses COIN_FILLER as `inputOracle` when
+// `isSameChain()`, bypassing the oracle entirely.
+//
+// Re-measure before widening `coinList`/`chainList` — see the note above `chainList`.
 export const POLYMER_ORACLE = {
 	ethereum: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
 	arbitrum: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
 	base: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
-	// TODO: MegaETH is not part of the current mainnet deployment set; address below is stale.
+	// MegaETH (4326) is not part of the mainnet deployment set: there is no code at the settler,
+	// filler or oracle addresses there. Kept only to satisfy the `chain` key type; the chain is
+	// disabled in `chainList`/`coinList` below, so this value is never read.
 	megaeth: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
 	katana: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
 	polygon: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
@@ -87,9 +96,12 @@ export const chainMap = {
 } as const;
 export const chains = Object.keys(chainMap) as (keyof typeof chainMap)[];
 export type chain = (typeof chains)[number];
+// Output-chain selector. MegaETH is omitted because `OutputSettlerSimple` is not deployed there,
+// so it cannot settle a fill. Every other chain here is a valid destination from the origin chains
+// `coinList` offers — see the chain-map notes above `POLYMER_ORACLE`.
 export const chainList = (mainnet: boolean) => {
 	if (mainnet == true) {
-		return ["ethereum", "base", "arbitrum", "megaeth", "katana", "polygon", "bsc", "pharos"];
+		return ["ethereum", "base", "arbitrum", "katana", "polygon", "bsc", "pharos"];
 	} else return ["sepolia", "optimismSepolia", "baseSepolia", "arbitrumSepolia"];
 };
 
@@ -159,18 +171,8 @@ export const coinList = (mainnet: boolean) => {
 				chain: "arbitrum",
 				decimals: 18
 			},
-			{
-				address: `0x4200000000000000000000000000000000000006`,
-				name: "weth",
-				chain: "megaeth",
-				decimals: 18
-			},
-			{
-				address: `0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7`,
-				name: "usdm",
-				chain: "megaeth",
-				decimals: 18
-			},
+			// MegaETH tokens removed: no InputSettlerEscrowLIFI / OutputSettlerSimple deployed on
+			// chain 4326, so neither leg of an intent can execute there.
 			{
 				address: `0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d`,
 				name: "usdc-b",

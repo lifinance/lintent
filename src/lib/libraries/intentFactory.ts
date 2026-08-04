@@ -30,7 +30,10 @@ import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
-import { approveTronToken } from "./tronExecution";
+import { ADDRESS_ZERO } from "@lifi/intent";
+import { getTronReads, getTronSigner } from "$lib/tron/client";
+import { getTrc20Allowance } from "$lib/tron/reads";
+import { approveToken } from "$lib/tron/writes";
 import { intentDeps } from "./coreDeps";
 
 const SOLANA_CHAIN_IDS = new Set([
@@ -327,7 +330,20 @@ export function escrowApprove(
       if (preHook) await preHook(token.chainId);
 
       if (isTronChain(token.chainId)) {
-        await approveTronToken(token.address, TRON_MAINNET_INPUT_SETTLER, amount);
+        // Native TRX inputs are attached as callValue on open — no approval.
+        if (token.address.toLowerCase() === ADDRESS_ZERO) continue;
+        const deps = { reads: await getTronReads(), signer: getTronSigner() };
+        const tronAccount = store.tronConnectedAccount?.address;
+        if (!tronAccount) throw new Error("TronLink is not connected");
+        const currentTronAllowance = await getTrc20Allowance(
+          deps.reads,
+          token.address,
+          tronAccount,
+          TRON_MAINNET_INPUT_SETTLER
+        );
+        if (currentTronAllowance < amount) {
+          await approveToken(deps, token.address, TRON_MAINNET_INPUT_SETTLER);
+        }
         continue;
       }
 

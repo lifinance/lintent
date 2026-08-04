@@ -1,7 +1,12 @@
 import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
 import { encodeFunctionData, hashStruct, maxUint256, parseEventLogs } from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
-import { addressToBytes32, bytes32ToAddress, StandardSolanaIntent } from "@lifi/intent";
+import {
+  addressToBytes32,
+  bytes32ToAddress,
+  StandardSolanaIntent,
+  TRON_LEGACY_POLYMER_ORACLES
+} from "@lifi/intent";
 import axios from "axios";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
@@ -10,14 +15,20 @@ import { containerToIntent } from "$lib/utils/intent";
 import { compactTypes } from "@lifi/intent";
 import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
+import { getFillDetails } from "./fillEvent";
 import { isTronChain } from "$lib/utils/chainType";
+import { getTronReads, getTronSigner } from "$lib/tron/client";
 import {
-  fillTronOutputs,
-  claimTronIntent,
-  submitTronReceiveMessage,
-  getTronTransactionInfo
-} from "./tronSolver";
-import { getTronBlockTimestamp } from "./tronExecution";
+  fillOutputs as fillTronOutputs,
+  finalise as finaliseTron,
+  setAttestation as setTronAttestation,
+  submitReceiveMessage as submitTronReceiveMessage
+} from "$lib/tron/writes";
+import type { TronDeps } from "$lib/tron/types";
+
+async function tronDeps(): Promise<TronDeps> {
+  return { reads: await getTronReads(), signer: getTronSigner() };
+}
 
 /**
  * @notice Class for solving intents. Functions called by solvers.
@@ -61,20 +72,6 @@ export class Solver {
     }
   }
 
-  private static async getReceiptCachedOrRpc(chainId: number | bigint, txHash: `0x${string}`) {
-    const cached = store.getTransactionReceipt(chainId, txHash);
-    if (
-      cached &&
-      typeof cached === "object" &&
-      Array.isArray((cached as { logs?: unknown[] }).logs) &&
-      (cached as { logs?: unknown[] }).logs!.length > 0
-    )
-      return cached;
-    const receipt = await getClient(chainId).getTransactionReceipt({ hash: txHash });
-    await Solver.persistReceipt(chainId, txHash, receipt);
-    return receipt;
-  }
-
   static fill(
     walletClient: WC,
     args: {
@@ -92,7 +89,7 @@ export class Solver {
       const { preHook, postHook, account, solver } = opts;
       const solverAddress = solver ? solver() : account();
       const {
-        orderContainer: { order, inputSettler },
+        orderContainer: { order },
         outputs
       } = args;
       const orderId = containerToIntent(args.orderContainer).orderId();
@@ -100,7 +97,12 @@ export class Solver {
       const outputChainId = Number(outputs[0].chainId);
 
       if (isTronChain(outputChainId)) {
-        const txId = await fillTronOutputs(args.orderContainer, outputs, account(), solverAddress);
+        const txId = await fillTronOutputs(await tronDeps(), {
+          orderId,
+          outputs,
+          fillDeadline: Number(order.fillDeadline),
+          solverBytes32: addressToBytes32(solverAddress)
+        });
         if (postHook) await postHook();
         return `0x${txId.replace("0x", "")}` as `0x${string}`;
       }
@@ -201,15 +203,6 @@ export class Solver {
       if (existingValidation) return existingValidation;
 
       const validationPromise = (async () => {
-        console.log("[validate] start", {
-          sourceChainId: Number(sourceChainId),
-          outputChainId: Number(output.chainId),
-          fillTransactionHash,
-          expectedOutputHash,
-          inputOracle: order.inputOracle,
-          mainnet
-        });
-
         if (
           !fillTransactionHash ||
           !fillTransactionHash.startsWith("0x") ||
@@ -218,183 +211,45 @@ export class Solver {
           throw new Error(`Invalid fill transaction hash: ${fillTransactionHash}`);
         }
 
-        // Always fetch fresh receipt from RPC — cached receipts may have
-        // transaction-local logIndex values instead of block-global ones,
-        // which breaks Polymer proof requests.
-        console.log("[validate] fetching fresh receipt from output chain", Number(output.chainId));
-        const transactionReceipt = await getClient(output.chainId).getTransactionReceipt({
-          hash: fillTransactionHash as `0x${string}`
-        });
-        console.log("[validate] receipt", {
-          blockNumber: Number(transactionReceipt.blockNumber),
-          logsCount: transactionReceipt.logs.length,
-          logIndices: transactionReceipt.logs.map((l) => l.logIndex),
-          from: transactionReceipt.from,
-          status: transactionReceipt.status
-        });
-
-        const logs = parseEventLogs({
-          abi: COIN_FILLER_ABI,
-          eventName: "OutputFilled",
-          logs: transactionReceipt.logs
-        });
-        console.log(
-          "[validate] OutputFilled logs found:",
-          logs.length,
-          logs.map((l) => ({
-            logIndex: l.logIndex,
-            outputHash: hashStruct({
-              types: compactTypes,
-              primaryType: "MandateOutput",
-              data: l.args.output
-            })
-          }))
+        const orderId = containerToIntent(args.orderContainer).orderId();
+        const sameChainAttestation =
+          order.inputOracle.toLowerCase() === bytes32ToAddress(output.settler).toLowerCase() ||
+          order.inputOracle === COIN_FILLER;
+        // Accept the current oracle AND known legacy deployments — orders
+        // opened before an address rotation must stay provable.
+        const polymerOracles = new Set(
+          [
+            getOracle("polymer", sourceChainId),
+            ...(TRON_LEGACY_POLYMER_ORACLES[sourceChainId.toString()] ?? [])
+          ]
+            .filter((oracle): oracle is `0x${string}` => !!oracle)
+            .map((oracle) => oracle.toLowerCase())
         );
+        const isPolymerPath =
+          !sameChainAttestation && polymerOracles.has(order.inputOracle.toLowerCase());
 
-        // We need to search through each log until we find one matching our output.
-        let logIndex = -1;
-        for (const log of logs) {
-          const logOutput = log.args.output;
-          // TODO: Optimise by comparing the dicts.
-          const logOutputHash = hashStruct({
-            types: compactTypes,
-            primaryType: "MandateOutput",
-            data: logOutput
-          });
-          if (logOutputHash === expectedOutputHash) {
-            logIndex = log.logIndex;
-            break;
-          }
-        }
-        console.log(
-          "[validate] matched logIndex:",
-          logIndex,
-          "expectedOutputHash:",
-          expectedOutputHash
-        );
-        if (logIndex === -1) throw Error(`Could not find matching log`);
-
-        if (order.inputOracle === getOracle("polymer", sourceChainId)) {
-          console.log("[validate] using Polymer oracle path");
-          let proof: string | undefined;
-          const polymerKey = `${Number(output.chainId)}:${Number(transactionReceipt.blockNumber)}:${Number(logIndex)}`;
-          let polymerIndex: number | undefined = Solver.polymerRequestIndexByLog.get(polymerKey);
-          console.log("[validate] polymer request", {
-            polymerKey,
-            cachedPolymerIndex: polymerIndex,
-            srcChainId: Number(output.chainId),
-            srcBlockNumber: Number(transactionReceipt.blockNumber),
-            globalLogIndex: Number(logIndex)
-          });
-          for (const waitMs of [1000, 2000, 4000, 8000]) {
-            console.log("[validate] polling polymer proof (next wait:", waitMs, "ms)");
-            const response = await axios.post(
-              `/polymer`,
-              {
-                srcChainId: Number(output.chainId),
-                srcBlockNumber: Number(transactionReceipt.blockNumber),
-                globalLogIndex: Number(logIndex),
-                polymerIndex,
-                mainnet: mainnet
-              },
-              { timeout: 15_000 }
-            );
-            const dat = response.data as {
-              proof: undefined | string;
-              polymerIndex: number;
-            };
-            console.log("[validate] polymer response", {
-              hasProof: !!dat.proof,
-              proofLength: dat.proof?.length,
-              polymerIndex: dat.polymerIndex
-            });
-            polymerIndex = dat.polymerIndex;
-            if (polymerIndex !== undefined) {
-              Solver.polymerRequestIndexByLog.set(polymerKey, polymerIndex);
-            }
-            if (dat.proof) {
-              proof = dat.proof;
-              break;
-            }
-            await Solver.sleep(waitMs);
-          }
-          if (proof) {
-            console.log("[validate] got proof, length:", proof.length);
-
-            if (isTronChain(sourceChainId)) {
-              console.log("[validate] submitting receiveMessage to Tron", {
-                inputOracle: order.inputOracle,
-                proofLength: proof.length
-              });
-              const txId = await submitTronReceiveMessage(order.inputOracle, proof);
-              console.log("[validate] Tron receiveMessage txId:", txId);
-              if (postHook) await postHook();
-              return { transactionHash: `0x${txId.replace("0x", "")}` };
-            }
-
-            if (preHook) await preHook(Number(sourceChainId));
-
-            const proofHex = `0x${proof.replace("0x", "")}` as `0x${string}`;
-            const simCalldata = encodeFunctionData({
-              abi: POLYMER_ORACLE_ABI,
-              functionName: "receiveMessage",
-              args: [proofHex]
-            });
-            console.log("[validate] simulating receiveMessage on chain", Number(sourceChainId), {
-              to: order.inputOracle,
-              account: account(),
-              calldataLength: simCalldata.length
-            });
-            try {
-              await getClient(sourceChainId).call({
-                to: order.inputOracle,
-                data: simCalldata,
-                account: account()
-              });
-              console.log("[validate] simulation succeeded");
-            } catch (simError) {
-              console.error("[validate] simulation FAILED", simError);
-              throw new Error(
-                `receiveMessage simulation failed on chain ${Number(sourceChainId)}: ${Solver.extractRevertReason(simError)}`,
-                { cause: simError as Error }
-              );
-            }
-
-            console.log("[validate] sending receiveMessage tx on chain", Number(sourceChainId));
-            const transactionHash = await walletClient.writeContract({
-              chain: getChain(sourceChainId),
-              account: account(),
-              address: order.inputOracle,
-              abi: POLYMER_ORACLE_ABI,
-              functionName: "receiveMessage",
-              args: [proofHex]
-            });
-            console.log("[validate] receiveMessage tx sent:", transactionHash);
-
-            const result = await getClient(sourceChainId).waitForTransactionReceipt({
-              hash: transactionHash,
-              timeout: 120_000,
-              pollingInterval: 2_000
-            });
-            console.log("[validate] receiveMessage confirmed, status:", result.status);
-            await Solver.persistReceipt(sourceChainId, transactionHash, result);
-            if (postHook) await postHook();
-            return result;
-          }
-          console.warn("[validate] polymer proof unavailable after all retries");
-          throw new Error(
-            `Polymer proof unavailable for output on ${output.chainId.toString()}. Try again after the fill attestation is indexed.`
+        if (sameChainAttestation) {
+          // Same-chain fills: the output settler doubles as the oracle, but the
+          // fill only writes _fillRecords — proving requires setAttestation with
+          // the exact event payload.
+          const { solver, timestamp } = await getFillDetails(
+            orderId,
+            output,
+            fillTransactionHash as `0x${string}`
           );
-        } else if (order.inputOracle === COIN_FILLER) {
-          console.log("[validate] using COIN_FILLER oracle path");
-          const log = logs.find((log) => log.logIndex === logIndex);
-          if (!log) throw new Error(`Log with index ${logIndex} not found`);
-          console.log("[validate] setAttestation args", {
-            orderId: log.args.orderId,
-            solver: log.args.solver,
-            timestamp: log.args.timestamp,
-            output: log.args.output
-          });
+
+          if (isTronChain(sourceChainId)) {
+            const txId = await setTronAttestation(await tronDeps(), {
+              outputSettlerBytes32: output.settler,
+              orderId,
+              solverBytes32: solver,
+              timestamp,
+              output
+            });
+            if (postHook) await postHook();
+            return { transactionHash: `0x${txId.replace("0x", "")}` };
+          }
+
           if (preHook) await preHook(Number(sourceChainId));
           const transactionHash = await walletClient.writeContract({
             chain: getChain(sourceChainId),
@@ -402,23 +257,141 @@ export class Solver {
             address: order.inputOracle,
             abi: COIN_FILLER_ABI,
             functionName: "setAttestation",
-            args: [log.args.orderId, log.args.solver, log.args.timestamp, log.args.output]
+            args: [orderId, solver, timestamp, output]
           });
-          console.log("[validate] setAttestation tx sent:", transactionHash);
-
           const result = await getClient(sourceChainId).waitForTransactionReceipt({
             hash: transactionHash,
             timeout: 120_000,
             pollingInterval: 2_000
           });
-          console.log("[validate] setAttestation confirmed, status:", result.status);
           await Solver.persistReceipt(sourceChainId, transactionHash, result);
           if (postHook) await postHook();
           return result;
         }
-        throw new Error(
-          `Unsupported input oracle ${order.inputOracle} for source chain ${Number(sourceChainId)}.`
+
+        if (!isPolymerPath) {
+          throw new Error(
+            `Unsupported input oracle ${order.inputOracle} for source chain ${Number(sourceChainId)}.`
+          );
+        }
+
+        // Cross-chain Polymer path. Always fetch a fresh receipt from RPC —
+        // cached receipts may carry transaction-local logIndex values instead
+        // of the block-global ones Polymer proof requests need.
+        const transactionReceipt = await getClient(output.chainId).getTransactionReceipt({
+          hash: fillTransactionHash as `0x${string}`
+        });
+        if (transactionReceipt.status !== "success") {
+          throw new Error(`Fill transaction ${fillTransactionHash} reverted`);
+        }
+
+        const logs = parseEventLogs({
+          abi: COIN_FILLER_ABI,
+          eventName: "OutputFilled",
+          logs: transactionReceipt.logs
+        });
+
+        // Match with the same strictness as getFillDetails: emitter, indexed
+        // orderId, and output struct hash — and never silently pick between
+        // ambiguous candidates (the wrong global log index breaks the proof).
+        const expectedEmitter = bytes32ToAddress(output.settler).toLowerCase();
+        const matches = logs.filter(
+          (log) =>
+            log.address.toLowerCase() === expectedEmitter &&
+            log.args.orderId.toLowerCase() === orderId.toLowerCase() &&
+            hashStruct({
+              types: compactTypes,
+              primaryType: "MandateOutput",
+              data: log.args.output
+            }) === expectedOutputHash
         );
+        if (matches.length === 0) throw Error(`Could not find matching log`);
+        if (matches.length > 1) {
+          throw new Error(
+            `Ambiguous fill: ${matches.length} OutputFilled events match the same order and output`
+          );
+        }
+        const logIndex = matches[0].logIndex;
+
+        let proof: string | undefined;
+        const polymerKey = `${Number(output.chainId)}:${Number(transactionReceipt.blockNumber)}:${Number(logIndex)}`;
+        let polymerIndex: number | undefined = Solver.polymerRequestIndexByLog.get(polymerKey);
+        for (const waitMs of [1000, 2000, 4000, 8000]) {
+          const response = await axios.post(
+            `/polymer`,
+            {
+              srcChainId: Number(output.chainId),
+              srcBlockNumber: Number(transactionReceipt.blockNumber),
+              globalLogIndex: Number(logIndex),
+              polymerIndex,
+              mainnet: mainnet
+            },
+            { timeout: 15_000 }
+          );
+          const dat = response.data as {
+            proof: undefined | string;
+            polymerIndex: number;
+          };
+          polymerIndex = dat.polymerIndex;
+          if (polymerIndex !== undefined) {
+            Solver.polymerRequestIndexByLog.set(polymerKey, polymerIndex);
+          }
+          if (dat.proof) {
+            proof = dat.proof;
+            break;
+          }
+          await Solver.sleep(waitMs);
+        }
+        if (!proof) {
+          throw new Error(
+            `Polymer proof unavailable for output on ${output.chainId.toString()}. Try again after the fill attestation is indexed.`
+          );
+        }
+
+        if (isTronChain(sourceChainId)) {
+          const txId = await submitTronReceiveMessage(await tronDeps(), order.inputOracle, proof);
+          if (postHook) await postHook();
+          return { transactionHash: `0x${txId.replace("0x", "")}` };
+        }
+
+        if (preHook) await preHook(Number(sourceChainId));
+
+        const proofHex = `0x${proof.replace("0x", "")}` as `0x${string}`;
+        const simCalldata = encodeFunctionData({
+          abi: POLYMER_ORACLE_ABI,
+          functionName: "receiveMessage",
+          args: [proofHex]
+        });
+        try {
+          await getClient(sourceChainId).call({
+            to: order.inputOracle,
+            data: simCalldata,
+            account: account()
+          });
+        } catch (simError) {
+          throw new Error(
+            `receiveMessage simulation failed on chain ${Number(sourceChainId)}: ${Solver.extractRevertReason(simError)}`,
+            { cause: simError as Error }
+          );
+        }
+
+        const transactionHash = await walletClient.writeContract({
+          chain: getChain(sourceChainId),
+          account: account(),
+          address: order.inputOracle,
+          abi: POLYMER_ORACLE_ABI,
+          functionName: "receiveMessage",
+          args: [proofHex]
+        });
+
+        const result = await getClient(sourceChainId).waitForTransactionReceipt({
+          hash: transactionHash,
+          timeout: 120_000,
+          pollingInterval: 2_000
+        });
+        await Solver.persistReceipt(sourceChainId, transactionHash, result);
+        if (postHook) await postHook();
+        return result;
       })();
 
       Solver.validationInflight.set(validationKey, validationPromise);
@@ -462,30 +435,38 @@ export class Solver {
           throw new Error(`Invalid fill tx hash at index ${i}: ${hash}`);
         }
       }
-      const fillTimestamps = await Promise.all(
+
+      // Solve parameters come from the OutputFilled events: the recorded
+      // solver is whatever fillerData proposed (which may be an override, not
+      // the filling wallet), and the recorded timestamp is the exact value
+      // hashed on-chain — deriving either from local context breaks finalise.
+      const orderId = intent.orderId();
+      const solveParams = await Promise.all(
         fillTransactionHashes.map(async (fth, i) => {
-          const outputChainId = order.outputs[i].chainId;
-          if (isTronChain(outputChainId)) {
-            const txInfo = await getTronTransactionInfo(fth.replace("0x", ""));
-            return getTronBlockTimestamp(Number(txInfo.blockNumber));
-          }
-          const receipt = await Solver.getReceiptCachedOrRpc(outputChainId, fth as `0x${string}`);
-          const blockNumber = receipt.blockNumber != null ? BigInt(receipt.blockNumber) : null;
-          const block =
-            blockNumber != null
-              ? await getClient(outputChainId).getBlock({ blockNumber })
-              : await getClient(outputChainId).getBlock({
-                  blockHash: receipt.blockHash as `0x${string}`
-                });
-          return Number(block.timestamp);
+          const output = order.outputs[i];
+          const { solver, timestamp } = await getFillDetails(orderId, output, fth as `0x${string}`);
+          return { timestamp, solver };
         })
       );
 
+      // The input settler derives the order owner from solveParams[0].solver
+      // and requires msg.sender to be that owner.
+      const owner = bytes32ToAddress(solveParams[0].solver);
+      if (owner.toLowerCase() !== account().toLowerCase()) {
+        throw new Error(
+          `This order was filled for solver ${owner} — connect that wallet to claim (connected: ${account()}).`
+        );
+      }
+
       if (isTronChain(sourceChainId)) {
-        const txId = await claimTronIntent({
-          orderContainer,
-          fillTimestamps: fillTimestamps.map(Number),
-          account: account()
+        if (!("originChainId" in order)) {
+          throw new Error("Tron claim only supports single-chain (StandardOrder) intents");
+        }
+        const txId = await finaliseTron(await tronDeps(), {
+          inputSettler,
+          order,
+          solveParams,
+          destinationBytes32: addressToBytes32(account())
         });
         if (postHook) await postHook();
         return `0x${txId.replace("0x", "")}`;
@@ -499,13 +480,6 @@ export class Solver {
           `Wallet is on chain ${connectedChainId}, expected ${expectedChainId} before finalise`
         );
       }
-
-      const solveParams = fillTimestamps.map((fillTimestamp) => {
-        return {
-          timestamp: Number(fillTimestamp),
-          solver: addressToBytes32(account())
-        };
-      });
 
       const transactionHash = await finaliseIntent({
         intent,

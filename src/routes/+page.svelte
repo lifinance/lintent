@@ -14,6 +14,7 @@
   import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
+  import { isTronChain } from "$lib/utils/chainType";
 
   BigInt.prototype.toJSON = function () {
     return this.toString();
@@ -96,10 +97,24 @@
   // --- Execute Transaction Variables --- //
   const preHook = (chainId: number) => store.setWalletToCorrectChain(chainId);
   const postHook = async () => store.forceUpdate();
-  const account = () => {
-    const inputChainId = store.inputTokens[0]?.token.chainId;
-    return store.accountForChain(inputChainId) ?? store.connectedAccount?.address!;
+  // Wallet identity is bound to the chain of the OPERATION, not to the draft
+  // issuance form: filling uses the selected order's output chain, proving and
+  // finalising use its input chain. The draft form only drives issuance.
+  // An EVM address is never a valid identity on Tron (and vice versa), so a
+  // missing Tron wallet blocks instead of silently falling back.
+  const accountFor = (chainId: number | bigint | undefined) => {
+    if (chainId !== undefined && isTronChain(chainId)) {
+      const tronAccount = store.accountForChain(chainId);
+      if (!tronAccount) throw new Error("Connect TronLink to act on Tron");
+      return tronAccount;
+    }
+    const resolved = chainId !== undefined ? store.accountForChain(chainId) : undefined;
+    return resolved ?? store.connectedAccount?.address!;
   };
+  const account = () => accountFor(store.inputTokens[0]?.token.chainId);
+  const fillAccount = () => accountFor(selectedOrder?.order.outputs[0]?.chainId);
+  const sourceAccount = () =>
+    accountFor(selectedOrder ? containerToIntent(selectedOrder).inputChains()[0] : undefined);
 
   let selectedOrder = $state<OrderContainer | undefined>(undefined);
   let currentScreenIndex = $state(0);
@@ -234,16 +249,27 @@
               ></IntentList>
               {#if selectedOrder !== undefined}
                 <!-- <IntentDescription></IntentDescription> -->
-                <FillIntent {scroll} orderContainer={selectedOrder} {account} {preHook} {postHook}
+                <FillIntent
+                  {scroll}
+                  orderContainer={selectedOrder}
+                  account={fillAccount}
+                  defaultSolver={sourceAccount}
+                  {preHook}
+                  {postHook}
                 ></FillIntent>
                 <ReceiveMessage
                   {scroll}
                   orderContainer={selectedOrder}
-                  {account}
+                  account={sourceAccount}
                   {preHook}
                   {postHook}
                 ></ReceiveMessage>
-                <Finalise orderContainer={selectedOrder} {preHook} {postHook} {account}></Finalise>
+                <Finalise
+                  orderContainer={selectedOrder}
+                  {preHook}
+                  {postHook}
+                  account={sourceAccount}
+                ></Finalise>
               {/if}
             {/if}
           </div>

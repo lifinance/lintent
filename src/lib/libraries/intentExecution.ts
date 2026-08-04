@@ -21,7 +21,8 @@ import type { NoSignature, Signature } from "@lifi/intent";
 import type { TypedDataSigner } from "@lifi/intent";
 import { switchWalletChain } from "$lib/utils/walletClientRuntime";
 import { isTronChain } from "$lib/utils/chainType";
-import { openTronEscrowIntent, signTronCompact } from "./tronExecution";
+import { getTronReads, getTronSigner } from "$lib/tron/client";
+import { openEscrow as openTronEscrow } from "$lib/tron/writes";
 
 function combineSignatures(signatures: {
   sponsorSignature: Signature | NoSignature;
@@ -41,7 +42,11 @@ export function signIntentCompact(
 ): Promise<`0x${string}`> {
   if (intent instanceof StandardEVMIntent) {
     const order = intent.asOrder();
-    if (isTronChain(order.originChainId)) signTronCompact();
+    if (isTronChain(order.originChainId)) {
+      throw new Error(
+        "Tron compact signing not yet supported — pending protocol decision on EIP-712 alternative"
+      );
+    }
     const signer = walletClient as unknown as TypedDataSigner;
     return signStandardCompact(account, signer, order.originChainId, intent.asBatchCompact());
   }
@@ -83,7 +88,10 @@ export async function openEscrowIntent(
   if (intent instanceof StandardEVMIntent) {
     const order = intent.asOrder();
     if (isTronChain(order.originChainId)) {
-      const txId = await openTronEscrowIntent(intent, account);
+      const txId = await openTronEscrow(
+        { reads: await getTronReads(), signer: getTronSigner() },
+        intent
+      );
       return [`0x${txId.replace("0x", "")}` as `0x${string}`];
     }
     await switchWalletChain(walletClient, Number(order.originChainId));
@@ -101,6 +109,13 @@ export async function openEscrowIntent(
   }
 
   const components = intent.asComponents();
+  // Every component below goes through the EVM wallet client — a Tron
+  // component cannot be opened this way (the library also rejects these at
+  // build time; this guards imported/stored orders).
+  const tronComponent = components.find(({ chainId }) => isTronChain(chainId));
+  if (tronComponent) {
+    throw new Error("Multichain orders with Tron inputs are not supported");
+  }
   const results: `0x${string}`[] = [];
   for (const { chainId, orderComponent } of components) {
     const chain = getChain(chainId);

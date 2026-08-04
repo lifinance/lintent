@@ -15,8 +15,9 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
   import { isTronChain } from "$lib/utils/chainType";
-  import { readTronIsProven } from "$lib/libraries/tronSolver";
-  import { getTronBlockTimestamp } from "$lib/libraries/tronExecution";
+  import { getFillDetails } from "$lib/libraries/fillEvent";
+  import { getTronReads } from "$lib/tron/client";
+  import { readIsProven } from "$lib/tron/reads";
 
   // This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 
@@ -67,28 +68,19 @@
     )
       return false;
     const { order } = orderContainer;
-    const outputClient = getClient(output.chainId);
-    const transactionReceipt = await outputClient.getTransactionReceipt({
-      hash: fillTransactionHash
-    });
-    let timestamp: number;
-    if (isTronChain(output.chainId)) {
-      timestamp = await getTronBlockTimestamp(Number(transactionReceipt.blockNumber));
-    } else {
-      const block = await (transactionReceipt.blockNumber !== undefined
-        ? outputClient.getBlock({ blockNumber: transactionReceipt.blockNumber })
-        : outputClient.getBlock({ blockHash: transactionReceipt.blockHash }));
-      timestamp = Number(block.timestamp);
-    }
+    // Solver and timestamp come from the OutputFilled event — the recorded
+    // solver may be an override, not the transaction sender.
+    const { solver, timestamp } = await getFillDetails(orderId, output, fillTransactionHash);
     const encodedOutput = encodeMandateOutput({
-      solver: addressToBytes32(transactionReceipt.from),
+      solver,
       orderId,
       timestamp,
       output
     });
     const outputHash = keccak256(encodedOutput);
     if (isTronChain(chainId)) {
-      return await readTronIsProven(
+      return await readIsProven(
+        await getTronReads(),
         order.inputOracle,
         output.chainId,
         output.oracle,

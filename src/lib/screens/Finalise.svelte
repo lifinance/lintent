@@ -26,7 +26,8 @@
   import { hashStruct } from "viem";
   import { compactTypes } from "@lifi/intent";
   import { isTronChain } from "$lib/utils/chainType";
-  import { readTronOrderStatus } from "$lib/libraries/tronSolver";
+  import { getTronReads } from "$lib/tron/client";
+  import { readOrderStatus } from "$lib/tron/reads";
   import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 
   let {
@@ -96,7 +97,7 @@
     if (isTronChain(chainId)) {
       const orderStatus = await getOrFetchRpc(
         `claim:tron:${orderId}`,
-        () => readTronOrderStatus(orderId),
+        async () => readOrderStatus(await getTronReads(), inputSettler, orderId),
         { ttlMs: 30_000 }
       );
       return orderStatus === OrderStatus_Claimed || orderStatus === OrderStatus_Refunded;

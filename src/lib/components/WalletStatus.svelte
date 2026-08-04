@@ -1,7 +1,7 @@
 <script lang="ts">
   import store from "$lib/state.svelte";
   import { connectWith, listWalletConnectors, disconnectWallet } from "$lib/utils/wagmi";
-  import { isTronLinkAvailable, connectTronLink } from "$lib/utils/tronlink";
+  import { isTronLinkAvailable, connectTronLink } from "$lib/tron/signer";
 
   let connectingEvm = $state(false);
   let connectingTron = $state(false);

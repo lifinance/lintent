@@ -14,20 +14,14 @@ import { COMPACT_ABI } from "$lib/abi/compact";
 import { hashStruct, keccak256 } from "viem";
 import { compactTypes } from "@lifi/intent";
 import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
-import { addressToBytes32, bytes32ToAddress } from "@lifi/intent";
+import { bytes32ToAddress } from "@lifi/intent";
 import { containerToIntent } from "$lib/utils/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
-import store from "$lib/state.svelte";
 import { isTronChain } from "$lib/utils/chainType";
-import { getTronBlockTimestamp } from "$lib/libraries/tronExecution";
-import {
-  readTronIsProven,
-  readTronIsOutputFilled,
-  getTronTransactionFrom,
-  readTronOrderStatus,
-  getTronTransactionInfo
-} from "$lib/libraries/tronSolver";
+import { getFillDetails } from "$lib/libraries/fillEvent";
+import { getTronReads } from "$lib/tron/client";
+import { readIsOutputFilled, readIsProven, readOrderStatus } from "$lib/tron/reads";
 
 const PROGRESS_TTL_MS = 30_000;
 const OrderStatus_Claimed = 2;
@@ -57,7 +51,7 @@ async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
   if (isTronChain(output.chainId)) {
     return getOrFetchRpc(
       `progress:filled:${orderId}:${outputKey}`,
-      () => readTronIsOutputFilled(orderId, output.settler, outputHash),
+      async () => readIsOutputFilled(await getTronReads(), output.settler, orderId, outputHash),
       { ttlMs: PROGRESS_TTL_MS }
     );
   }
@@ -86,69 +80,13 @@ async function isOutputValidatedOnChain(
 ) {
   const outputKey = getOutputStorageKey(output);
 
-  let from: `0x${string}`;
-  let blockNumber: bigint | undefined;
-  let blockHashFallback: `0x${string}` | undefined;
-
-  if (isTronChain(output.chainId)) {
-    const tronTxId = fillTransactionHash.replace("0x", "");
-    const [txInfo, fromHex] = await Promise.all([
-      getOrFetchRpc(`progress:troninfo:${tronTxId}`, () => getTronTransactionInfo(tronTxId), {
-        ttlMs: PROGRESS_TTL_MS
-      }),
-      getOrFetchRpc(`progress:tronfrom:${tronTxId}`, () => getTronTransactionFrom(tronTxId), {
-        ttlMs: PROGRESS_TTL_MS
-      })
-    ]);
-    blockNumber = BigInt(Number(txInfo.blockNumber));
-    from = fromHex;
-  } else {
-    const cachedReceipt = store.getTransactionReceipt(output.chainId, fillTransactionHash);
-    const receipt = (
-      cachedReceipt
-        ? cachedReceipt
-        : await getOrFetchRpc(
-            `progress:receipt:${output.chainId.toString()}:${fillTransactionHash}`,
-            async () => {
-              const outputClient = getClient(output.chainId);
-              return outputClient.getTransactionReceipt({ hash: fillTransactionHash });
-            },
-            { ttlMs: PROGRESS_TTL_MS }
-          )
-    ) as { blockHash: `0x${string}`; from: `0x${string}`; blockNumber?: bigint };
-    if (!cachedReceipt) {
-      store
-        .saveTransactionReceipt(output.chainId, fillTransactionHash, receipt)
-        .catch((error) => console.warn("saveTransactionReceipt error", error));
-    }
-    from = receipt.from;
-    blockNumber = receipt.blockNumber;
-    blockHashFallback = receipt.blockHash;
-  }
-
-  let timestamp: number;
-  if (isTronChain(output.chainId)) {
-    timestamp = await getOrFetchRpc(
-      `progress:block:${output.chainId.toString()}:${blockNumber}`,
-      () => getTronBlockTimestamp(Number(blockNumber)),
-      { ttlMs: PROGRESS_TTL_MS }
-    );
-  } else {
-    const block = await getOrFetchRpc(
-      `progress:block:${output.chainId.toString()}:${blockNumber ?? blockHashFallback}`,
-      async () => {
-        const outputClient = getClient(output.chainId);
-        return blockNumber !== undefined
-          ? outputClient.getBlock({ blockNumber })
-          : outputClient.getBlock({ blockHash: blockHashFallback! });
-      },
-      { ttlMs: PROGRESS_TTL_MS }
-    );
-    timestamp = Number(block.timestamp);
-  }
+  // Solver and timestamp come from the OutputFilled event — the recorded
+  // solver may be an override, not the transaction sender, and the recorded
+  // timestamp is the exact value hashed into the attested payload.
+  const { solver, timestamp } = await getFillDetails(orderId, output, fillTransactionHash);
 
   const encodedOutput = encodeMandateOutput({
-    solver: addressToBytes32(from),
+    solver,
     orderId,
     timestamp,
     output
@@ -159,8 +97,9 @@ async function isOutputValidatedOnChain(
   if (isTronChain(inputChain)) {
     return getOrFetchRpc(
       provenCacheKey,
-      () =>
-        readTronIsProven(
+      async () =>
+        readIsProven(
+          await getTronReads(),
           orderContainer.order.inputOracle,
           output.chainId,
           output.oracle,
@@ -195,7 +134,9 @@ async function isInputChainFinalised(chainId: bigint, container: OrderContainer)
     return getOrFetchRpc(
       `progress:finalised:tron:${orderId}`,
       async () => {
-        const status = await readTronOrderStatus(orderId);
+        // The settler is resolved from the order container so pre-rotation
+        // (legacy) orders stay trackable.
+        const status = await readOrderStatus(await getTronReads(), inputSettler, orderId);
         return status === OrderStatus_Claimed || status === OrderStatus_Refunded;
       },
       { ttlMs: PROGRESS_TTL_MS }

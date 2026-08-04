@@ -1,9 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isAddress } from "viem";
-
-// Mirrors the resolveRecipient helper in IssueIntent.svelte
-const resolveRecipient = (value: string): `0x${string}` | undefined =>
-  isAddress(value, { strict: false }) ? (value as `0x${string}`) : undefined;
+import { resolveAddress as resolveRecipient } from "../../src/lib/utils/address";
 
 describe("resolveRecipient", () => {
   it("returns the address for a valid checksummed EVM address", () => {
@@ -50,5 +46,17 @@ describe("outputRecipient in AppCreateIntentOptions", () => {
     const recipient = "not-an-address";
     const outputRecipient = resolveRecipient(recipient);
     expect(outputRecipient).toBeUndefined();
+  });
+});
+
+describe("resolveRecipient (tron)", () => {
+  it("resolves a valid Tron Base58Check address to hex", () => {
+    expect(resolveRecipient("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")).toBe(
+      "0xa614f803b6fd780986a42c78ec9c7f77e6ded13c"
+    );
+  });
+
+  it("rejects a Tron address with a single-character typo (checksum)", () => {
+    expect(resolveRecipient("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6u")).toBeUndefined();
   });
 });

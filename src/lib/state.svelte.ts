@@ -1,4 +1,5 @@
 import type { OrderContainer } from "@lifi/intent";
+import { ADDRESS_ZERO } from "@lifi/intent";
 import type { GetTransactionReceiptReturnType } from "viem";
 import type { AppTokenContext } from "./appTypes";
 
@@ -43,7 +44,10 @@ import {
   type TronWalletConnection,
   getTronConnection,
   watchTronConnection
-} from "./utils/tronlink";
+} from "$lib/tron/signer";
+import { getTronReads } from "$lib/tron/client";
+import { getTrc20Allowance, getTrc20Balance, getTrxBalance } from "$lib/tron/reads";
+import { maxUint256 } from "viem";
 import { isTronChain } from "./utils/chainType";
 
 function generateUUID(): string {
@@ -244,7 +248,7 @@ class Store {
     (!!this.connectedAccount && !!this.walletClient) || !!this.tronConnectedAccount
   );
 
-  accountForChain(chainId: number): `0x${string}` | undefined {
+  accountForChain(chainId: number | bigint): `0x${string}` | undefined {
     if (isTronChain(chainId)) return this.tronConnectedAccount?.address;
     return this.connectedAccount?.address;
   }
@@ -270,9 +274,16 @@ class Store {
       tronTtlMs: 120_000,
       isMainnet: this.mainnet,
       scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}`,
-      fetcher: (asset, client, chainId) => {
+      fetcher: async (asset, client, chainId) => {
         const account = isTronChain(chainId) ? tronAccount : evmAccount;
-        if (!account) return Promise.resolve(0n);
+        if (!account) return 0n;
+        if (isTronChain(chainId)) {
+          // TronGrid-backed reads — viewing balances must not require TronLink.
+          const reads = await getTronReads();
+          return asset.toLowerCase() === ADDRESS_ZERO
+            ? getTrxBalance(reads, account)
+            : getTrc20Balance(reads, asset, account);
+        }
         return getBalance(account, asset, client);
       }
     });
@@ -293,11 +304,16 @@ class Store {
       tronTtlMs: 180_000,
       isMainnet: this.mainnet,
       scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${spender}`,
-      fetcher: (asset, client, chainId) => {
+      fetcher: async (asset, client, chainId) => {
         const account = isTronChain(chainId) ? tronAccount : evmAccount;
-        if (!account) return Promise.resolve(0n);
-        const tokenSpender = isTronChain(chainId) ? TRON_MAINNET_INPUT_SETTLER : spender;
-        return getAllowance(tokenSpender)(account, asset, client);
+        if (!account) return 0n;
+        if (isTronChain(chainId)) {
+          // Native TRX needs no allowance; TRC-20 allowances via TronGrid.
+          if (asset.toLowerCase() === ADDRESS_ZERO) return maxUint256;
+          const reads = await getTronReads();
+          return getTrc20Allowance(reads, asset, account, TRON_MAINNET_INPUT_SETTLER);
+        }
+        return getAllowance(spender)(account, asset, client);
       }
     });
   });
@@ -338,6 +354,12 @@ class Store {
     if (scope === "all" || scope === "balance") invalidateRpcPrefix("balance:");
     if (scope === "all" || scope === "allowance") invalidateRpcPrefix("allowance:");
     if (scope === "all" || scope === "compact") invalidateRpcPrefix("compact:");
+    if (scope === "all") {
+      // Flow-progress state changes on-chain after fill/prove/claim actions —
+      // stale cached "false" here keeps the step tracker behind for a full TTL.
+      invalidateRpcPrefix("progress:");
+      invalidateRpcPrefix("claim:");
+    }
   }
 
   refreshWalletReads(opts?: {

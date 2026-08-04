@@ -1,7 +1,7 @@
 <script lang="ts">
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import { connectWith, listWalletConnectors, walletConnectProjectId } from "$lib/utils/wagmi";
-  import { isTronLinkAvailable, connectTronLink } from "$lib/utils/tronlink";
+  import { isTronLinkAvailable, connectTronLink } from "$lib/tron/signer";
   import store from "$lib/state.svelte";
 
   const connectors = listWalletConnectors();

@@ -12,9 +12,8 @@
   import OutputTokenModal from "$lib/components/OutputTokenModal.svelte";
   import { ResetPeriod } from "@lifi/intent";
   import type { AppCreateIntentOptions } from "$lib/appTypes";
-  import { isAddress } from "viem";
-  import { isTronBase58Address } from "$lib/utils/chainType";
-  import { tronBase58ToHex } from "@lifi/intent";
+  import { resolveAddress } from "$lib/utils/address";
+  import { getChainType } from "$lib/utils/chainType";
 
   const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
   const REQUIRED_INPUT_USDC_RAW = 100n;
@@ -34,15 +33,21 @@
   let inputTokenSelectorActive = $state<boolean>(false);
   let outputTokenSelectorActive = $state<boolean>(false);
 
-  function resolveAddress(value: string): `0x${string}` | undefined {
-    if (isAddress(value, { strict: false })) return value;
-    if (isTronBase58Address(value)) return tronBase58ToHex(value);
-    return undefined;
-  }
-
   const resolveExclusiveFor = (value: string): `0x${string}` | undefined => resolveAddress(value);
 
   const resolveRecipient = (value: string): `0x${string}` | undefined => resolveAddress(value);
+
+  // Cross-namespace orders (e.g. EVM -> Tron) must name their recipient: the
+  // default recipient is the source-chain account, which only a plain EOA key
+  // can control on the destination namespace (a Safe or exchange address
+  // cannot). The library rejects the order at build time; surface it here.
+  const recipientRequired = $derived.by(() => {
+    const inputChain = store.inputTokens[0]?.token.chainId;
+    if (inputChain === undefined) return false;
+    return store.outputTokens.some(
+      (o) => getChainType(o.token.chainId) !== getChainType(inputChain)
+    );
+  });
 
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({
@@ -310,8 +315,9 @@
             type="text"
             size="sm"
             className="flex-1"
-            placeholder="0x... (optional)"
-            state={store.recipient.length > 0 && !resolveRecipient(store.recipient)
+            placeholder="0x... or T... (optional)"
+            state={(store.recipient.length > 0 && !resolveRecipient(store.recipient)) ||
+            (recipientRequired && store.recipient.length === 0)
               ? "error"
               : "default"}
             bind:value={store.recipient}

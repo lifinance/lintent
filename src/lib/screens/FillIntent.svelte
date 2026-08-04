@@ -19,6 +19,7 @@
 
   let {
     scroll,
+    defaultSolver,
     orderContainer,
     account,
     preHook,
@@ -29,6 +30,9 @@
     preHook?: (chainId: number) => Promise<any>;
     postHook: () => Promise<any>;
     account: () => `0x${string}`;
+    /** Source-chain identity used as the recorded solver when no override is
+     * set — the input settler only lets that identity finalise. */
+    defaultSolver: () => `0x${string}`;
   } = $props();
 
   let refreshValidation = $state(0);
@@ -49,6 +53,17 @@
     return undefined;
   });
   const solverGetter = $derived(parsedSolver ? () => parsedSolver : undefined);
+  // The recorded solver must be an identity that can finalise on the SOURCE
+  // chain; the signing wallet (output chain) is the wrong default for
+  // cross-namespace fills.
+  const solverForFill = $derived(solverGetter ?? defaultSolver);
+  const safePlaceholder = $derived.by(() => {
+    try {
+      return defaultSolver();
+    } catch {
+      return "solver address";
+    }
+  });
   const postHookScroll = async () => {
     await postHook();
     refreshValidation += 1;
@@ -184,7 +199,7 @@
         <input
           type="text"
           class="h-7 min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 font-mono text-xs text-gray-700 outline-none focus:border-sky-300"
-          placeholder={account()}
+          placeholder={safePlaceholder}
           bind:value={solverOverride}
         />
         {#if solverOverride.trim() && !solverGetter}
@@ -270,7 +285,7 @@
                           preHook,
                           postHook: postHookScroll,
                           account,
-                          solver: solverGetter
+                          solver: solverForFill
                         }
                       )
                     )

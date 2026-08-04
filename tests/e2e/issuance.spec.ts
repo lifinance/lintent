@@ -38,7 +38,7 @@ test.beforeEach(async ({ page }) => {
 							}
 						]
 					},
-					inputSettler: "0x000025c3226C00B2Cdc200005a1600509f4e00C0",
+					inputSettler: "0x00fC00edbe7C003b006f870068c548940000223e",
 					sponsorSignature: null,
 					allocatorSignature: null
 				}

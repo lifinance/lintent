@@ -28,7 +28,7 @@ describe("parseOrderStatusPayload", () => {
 						}
 					]
 				},
-				inputSettler: "0x000025c3226C00B2Cdc200005a1600509f4e00C0",
+				inputSettler: "0x00fC00edbe7C003b006f870068c548940000223e",
 				sponsorSignature: null,
 				allocatorSignature: "0x1234"
 			}
@@ -36,7 +36,7 @@ describe("parseOrderStatusPayload", () => {
 
 		const parsed = parseOrderStatusPayload(payload);
 
-		expect(parsed.inputSettler).toBe("0x000025c3226C00B2Cdc200005a1600509f4e00C0");
+		expect(parsed.inputSettler).toBe("0x00fC00edbe7C003b006f870068c548940000223e");
 		expect(parsed.order.nonce).toBe(123n);
 		expect("originChainId" in parsed.order && parsed.order.originChainId).toBe(8453n);
 		expect(parsed.sponsorSignature).toEqual({ type: "None", payload: "0x" });
@@ -68,7 +68,7 @@ describe("parseOrderStatusPayload", () => {
 						}
 					]
 				},
-				inputSettler: "0x000025c3226C00B2Cdc200005a1600509f4e00C0",
+				inputSettler: "0x00fC00edbe7C003b006f870068c548940000223e",
 				sponsorSignature: null,
 				allocatorSignature: "0x1234",
 				meta: { submitTime }
@@ -104,7 +104,7 @@ describe("parseOrderStatusPayload", () => {
 						}
 					]
 				},
-				inputSettler: "0x000025c3226C00B2Cdc200005a1600509f4e00C0",
+				inputSettler: "0x00fC00edbe7C003b006f870068c548940000223e",
 				sponsorSignature: null,
 				allocatorSignature: "0x1234",
 				meta: { submitTime: seconds * 1000 }

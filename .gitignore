@@ -8,6 +8,8 @@ build
 .vercel
 .netlify
 .wrangler
+
+# Test output
 coverage
 playwright-report
 test-results
@@ -25,5 +27,8 @@ test-results
 .DS_Store
 Thumbs.db
 
-.claude
+# Local Claude config, except checked-in skills (see .claude/skills/add-chain).
+# Do not replace this with a bare `.claude` ignore: git will not descend into an
+# excluded directory, so the negation below would stop working.
 .claude/*
+!.claude/skills/

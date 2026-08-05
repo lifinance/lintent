@@ -1,11 +1,16 @@
 import type { MandateOutput, MultichainOrder, StandardOrder } from "@lifi/intent";
 import { COIN_FILLER, addressToBytes32 } from "@lifi/intent";
+import { POLYMER_ORACLE } from "../../src/lib/config";
 
 export const CHAIN_ID_ETHEREUM = 1n;
 export const CHAIN_ID_ARBITRUM = 42161n;
 export const CHAIN_ID_BASE = 8453n;
 
-export const TEST_POLYMER_ORACLE: `0x${string}` = "0x0000003E06000007A224AeE90052fA6bb46d43C9";
+// Derived from config rather than hardcoded: a redeployment that updates
+// POLYMER_ORACLE must not leave the fixtures silently on a dead oracle.
+const ethereumPolymerOracle = POLYMER_ORACLE[Number(CHAIN_ID_ETHEREUM)];
+if (!ethereumPolymerOracle) throw new Error("POLYMER_ORACLE missing an ethereum entry");
+export const TEST_POLYMER_ORACLE: `0x${string}` = ethereumPolymerOracle;
 
 export const TEST_USER: `0x${string}` = "0x1111111111111111111111111111111111111111";
 export const TEST_NOW_SECONDS = 1_700_000_000;

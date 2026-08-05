@@ -29,14 +29,14 @@ export const BYTES32_ZERO =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as const;
 export const COMPACT = "0x00000000000000171ede64904551eeDF3C6C9788" as const;
 export const INPUT_SETTLER_COMPACT_LIFI = "0x0000000000cd5f7fDEc90a03a31F79E5Fbc6A9Cf" as const;
-export const INPUT_SETTLER_ESCROW_LIFI = "0x000025c3226C00B2Cdc200005a1600509f4e00C0" as const;
+export const INPUT_SETTLER_ESCROW_LIFI = "0x00fC00edbe7C003b006f870068c548940000223e" as const;
 export const MULTICHAIN_INPUT_SETTLER_ESCROW =
   "0xb912b4c38ab54b94D45Ac001484dEBcbb519Bc2B" as const;
 export const MULTICHAIN_INPUT_SETTLER_COMPACT =
   "0x1fccC0807F25A58eB531a0B5b4bf3dCE88808Ed7" as const;
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
-export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
+export const COIN_FILLER = "0x75220B7600c300005038432a0000f308e0000068" as const;
 // LI.FI solver used for the 1:1 stablecoin demo. In demo mode the quote request
 // omits exclusiveFor, but the on-chain intent is still made exclusive to this
 // solver so it fills 1:1 via its quick fallback.
@@ -46,20 +46,25 @@ export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [arbitrum.id]: "0x0000000000000000000000000000000000000000",
   [base.id]: "0x0000000000000000000000000000000000000000"
 };
+// Addresses track `main` after SOLV-695 (#62), ported into this branch's chain-id-keyed
+// shape. `main` keys this map by chain name; re-keying is why the values could not
+// auto-merge — keep the two in sync by value, not by diff.
 export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
-  [ethereum.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [arbitrum.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [base.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [megaeth.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [katana.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [pharos.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+  [ethereum.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [arbitrum.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [base.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [megaeth.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [katana.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [polygon.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [bsc.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [pharos.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   // testnet
-  [sepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
-  [baseSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
-  [arbitrumSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
-  [optimismSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
+  [sepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  [baseSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  [arbitrumSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  [optimismSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  // Arc testnet is not part of the SOLV-695 deployment set and has no entry on `main`;
+  // left on the superseded oracle.
   [arcTestnet.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
 };
 
@@ -239,6 +244,12 @@ export const coinList = (mainnet: boolean) => {
         address: `0x2791bca1f2de4661ed88a30c99a7a9449aa84174`,
         name: "usdc.e",
         chainId: polygon.id,
+        decimals: 6
+      },
+      {
+        address: `0xc879c018db60520f4355c26ed1a6d572cdac1815`,
+        name: "usdc",
+        chainId: pharos.id,
         decimals: 6
       }
     ] as const;

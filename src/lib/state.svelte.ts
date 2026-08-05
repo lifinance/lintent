@@ -1,8 +1,6 @@
 import type { OrderContainer } from "@lifi/intent";
 import type { GetTransactionReceiptReturnType } from "viem";
-import type { AppTokenContext } from "./appTypes";
-
-type OrderContainerWithMeta = OrderContainer & { id?: string; intentType?: string };
+import type { AppTokenContext, OrderContainerWithMeta } from "./appTypes";
 import {
   ALWAYS_OK_ALLOCATOR,
   clientsById,
@@ -57,7 +55,16 @@ class Store {
     if (!db) await initDb();
     if (!db) return;
     const rows = await db!.select().from(intents);
-    this.orders = rows.map((r) => JSON.parse(r.data) as OrderContainer);
+    this.orders = rows.map((r) => {
+      const order = JSON.parse(r.data) as OrderContainerWithMeta;
+      // Re-attach the authoritative column values dropped by JSON.parse. The
+      // dedicated `created_at` column always wins over anything stale in the
+      // blob; `submitTime` (order-server time) round-trips inside the blob.
+      order.id = r.id;
+      order.intentType = r.intentType;
+      order.createdAt = r.createdAt;
+      return order;
+    });
   }
 
   async saveOrderToDb(order: OrderContainerWithMeta) {
@@ -65,6 +72,10 @@ class Store {
     if (!db) await initDb();
     const orderId = containerToIntent(order).orderId();
     const now = Math.floor(Date.now() / 1000);
+    // Stamp the local "added to list" time onto the in-memory object so freshly
+    // created/imported intents sort correctly immediately (the column is only
+    // read back on reload). Guard so re-saves don't overwrite the original.
+    if (order.createdAt === undefined) order.createdAt = now;
     const id = order.id ?? generateUUID();
     const intentType = order.intentType ?? "escrow";
     const data = JSON.stringify(order);

@@ -39,6 +39,11 @@ const SOLANA_CHAIN_IDS = new Set([
 const FILL_DEADLINE_SECONDS = 10 * 60; // 10 minutes
 const SAME_CHAIN_DURATION_SECONDS = 10 * 60; // 10 minutes
 const SAME_CHAIN_EXCLUSIVITY_SECONDS = 12 * 3; // 36 seconds
+// SOLV-544 widened the exclusivity window to 5 minutes so solvers have time to
+// fill before exclusivity ends. @lifi/intent 0.2.1 still encodes ONE_MINUTE in
+// `encodeOutputs`, so re-apply it here; drop this once the library default is
+// raised and this app depends on that release.
+const CROSS_CHAIN_EXCLUSIVITY_SECONDS = 5 * 60; // 5 minutes
 
 function applyIntentTimings(intent: Intent): void {
   const mutable = intent as unknown as { expiry: number; fillDeadline: number };
@@ -56,14 +61,17 @@ function applyExclusivityOverride(
   exclusiveFor: string | undefined,
   isSameChain: boolean
 ): void {
-  if (!isSameChain || !exclusiveFor) return;
-  const order = orderIntent.asOrder() as StandardOrder;
+  if (!exclusiveFor) return;
+  const order = orderIntent.asOrder() as StandardOrder | MultichainOrder;
   const currentTime = Math.floor(Date.now() / 1000);
   const paddedExclusiveFor =
     `0x${exclusiveFor.replace("0x", "").padStart(64, "0")}` as `0x${string}`;
+  const exclusivitySeconds = isSameChain
+    ? SAME_CHAIN_EXCLUSIVITY_SECONDS
+    : CROSS_CHAIN_EXCLUSIVITY_SECONDS;
   const newContext = encodePacked(
     ["bytes1", "bytes32", "uint32"],
-    ["0xe0", paddedExclusiveFor, currentTime + SAME_CHAIN_EXCLUSIVITY_SECONDS]
+    ["0xe0", paddedExclusiveFor, currentTime + exclusivitySeconds]
   );
   for (const output of order.outputs) {
     if (output.context !== "0x") {

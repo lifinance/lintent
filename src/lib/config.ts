@@ -87,11 +87,11 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [bsc.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [pharos.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [tron.id]: TRON_MAINNET_POLYMER_ORACLE,
-  // testnet
-  [sepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
-  [baseSepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
-  [arbitrumSepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
-  [optimismSepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
+  // testnet — matches `main` after SOLV-695 (#62), which superseded the 0xC401b533… bucket.
+  [sepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  [baseSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  [arbitrumSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  [optimismSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
   // Not covered by the new deployment set; left on the superseded oracle.
   [arcTestnet.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
 };

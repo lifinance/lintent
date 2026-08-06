@@ -214,7 +214,7 @@ demo — add it for consistency, but it's the lowest-stakes site.
 2. **`bun run check` — fix until it has no errors referencing your edits.** This is the
    only blocking gate (optionally also `bun run lint`).
    ⚠️ This repo can have **pre-existing, unrelated** errors — notably, if `.env` lacks
-   `PRIVATE_ROUTEMESH_API_KEY` (it's in `.env.example`), `outputFilledVerify.ts` fails to
+   `PRIVATE_ROUTEMESH_API_KEY` (it's in `.env.example`), `provableLogVerify.ts` fails to
    typecheck regardless of any chain change. So **run `bun run check` once before you
    edit** to capture the baseline error set, then treat as blocking only NEW errors that
    reference `src/lib/config.ts` or your new `<chainKey>` / token entries. (Don't

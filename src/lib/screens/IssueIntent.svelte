@@ -4,7 +4,12 @@
   import FormControl from "$lib/components/ui/FormControl.svelte";
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
-  import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
+  import {
+    DEMO_EXCLUSIVE_SOLVER,
+    POLYMER_ALLOCATOR,
+    formatTokenAmount,
+    getChainName
+  } from "$lib/config";
   import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
   import { CompactLib } from "$lib/libraries/compactLib";
   import store from "$lib/state.svelte";
@@ -51,7 +56,11 @@
 
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({
-      exclusiveFor: resolveExclusiveFor(store.exclusiveFor),
+      // In 1:1 demo mode the quote omits exclusiveFor, but the on-chain intent
+      // must still be exclusive to the demo solver so it fills 1:1.
+      exclusiveFor: store.use11Demo
+        ? DEMO_EXCLUSIVE_SOLVER
+        : resolveExclusiveFor(store.exclusiveFor),
       inputTokens: store.inputTokens,
       outputTokens: store.outputTokens,
       verifier: store.verifier,
@@ -238,6 +247,8 @@
           <GetQuote
             bind:exclusiveFor={store.exclusiveFor}
             useExclusiveForQuoteRequest={store.useExclusiveForQuoteRequest}
+            use11Demo={store.use11Demo}
+            integratorKey={store.integratorKey}
             mainnet={store.mainnet}
             useProductionApi={store.useProductionApi}
             inputTokens={store.inputTokens}
@@ -355,6 +366,27 @@
             />
             Lock Exclusive
           </label>
+        </div>
+        <div class="flex min-w-0 items-center gap-1">
+          <label
+            class="flex items-center gap-1 text-[11px] font-semibold whitespace-nowrap text-gray-500"
+          >
+            <input
+              type="checkbox"
+              class="h-3.5 w-3.5 rounded border-gray-300 text-sky-600 focus:ring-sky-300"
+              bind:checked={store.use11Demo}
+            />
+            1:1 demo
+          </label>
+          {#if store.use11Demo}
+            <FormControl
+              type="text"
+              size="sm"
+              className="flex-1"
+              placeholder="X-Integrator-Key"
+              bind:value={store.integratorKey}
+            />
+          {/if}
         </div>
       </div>
     </SectionCard>

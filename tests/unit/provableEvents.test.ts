@@ -8,8 +8,10 @@ import {
 
 /**
  * The `/polymer` gate is a topic0 filter and nothing else, so these constants ARE the feature.
- * A drifted signature does not throw at runtime — it silently matches no logs and 400s every
- * proof request — which is exactly the failure a test has to catch instead of production.
+ * Left unguarded, a drifted signature would not throw — it would silently match no logs and 400
+ * every proof request. `provableEvents.ts` now converts that into a throw at module init, and
+ * these tests are what make the throw surface in CI rather than on the first request after a
+ * deploy.
  */
 describe("provable event allowlist", () => {
 	it("allows OutputFilled and OutputNotFilled, in that order", () => {

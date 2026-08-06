@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
 import { EXPECTED_TOPIC0 } from "../../src/lib/libraries/provableEvents";
 
 // `$env/static/private` is a Vite virtual module with no file behind it, so the real one can
@@ -10,6 +10,7 @@ type RpcCall = { method: string; params: unknown[] };
 let verifyProvableLog: typeof import("../../src/lib/libraries/provableLogVerify").verifyProvableLog;
 const calls: RpcCall[] = [];
 let reply: (call: RpcCall) => unknown;
+const realFetch = global.fetch;
 
 beforeAll(async () => {
 	// viem's http transport goes through fetch; intercepting there keeps the assertion on the
@@ -24,6 +25,12 @@ beforeAll(async () => {
 	}) as unknown as typeof fetch;
 
 	({ verifyProvableLog } = await import("../../src/lib/libraries/provableLogVerify"));
+});
+
+// bun runs every test file in one process, so an unrestored stub would silently serve the next
+// file that happens to use fetch. Nothing else does today; this keeps it that way by accident-proofing.
+afterAll(() => {
+	global.fetch = realFetch;
 });
 
 /** A minimal eth_getLogs result shaped enough for viem to format it. */

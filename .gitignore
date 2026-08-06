@@ -1,27 +1,34 @@
+# Dependencies
 node_modules
 
-# Output
+# Build and framework output
+.svelte-kit
+build
 .output
 .vercel
 .netlify
 .wrangler
-/.svelte-kit
-/build
-.claude/*
-!.claude/skills/
 
-# OS
-.DS_Store
-Thumbs.db
+# Test output
+coverage
+playwright-report
+test-results
 
 # Env
 .env
 .env.*
 !.env.example
-!.env.test
+!.env.e2e.example
 
-# Vite
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
-playwright-report
-test-results
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Local Claude config, except checked-in skills (see .claude/skills/add-chain).
+# Do not replace this with a bare `.claude` ignore: git will not descend into an
+# excluded directory, so the negation below would stop working.
+.claude/*
+!.claude/skills/

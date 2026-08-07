@@ -18,8 +18,11 @@ function getPolymerKey(mainnet: boolean) {
   return mainnet ? PRIVATE_POLYMER_MAINNET_ZONE_API_KEY : PRIVATE_POLYMER_TESTNET_ZONE_API_KEY;
 }
 
+// `isSafeInteger`, not `isInteger`: JSON numbers past 2^53 are already rounded by the time we
+// see them, so a caller could request a proof for coordinates that differ from the ones they
+// actually sent.
 function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -28,6 +31,12 @@ export const POST: RequestHandler = async ({ request }) => {
     body = await request.json();
   } catch {
     return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // `JSON.parse("null")` succeeds, and destructuring it throws outside the try above — which
+  // surfaced as a framework 500 rather than a controlled 400.
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return json({ error: "Body must be a JSON object" }, { status: 400 });
   }
 
   const { srcChainId, srcBlockNumber, globalLogIndex, polymerIndex, mainnet } = body as {
@@ -44,6 +53,14 @@ export const POST: RequestHandler = async ({ request }) => {
   // answered 400 in ~1ms without ever calling Polymer, and clients retrying that read it as a
   // stalled settlement.
   const isPolling = polymerIndex !== undefined && polymerIndex !== null;
+
+  // Truthiness would let `"false"`, `1` or `{}` select mainnet and `0` or `""` select testnet,
+  // silently spending the wrong environment's key — or polling a numeric job id in the wrong
+  // network's namespace, where it may resolve to an unrelated job.
+  if (mainnet !== undefined && mainnet !== null && typeof mainnet !== "boolean") {
+    return json({ error: "Invalid 'mainnet'" }, { status: 400 });
+  }
+  const useMainnet = mainnet ?? true;
 
   if (isPolling) {
     if (!isPositiveInteger(polymerIndex)) {
@@ -66,8 +83,8 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   try {
-    const POLYMER_URL = getPolymerUrl(mainnet ?? true);
-    const PRIVATE_POLYMER_ZONE_API_KEY = getPolymerKey(mainnet ?? true);
+    const POLYMER_URL = getPolymerUrl(useMainnet);
+    const PRIVATE_POLYMER_ZONE_API_KEY = getPolymerKey(useMainnet);
 
     let polymerRequestIndex = polymerIndex;
     if (!isPolling) {

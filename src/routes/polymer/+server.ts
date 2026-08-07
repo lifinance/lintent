@@ -38,18 +38,31 @@ export const POST: RequestHandler = async ({ request }) => {
     mainnet?: boolean;
   };
 
-  if (!isPositiveInteger(srcChainId)) {
-    return json({ error: "Missing or invalid 'srcChainId'" }, { status: 400 });
-  }
-  if (!isPositiveInteger(srcBlockNumber)) {
-    return json({ error: "Missing or invalid 'srcBlockNumber'" }, { status: 400 });
-  }
-  if (
-    typeof globalLogIndex !== "number" ||
-    !Number.isInteger(globalLogIndex) ||
-    globalLogIndex < 0
-  ) {
-    return json({ error: "Missing or invalid 'globalLogIndex'" }, { status: 400 });
+  // A caller that already holds a `polymerIndex` is polling an existing job, not asking us to
+  // open a new one — the source-log coordinates are only needed on the request-a-proof path.
+  // Validating them unconditionally made the documented poll-by-index flow unreachable: it
+  // answered 400 in ~1ms without ever calling Polymer, and clients retrying that read it as a
+  // stalled settlement.
+  const isPolling = polymerIndex !== undefined && polymerIndex !== null;
+
+  if (isPolling) {
+    if (!isPositiveInteger(polymerIndex)) {
+      return json({ error: "Invalid 'polymerIndex'" }, { status: 400 });
+    }
+  } else {
+    if (!isPositiveInteger(srcChainId)) {
+      return json({ error: "Missing or invalid 'srcChainId'" }, { status: 400 });
+    }
+    if (!isPositiveInteger(srcBlockNumber)) {
+      return json({ error: "Missing or invalid 'srcBlockNumber'" }, { status: 400 });
+    }
+    if (
+      typeof globalLogIndex !== "number" ||
+      !Number.isInteger(globalLogIndex) ||
+      globalLogIndex < 0
+    ) {
+      return json({ error: "Missing or invalid 'globalLogIndex'" }, { status: 400 });
+    }
   }
 
   try {
@@ -57,7 +70,7 @@ export const POST: RequestHandler = async ({ request }) => {
     const PRIVATE_POLYMER_ZONE_API_KEY = getPolymerKey(mainnet ?? true);
 
     let polymerRequestIndex = polymerIndex;
-    if (!polymerRequestIndex) {
+    if (!isPolling) {
       // V2-199 (#53) + #63: confirm the referenced log really is one of the allowlisted
       // output-settler events before spending a Polymer proof request on it.
       const verification = await verifyProvableLog(
@@ -66,6 +79,11 @@ export const POST: RequestHandler = async ({ request }) => {
         Number(globalLogIndex)
       );
       if (verification === "mismatch") {
+        console.warn("polymer proof request rejected: log is not an allowlisted event", {
+          srcChainId,
+          srcBlockNumber,
+          globalLogIndex
+        });
         return json(
           { error: "log is not an OutputFilled or OutputNotFilled event" },
           { status: 400 }
@@ -148,7 +166,14 @@ export const POST: RequestHandler = async ({ request }) => {
       status: dat.result.status
     });
   } catch (error) {
-    console.error("polymer proof request failed", { srcChainId });
+    console.error("polymer proof request failed", {
+      srcChainId,
+      srcBlockNumber,
+      globalLogIndex,
+      polymerIndex: polymerIndex ?? null,
+      polling: isPolling,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return json({ error: "Polymer proof request failed" }, { status: 502 });
   }
 };

@@ -1,8 +1,20 @@
 <script lang="ts">
-  import { formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
+  import {
+    formatTokenAmount,
+    getChainName,
+    getClient,
+    getCoin,
+    isHyperlaneOracle
+  } from "$lib/config";
+  import { getOrderExpiry } from "$lib/libraries/orderExpiry";
+  import {
+    hyperlaneExplorerUrl,
+    hyperlaneSubmissionKey,
+    type HyperlaneSubmission
+  } from "$lib/libraries/hyperlaneSubmission";
   import { addressToBytes32 } from "@lifi/intent";
-  import { encodeMandateOutput } from "@lifi/intent";
-  import { hashStruct, keccak256 } from "viem";
+  import { hashFillDescription } from "$lib/libraries/fillPayload";
+  import { hashStruct } from "viem";
   import type { MandateOutput, OrderContainer } from "@lifi/intent";
   import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
   import { Solver } from "$lib/libraries/solver";
@@ -52,6 +64,49 @@
   const validationKey = (inputChain: bigint, output: MandateOutput) =>
     `${inputChain.toString()}:${outputKey(output)}`;
 
+  // --- Hyperlane-specific state ------------------------------------------------------
+  // Hyperlane is push based: this screen dispatches the message (paying interchain gas)
+  // and then waits on a relayer nobody here controls. Polymer, by contrast, fetches a
+  // proof and submits it — so the copy, and the extra diagnostics below, are per rail.
+  const isHyperlane = $derived(isHyperlaneOracle(orderContainer.order.inputOracle));
+
+  const description = $derived(
+    isHyperlane
+      ? "Click each output to dispatch its Hyperlane message from the output chain (this pays " +
+          "interchain gas), then wait for a Hyperlane relayer to deliver it. One message per " +
+          "output — batch validation is not wired up. Continue to the right."
+      : "Click on each output and wait until they turn green. Polymer does not support batch " +
+          "validation. Continue to the right."
+  );
+
+  // Ticks the countdown below. 1s is cheap and this screen is short-lived.
+  let nowMs = $state(Date.now());
+  $effect(() => {
+    if (!isHyperlane) return;
+    const handle = setInterval(() => (nowMs = Date.now()), 1_000);
+    return () => clearInterval(handle);
+  });
+
+  // Hyperlane delivery can land long after the prove click gave up polling, and nothing
+  // else on this screen would notice: re-check the attestation periodically so an output
+  // turns green on its own instead of sitting amber forever.
+  $effect(() => {
+    if (!isHyperlane) return;
+    const handle = setInterval(() => (refreshValidation += 1), 20_000);
+    return () => clearInterval(handle);
+  });
+  const expiry = $derived(getOrderExpiry(orderContainer.order.expires, nowMs));
+
+  const orderId = $derived(containerToIntent(orderContainer).orderId());
+
+  const submissionFor = (
+    inputChain: bigint,
+    output: MandateOutput
+  ): HyperlaneSubmission | undefined =>
+    store.hyperlaneSubmissions[hyperlaneSubmissionKey(orderId, inputChain, outputKey(output))];
+
+  const shortHash = (hash: string) => `${hash.slice(0, 10)}…${hash.slice(-8)}`;
+
   async function isValidated(
     orderId: `0x${string}`,
     chainId: bigint,
@@ -71,13 +126,14 @@
     // Solver and timestamp come from the OutputFilled event — the recorded
     // solver may be an override, not the transaction sender.
     const { solver, timestamp } = await getFillDetails(orderId, output, fillTransactionHash);
-    const encodedOutput = encodeMandateOutput({
+    // Magic-tagged FillDescription hash — `@lifi/intent@0.2.1`'s encodeMandateOutput
+    // omits FILL_MAGIC, so hashing it never matches what the oracle stored.
+    const outputHash = hashFillDescription({
       solver,
       orderId,
       timestamp,
       output
     });
-    const outputHash = keccak256(encodedOutput);
     if (isTronChain(chainId)) {
       return await readIsProven(
         await getTronReads(),
@@ -172,11 +228,38 @@
   });
 </script>
 
-<ScreenFrame
-  title="Submit Proof of Fill"
-  description="Click on each output and wait until they turn green. Polymer does not support batch validation. Continue to the right."
->
+<ScreenFrame title="Submit Proof of Fill" {description}>
   <div class="space-y-2">
+    {#if isHyperlane}
+      <!-- Informational only: the relay window is not under our control and the app
+           deliberately does not block on expiry. But a solver has already paid the
+           output irreversibly, so the deadline is worth real money. -->
+      <div
+        class={[
+          "rounded border px-2 py-1.5 text-[11px] leading-relaxed",
+          expiry.expired
+            ? "border-red-300 bg-red-50 text-red-800"
+            : "border-amber-300 bg-amber-50 text-amber-900"
+        ]}
+      >
+        {#if expiry.expired}
+          <div class="font-semibold">Order expiry passed ({expiry.label})</div>
+          <div>
+            Anyone can now refund the user's inputs on the input chain. If that happens after the
+            fill, the solver has paid the output and gets nothing back, and
+            <span class="font-mono">finalise</span> reverts. The Hyperlane attestation may still land
+            — but it no longer guarantees a claim.
+          </div>
+        {:else}
+          <div class="font-semibold">Order expires in {expiry.label}</div>
+          <div>
+            The relayer has until then. Hyperlane publishes no delivery SLA, so this wait is not
+            under our control; after expiry the inputs become refundable while the output is already
+            paid.
+          </div>
+        {/if}
+      </div>
+    {/if}
     {#each containerToIntent(orderContainer).inputChains() as inputChain}
       <SectionCard compact>
         <ChainActionRow chainLabel={getChainName(inputChain)}>
@@ -237,6 +320,51 @@
             {/each}
           {/snippet}
         </ChainActionRow>
+        {#if isHyperlane}
+          <!-- The only place the Hyperlane message id is visible. Without it a stuck
+               relay cannot be told apart from a reverted delivery. -->
+          {#each orderContainer.order.outputs as output (outputKey(output))}
+            {@const submission = submissionFor(inputChain, output)}
+            {@const validated = validationStatuses[validationKey(inputChain, output)]}
+            <div class="mt-1 border-t border-gray-100 pt-1 text-[10px] leading-relaxed break-all">
+              {#if submission}
+                <div class="text-gray-600">
+                  Dispatched from {getChainName(BigInt(submission.outputChainId))} in
+                  <span class="font-mono">{shortHash(submission.submitTxHash)}</span>
+                  ({Math.max(0, Math.floor(nowMs / 1000 - submission.submittedAt))}s ago)
+                </div>
+                {#if submission.messageId}
+                  <a
+                    class="text-sky-700 underline"
+                    href={hyperlaneExplorerUrl(submission.messageId)}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    Hyperlane message {shortHash(submission.messageId)}
+                  </a>
+                {:else}
+                  <div class="text-gray-500">
+                    No message id recorded (no <span class="font-mono">DispatchId</span> event matched)
+                    — track the submit transaction instead.
+                  </div>
+                {/if}
+                {#if !validated}
+                  <div class="text-gray-500">
+                    Waiting for a Hyperlane relayer to deliver <span class="font-mono">handle</span>
+                    on {getChainName(inputChain)}. Re-clicking the output above only polls; it does
+                    not pay again.
+                  </div>
+                {/if}
+              {:else}
+                <div class="text-gray-500">
+                  Not dispatched yet — nothing is relaying. Clicking the output above calls
+                  <span class="font-mono">submit</span> on the output chain and pays Hyperlane interchain
+                  gas.
+                </div>
+              {/if}
+            </div>
+          {/each}
+        {/if}
       </SectionCard>
     {/each}
   </div>

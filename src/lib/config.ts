@@ -39,6 +39,20 @@ export const pharos = defineChain({
   }
 });
 
+// Stable (988) is not in viem/chains. Its gas token is gUSDT with 18 decimals — note the
+// block explorer labels it "USDT0", which is a *different*, 6-decimal bridged ERC-20 on the
+// same chain (see `coinList`). Stable is the first Hyperlane-only chain in this config: the
+// OIF settlers are deployed at the canonical addresses, but Polymer is not deployed there,
+// so it deliberately has no `POLYMER_ORACLE` entry.
+export const stable = defineChain({
+  id: 988,
+  name: "Stable",
+  nativeCurrency: { name: "gUSDT", symbol: "gUSDT", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.stable.xyz"] }
+  }
+});
+
 export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000" as const;
 export const BYTES32_ZERO =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as const;
@@ -103,6 +117,32 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [arcTestnet.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
 };
 
+// Hyperlane is PUSH based, unlike Polymer: after filling, the solver itself calls
+// `submit(...)` on the OUTPUT chain's oracle and pays the interchain gas; a Hyperlane
+// relayer then delivers `handle(...)` on the input chain, which writes the attestation.
+// Consequence for order construction: `output.oracle` is the OUTPUT chain's oracle here,
+// whereas for Polymer it is the INPUT chain's oracle. See `coreDeps.ts`.
+//
+// Hyperlane's `domain` equals the EVM chain id on both of these chains, so the chain id
+// is passed straight through as `destinationDomain`.
+// Mailboxes (reference only — the app never talks to them directly):
+//   base 0xeA87ae93Fa0019a82A727bfd3eBd1cFCa8f64f1D
+//   arbitrum 0x979Ca5202784112f4738403dBec5D0F3B9daabB9
+//   stable 0x3a867fCfFeC2B790970eeBDC9023E75B0a172aa7
+export const HYPERLANE_ORACLE: Partial<Record<number, `0x${string}`>> = {
+  [base.id]: "0x24d39b2807c6B50882fB6B9a4B4Dc6D36bbb297d",
+  [arbitrum.id]: "0x2A2A7570354787A6D5D797b43EE5f5c1f6a0f163",
+  // Stable's routing ISM is enrolled in both directions with Base and Arbitrum.
+  [stable.id]: "0x14587b0D8CB1b10Ac9DbA3d4570f459d9c942939"
+};
+
+/** True if `address` is a known HyperlaneOracle on any configured chain. */
+export function isHyperlaneOracle(address: string | undefined): boolean {
+  if (!address) return false;
+  const needle = address.toLowerCase();
+  return Object.values(HYPERLANE_ORACLE).some((oracle) => oracle?.toLowerCase() === needle);
+}
+
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
 export type availableInputSettlers =
   | typeof INPUT_SETTLER_COMPACT_LIFI
@@ -122,6 +162,7 @@ export const chainMap = {
   bsc,
   polygon,
   pharos,
+  stable,
   arcTestnet,
   tron
 } as const;
@@ -130,6 +171,9 @@ export const chains = Object.keys(chainMap) as ChainName[];
 // Output-chain selector. MegaETH is omitted because `OutputSettlerSimple` is not deployed there,
 // so it cannot settle a fill. Every other chain here is a valid destination from the origin chains
 // `coinList` offers — see the chain-map notes above `POLYMER_ORACLE`.
+// Stable is Hyperlane-only: it has no Polymer oracle, so routes into/out of it settle only when
+// the Hyperlane verifier is selected (Base/Arbitrum lanes are enrolled). Polymer routes touching
+// Stable are rejected at order-build time with an explicit "No oracle configured" error.
 export const chainList = (mainnet: boolean) => {
   if (mainnet == true) {
     return [
@@ -140,6 +184,7 @@ export const chainList = (mainnet: boolean) => {
       "polygon",
       "bsc",
       "pharos",
+      "stable",
       "tron"
     ] as ChainName[];
   } else
@@ -298,6 +343,22 @@ export const coinList = (mainnet: boolean) => {
         name: "usdc",
         chainId: pharos.id,
         decimals: 6
+      },
+      // Stable. Appended last on purpose: `state.svelte.ts` seeds the default input/output
+      // tokens from `availableTokens[0]`/`[1]`, so new entries must not shift the head.
+      {
+        address: ADDRESS_ZERO,
+        name: "gusdt",
+        chainId: stable.id,
+        decimals: 18
+      },
+      // Bridged USDT0 (Tether `StableOFTExtension` behind a TransparentUpgradeableProxy),
+      // 6 decimals — distinct from the 18-decimal gUSDT gas token above.
+      {
+        address: `0x779ded0c9e1022225f8e0630b35a9b54be713736`,
+        name: "usdt0",
+        chainId: stable.id,
+        decimals: 6
       }
     ] as const;
   else
@@ -409,6 +470,9 @@ export const wormholeChainIds = {
   baseSepolia: 10004,
   optimismSepolia: 10005
 } as const;
+// Polymer-supported chains only. `stable` (988) is intentionally absent: Polymer is not
+// deployed there, so listing it would imply support that does not exist. This map is not read
+// at runtime, so the omission is inert.
 export const polymerChainIds = {
   ethereum: ethereum.id,
   base: base.id,
@@ -427,7 +491,7 @@ export const polymerChainIds = {
   tron: tron.id
 } as const;
 
-export type Verifier = "wormhole" | "polymer";
+export type Verifier = "wormhole" | "polymer" | "hyperlane";
 
 export function getCoin(
   args:
@@ -495,6 +559,7 @@ export function getOracle(verifier: Verifier, chainId: number | bigint | string)
   const normalized = normalizeChainId(chainId);
   if (verifier === "polymer") return POLYMER_ORACLE[normalized];
   if (verifier === "wormhole") return WORMHOLE_ORACLE[normalized];
+  if (verifier === "hyperlane") return HYPERLANE_ORACLE[normalized];
   return undefined;
 }
 
@@ -582,6 +647,15 @@ export const clients = {
   pharos: createPublicClient({
     chain: pharos,
     transport: fallback([...pharos.rpcUrls.default.http.map((v) => http(v))])
+  }),
+  // No publicnode endpoint for Stable; RouteMesh first (when a key is configured), then the
+  // chain's own RPC.
+  stable: createPublicClient({
+    chain: stable,
+    transport: fallback([
+      ...routemeshRpc(stable.id),
+      ...stable.rpcUrls.default.http.map((v) => http(v))
+    ])
   }),
   // Testnet
   sepolia: createPublicClient({

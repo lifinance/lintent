@@ -14,5 +14,13 @@
     "bps": true,
     "folderMillis": 1773159031946,
     "hash": "b9ecf75ed8487a7746169ad49ce1564428a73e69f49e85cd702aaabbb03d72f6"
+  },
+  {
+    "sql": [
+      "CREATE TABLE \"hyperlane_submissions\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"order_id\" text NOT NULL,\n\t\"input_chain_id\" bigint NOT NULL,\n\t\"output_chain_id\" bigint NOT NULL,\n\t\"output_hash\" text NOT NULL,\n\t\"payload_hash\" text NOT NULL,\n\t\"submit_tx_hash\" text NOT NULL,\n\t\"message_id\" text,\n\t\"submitted_at\" bigint NOT NULL\n);\n"
+    ],
+    "bps": true,
+    "folderMillis": 1786101033882,
+    "hash": "7effab8cceb808dbbc8fcb2a537d2eff2e6df8ade734a5f012d2b767aa0cf0fa"
   }
 ]

@@ -1,6 +1,11 @@
 <script lang="ts">
   import FlowProgressList, { type FlowStep } from "$lib/components/ui/FlowProgressList.svelte";
-  import { getOrderProgressChecks, getOutputStorageKey } from "$lib/libraries/flowProgress";
+  import {
+    EMPTY_FLOW_CHECKS,
+    getOrderProgressChecks,
+    getOutputStorageKey,
+    type FlowCheckState
+  } from "$lib/libraries/flowProgress";
   import store from "$lib/state.svelte";
   import type { OrderContainer } from "@lifi/intent";
 
@@ -20,11 +25,7 @@
 
   let progressRefreshTick = $state(0);
   let flowChecksRun = 0;
-  let flowChecks = $state({
-    allFilled: false,
-    allValidated: false,
-    allFinalised: false
-  });
+  let flowChecks = $state<FlowCheckState>({ ...EMPTY_FLOW_CHECKS });
 
   const selectedOutputFillHashSignature = $derived.by(() => {
     if (!selectedOrder) return "";
@@ -48,16 +49,17 @@
     selectedOutputFillHashSignature;
 
     if (!store.anyWalletConnected || !selectedOrder) {
-      flowChecks = {
-        allFilled: false,
-        allValidated: false,
-        allFinalised: false
-      };
+      flowChecks = { ...EMPTY_FLOW_CHECKS };
       return;
     }
 
     const currentRun = ++flowChecksRun;
-    getOrderProgressChecks(selectedOrder, store.fillTransactions)
+    // The persisted Hyperlane submit records are passed in explicitly so a dispatch (or a
+    // dropped record after a reverted submit) is a dependency of this effect: it decides
+    // whether the prove step reads "Submit" or "Relaying".
+    getOrderProgressChecks(selectedOrder, store.fillTransactions, {
+      ...store.hyperlaneSubmissions
+    })
       .then((checks) => {
         if (currentRun !== flowChecksRun) return;
         flowChecks = checks;
@@ -65,11 +67,7 @@
       .catch((error) => {
         console.warn("flow progress update failed", error);
         if (currentRun !== flowChecksRun) return;
-        flowChecks = {
-          allFilled: false,
-          allValidated: false,
-          allFinalised: false
-        };
+        flowChecks = { ...EMPTY_FLOW_CHECKS };
       });
   });
 
@@ -133,7 +131,9 @@
     const fetchDone = selected || currentScreenIndex >= 3;
     const fillDone = flowChecks.allFilled || currentScreenIndex >= 4;
     const proveDone = flowChecks.allValidated || currentScreenIndex >= 5;
-    const claimDone = flowChecks.allFinalised;
+    // Only a claim completes the flow. A refund is terminal but is a failure — never
+    // paint it as done, or a solver who was refunded after filling sees a green tick.
+    const claimDone = flowChecks.allClaimed;
 
     const stepStatus = (opts: {
       active: boolean;
@@ -192,7 +192,15 @@
       },
       {
         id: "proof",
-        label: "Prove",
+        // Hyperlane is push-based: there is no proof to fetch. But there IS a dispatch
+        // the solver has to pay for, so the step has two distinct pre-states — "nothing
+        // submitted yet" and "message in flight, waiting on a relayer" — and calling the
+        // first one "Relaying" would claim work that never happened.
+        label: flowChecks.awaitingRelayer
+          ? "Relaying"
+          : flowChecks.awaitingSubmit
+            ? "Submit"
+            : "Prove",
         status: stepStatus({
           active: activeStep === "proof",
           done: proveDone,

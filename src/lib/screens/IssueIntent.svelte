@@ -6,7 +6,9 @@
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
   import {
     DEMO_EXCLUSIVE_SOLVER,
+    HYPERLANE_ORACLE,
     POLYMER_ALLOCATOR,
+    POLYMER_ORACLE,
     formatTokenAmount,
     getChainName
   } from "$lib/config";
@@ -212,6 +214,53 @@
     return inputChain === outputChain;
   });
 
+  // Hyperlane gating.
+  //
+  // Two independent reasons Hyperlane cannot be offered everywhere:
+  //
+  // 1. Issuance path. Compact orders are submitted to the intent API
+  //    (`IntentFactory.compact` / `compactDepositAndRegister` -> `intentApi.submitOrder`),
+  //    and the order service has no Hyperlane oracle rows — it would accept the order
+  //    and then never route it. Escrow orders in this demo are only saved locally
+  //    (`IntentFactory.openIntent` never calls the API), so the whole Hyperlane flow
+  //    stays inside this app where it actually works. Hence: escrow only.
+  // 2. Deployment coverage. `HyperlaneOracle` is only deployed on the chains in
+  //    `HYPERLANE_ORACLE`, and BOTH sides of the route need one: the input chain to
+  //    receive `handle`, the output chain to `submit` from.
+  //
+  // Same-chain fills never use an oracle at all, so Hyperlane is irrelevant there.
+  const hyperlaneRouteSupported = $derived.by(() => {
+    if (sameChain) return false;
+    const inputChain = store.inputTokens[0]?.token.chainId;
+    if (inputChain === undefined || !HYPERLANE_ORACLE[inputChain]) return false;
+    if (store.outputTokens.length === 0) return false;
+    return store.outputTokens.every((o) => !!HYPERLANE_ORACLE[o.token.chainId]);
+  });
+  const hyperlaneAvailable = $derived(store.intentType === "escrow" && hyperlaneRouteSupported);
+
+  // Polymer gating. Polymer is pull-based, so `output.oracle` is the INPUT chain's oracle —
+  // which means an order into a chain with no Polymer deployment still *builds* and (before
+  // the `outPolymer` guard in `coreDeps.ts`) still validated; it just can never be proven,
+  // because nothing on the output chain observes the fill. Both sides therefore need a
+  // `POLYMER_ORACLE` entry. Stable (988) is the first chain in `chainList` without one.
+  const polymerRouteSupported = $derived.by(() => {
+    if (sameChain) return true;
+    const inputChain = store.inputTokens[0]?.token.chainId;
+    if (inputChain === undefined || !POLYMER_ORACLE[inputChain]) return false;
+    if (store.outputTokens.length === 0) return false;
+    return store.outputTokens.every((o) => !!POLYMER_ORACLE[o.token.chainId]);
+  });
+
+  // Never leave a stale selection behind when the route or the issuance path stops
+  // supporting it — that would silently build an order no path can settle.
+  $effect(() => {
+    if (store.verifier === "hyperlane" && !hyperlaneAvailable && polymerRouteSupported) {
+      store.verifier = "polymer";
+    } else if (store.verifier === "polymer" && !polymerRouteSupported && hyperlaneAvailable) {
+      store.verifier = "hyperlane";
+    }
+  });
+
   // const inputSecurityCheck = $derived.by(() => {
   // 	if (store.inputTokens.length === 0) return false;
   // 	const usdcOnly = store.inputTokens.every(({ token }) => token.name.toLowerCase() === "usdc");
@@ -341,9 +390,16 @@
               <option selected disabled>Settler</option>
             </FormControl>
           {:else}
-            <FormControl as="select" id="verified-by" size="sm">
-              <option value="polymer" selected>Polymer</option>
+            <!-- Bound to store.verifier so the selection actually reaches
+                 `intentOptions.verifier` (it previously did not). -->
+            <FormControl as="select" id="verified-by" size="sm" bind:value={store.verifier}>
+              <option value="polymer" disabled={!polymerRouteSupported}>
+                Polymer{polymerRouteSupported ? "" : " (no Polymer oracle on this route)"}
+              </option>
               <option value="wormhole" disabled>Wormhole</option>
+              <option value="hyperlane" disabled={!hyperlaneAvailable}>
+                Hyperlane{hyperlaneAvailable ? "" : " (escrow, Hyperlane chains only)"}
+              </option>
             </FormControl>
           {/if}
         </div>

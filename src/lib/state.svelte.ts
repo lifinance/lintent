@@ -25,8 +25,10 @@ import {
   intents,
   fillTransactions as fillTransactionsTable,
   transactionReceipts as transactionReceiptsTable,
+  hyperlaneSubmissions as hyperlaneSubmissionsTable,
   tokens as tokensTable
 } from "./schema";
+import { hyperlaneSubmissionKey, type HyperlaneSubmission } from "./libraries/hyperlaneSubmission";
 import { and, eq, ne, notInArray } from "drizzle-orm";
 import { containerToIntent } from "./utils/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
@@ -220,6 +222,90 @@ class Store {
     this.transactionReceipts[`${chainIdNumber}:${txHash}`] = serializedReceipt;
   }
 
+  async loadHyperlaneSubmissionsFromDb() {
+    if (!browser) return;
+    if (!db) await initDb();
+    if (!db) return;
+    const rows = await db!.select().from(hyperlaneSubmissionsTable);
+    const loaded: Record<string, HyperlaneSubmission> = {};
+    for (const row of rows) {
+      loaded[row.id] = {
+        key: row.id,
+        orderId: row.orderId as `0x${string}`,
+        inputChainId: row.inputChainId,
+        outputChainId: row.outputChainId,
+        outputHash: row.outputHash,
+        payloadHash: row.payloadHash as `0x${string}`,
+        submitTxHash: row.submitTxHash as `0x${string}`,
+        messageId: (row.messageId as `0x${string}` | null) ?? undefined,
+        submittedAt: row.submittedAt
+      };
+    }
+    this.hyperlaneSubmissions = loaded;
+  }
+
+  /**
+   * Records (or updates) a dispatched Hyperlane submit. Written BEFORE the submit
+   * receipt is awaited so a reload mid-wait cannot lose the fact that interchain gas was
+   * already paid, and updated again once the message id is known.
+   */
+  async saveHyperlaneSubmission(submission: HyperlaneSubmission) {
+    // Update the in-memory record first: the whole point is that a reload — or a second
+    // prove click — must never dispatch twice, and the DB write may lag or fail.
+    this.hyperlaneSubmissions[submission.key] = submission;
+    if (!browser) return;
+    if (!db) await initDb();
+    if (!db) return;
+    const values = {
+      id: submission.key,
+      orderId: submission.orderId,
+      inputChainId: submission.inputChainId,
+      outputChainId: submission.outputChainId,
+      outputHash: submission.outputHash,
+      payloadHash: submission.payloadHash,
+      submitTxHash: submission.submitTxHash,
+      messageId: submission.messageId ?? null,
+      submittedAt: submission.submittedAt
+    };
+    try {
+      const existing = await db!
+        .select()
+        .from(hyperlaneSubmissionsTable)
+        .where(eq(hyperlaneSubmissionsTable.id, submission.key));
+      if (existing.length > 0) {
+        await db!
+          .update(hyperlaneSubmissionsTable)
+          .set(values)
+          .where(eq(hyperlaneSubmissionsTable.id, submission.key));
+      } else {
+        await db!.insert(hyperlaneSubmissionsTable).values(values);
+      }
+    } catch (error) {
+      console.warn("saveHyperlaneSubmission db write failed", { key: submission.key, error });
+    }
+  }
+
+  /** Drops a record whose dispatch turned out not to have happened (reverted submit). */
+  async deleteHyperlaneSubmission(key: string) {
+    delete this.hyperlaneSubmissions[key];
+    if (!browser) return;
+    if (!db) await initDb();
+    if (!db) return;
+    try {
+      await db!.delete(hyperlaneSubmissionsTable).where(eq(hyperlaneSubmissionsTable.id, key));
+    } catch (error) {
+      console.warn("deleteHyperlaneSubmission db delete failed", { key, error });
+    }
+  }
+
+  getHyperlaneSubmission(
+    orderId: `0x${string}`,
+    inputChainId: number | bigint,
+    outputHash: string
+  ): HyperlaneSubmission | undefined {
+    return this.hyperlaneSubmissions[hyperlaneSubmissionKey(orderId, inputChainId, outputHash)];
+  }
+
   getTransactionReceipt(chainId: number | bigint, txHash: `0x${string}`) {
     const serialized = this.transactionReceipts[`${Number(chainId)}:${txHash}`];
     if (!serialized) return undefined;
@@ -270,6 +356,8 @@ class Store {
   outputTokens = $state<AppTokenContext[]>([]);
   fillTransactions = $state<{ [outputId: string]: `0x${string}` }>({});
   transactionReceipts = $state<Record<string, string>>({});
+  /** Keyed by `hyperlaneSubmissionKey`. Reload-safe: mirrored in `hyperlane_submissions`. */
+  hyperlaneSubmissions = $state<Record<string, HyperlaneSubmission>>({});
 
   refreshEpoch = $state(0);
   rpcRefreshMs = 45_000;
@@ -657,6 +745,9 @@ class Store {
           ),
           this.loadTransactionReceiptsFromDb().catch((e) =>
             console.warn("loadTransactionReceiptsFromDb error", e)
+          ),
+          this.loadHyperlaneSubmissionsFromDb().catch((e) =>
+            console.warn("loadHyperlaneSubmissionsFromDb error", e)
           ),
           this.syncConfiguredTokens().catch((e) => console.warn("syncConfiguredTokens error", e))
         ]).then(() => {})

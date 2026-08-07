@@ -24,9 +24,16 @@ function getE2EEnv(name: string) {
 
 export const hasE2EPrivateKey = Boolean(getE2EEnv("E2E_PRIVATE_KEY"));
 
-const BASE_CHAIN_ID = base.id;
-const ARBITRUM_CHAIN_ID = arbitrum.id;
+export const BASE_CHAIN_ID = base.id;
+export const ARBITRUM_CHAIN_ID = arbitrum.id;
 const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+const ARBITRUM_USDC = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" as const;
+/**
+ * Address the read-only (keyless) provider reports. It is a burn address: it holds
+ * nothing and nobody can sign for it, so a keyless spec can never move value even
+ * if a future UI change made it try.
+ */
+export const READ_ONLY_WALLET_ADDRESS = "0x000000000000000000000000000000000000dEaD" as const;
 const ERC20_BALANCE_OF_ABI = [
   {
     type: "function",
@@ -42,6 +49,7 @@ const arbitrumRpcUrl = getE2EEnv("E2E_ARBITRUM_RPC_URL") || "https://arbitrum-rp
 let accountCache: ReturnType<typeof privateKeyToAccount> | undefined;
 let walletClientByChainCache: Record<number, ReturnType<typeof createWalletClient>> | undefined;
 let basePublicClientCache: ReturnType<typeof createPublicClient> | undefined;
+let arbitrumPublicClientCache: ReturnType<typeof createPublicClient> | undefined;
 
 function rpcUrlForChain(chainId: number): string {
   if (chainId === BASE_CHAIN_ID) return baseRpcUrl;
@@ -164,13 +172,61 @@ async function handleProviderRequest(payload: ProviderPayload) {
   return rpcRequest(method, params);
 }
 
-export async function installInjectedWalletProvider(page: Page) {
-  getWalletContext();
+/**
+ * Allowlist, not a denylist: anything not named here is refused. A denylist would let a
+ * future wallet method (batched sends, account-abstraction RPCs) through by default,
+ * and the point of the keyless provider is that a black-box spec is structurally
+ * incapable of spending rather than merely unlikely to.
+ */
+const READ_ONLY_METHODS = new Set([
+  "eth_accounts",
+  "eth_requestAccounts",
+  "eth_chainId",
+  "eth_blockNumber",
+  "eth_call",
+  "eth_estimateGas",
+  "eth_feeHistory",
+  "eth_gasPrice",
+  "eth_maxPriorityFeePerGas",
+  "eth_getBalance",
+  "eth_getBlockByHash",
+  "eth_getBlockByNumber",
+  "eth_getCode",
+  "eth_getLogs",
+  "eth_getStorageAt",
+  "eth_getTransactionByHash",
+  "eth_getTransactionCount",
+  "eth_getTransactionReceipt",
+  "net_version",
+  "wallet_switchEthereumChain",
+  "web3_clientVersion"
+]);
 
-  await page.exposeFunction("__lintentE2EProviderRequest", (payload: ProviderPayload) => {
-    return handleProviderRequest(payload);
-  });
+async function handleReadOnlyProviderRequest(payload: ProviderPayload) {
+  const { method, params = [] } = payload;
 
+  if (!READ_ONLY_METHODS.has(method)) {
+    throw new Error(
+      `E2E read-only wallet refused ${method}: only read-only methods are allowed, and this spec ` +
+        "must not send transactions or sign. Add the method to READ_ONLY_METHODS if it is a read."
+    );
+  }
+
+  if (method === "eth_chainId") return toHex(currentChainId);
+  if (method === "eth_accounts" || method === "eth_requestAccounts") {
+    return [READ_ONLY_WALLET_ADDRESS];
+  }
+  if (method === "wallet_switchEthereumChain") {
+    const nextChainHex = (params[0] as { chainId?: string } | undefined)?.chainId;
+    if (!nextChainHex) throw new Error("wallet_switchEthereumChain missing chainId");
+    currentChainId = Number(BigInt(nextChainHex));
+    return null;
+  }
+
+  return rpcRequest(method, params);
+}
+
+async function addProviderInitScript(page: Page) {
   await page.addInitScript(() => {
     type E2EWindow = Window &
       typeof globalThis & {
@@ -227,6 +283,29 @@ export async function installInjectedWalletProvider(page: Page) {
   });
 }
 
+export async function installInjectedWalletProvider(page: Page) {
+  getWalletContext();
+
+  await page.exposeFunction("__lintentE2EProviderRequest", (payload: ProviderPayload) => {
+    return handleProviderRequest(payload);
+  });
+
+  await addProviderInitScript(page);
+}
+
+/**
+ * Keyless injected provider for black-box specs. Reads are forwarded to the same RPCs
+ * the signing provider uses, so the UI behaves normally, but anything that could move
+ * value throws. Requires no `E2E_PRIVATE_KEY`, so these specs run everywhere.
+ */
+export async function installReadOnlyWalletProvider(page: Page) {
+  await page.exposeFunction("__lintentE2EProviderRequest", (payload: ProviderPayload) => {
+    return handleReadOnlyProviderRequest(payload);
+  });
+
+  await addProviderInitScript(page);
+}
+
 export async function connectInjectedWallet(page: Page) {
   await page.getByRole("button", { name: "Connect Injected" }).click();
 }
@@ -252,6 +331,45 @@ export async function hasBaseUsdcBalance(minimumRawAmount: bigint) {
     args: [account.address]
   });
   return balance >= minimumRawAmount;
+}
+
+function publicClientForChain(chainId: number) {
+  if (chainId === BASE_CHAIN_ID) {
+    return (basePublicClientCache ??= createPublicClient({
+      chain: base,
+      transport: http(baseRpcUrl)
+    }));
+  }
+  if (chainId === ARBITRUM_CHAIN_ID) {
+    return (arbitrumPublicClientCache ??= createPublicClient({
+      chain: arbitrum,
+      transport: http(arbitrumRpcUrl)
+    }));
+  }
+  throw new Error(`No E2E public client configured for chain ${chainId}`);
+}
+
+/** USDC balance pre-check on either supported chain (raw units, 6 decimals). */
+export async function hasUsdcBalance(chainId: number, minimumRawAmount: bigint) {
+  const { account } = getWalletContext();
+  const token = chainId === BASE_CHAIN_ID ? BASE_USDC : ARBITRUM_USDC;
+  const balance = await publicClientForChain(chainId).readContract({
+    address: token,
+    abi: ERC20_BALANCE_OF_ABI,
+    functionName: "balanceOf",
+    args: [account.address]
+  });
+  return balance >= minimumRawAmount;
+}
+
+/**
+ * Native balance pre-check (wei). Needed for the Hyperlane path: `submit` on the
+ * output chain pays interchain gas on top of the fill's own gas.
+ */
+export async function hasNativeBalance(chainId: number, minimumWei: bigint) {
+  const { account } = getWalletContext();
+  const balance = await publicClientForChain(chainId).getBalance({ address: account.address });
+  return balance >= minimumWei;
 }
 
 export async function bootstrapConnectedWallet(page: Page) {

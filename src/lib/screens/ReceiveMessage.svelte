@@ -252,11 +252,6 @@
           </div>
         {:else}
           <div class="font-semibold">Order expires in {expiry.label}</div>
-          <div>
-            The relayer has until then. Hyperlane publishes no delivery SLA, so this wait is not
-            under our control; after expiry the inputs become refundable while the output is already
-            paid.
-          </div>
         {/if}
       </div>
     {/if}

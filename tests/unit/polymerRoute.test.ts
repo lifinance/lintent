@@ -141,17 +141,29 @@ describe("POST /polymer — poll by polymerIndex", () => {
     expect(await res.json()).toMatchObject({ proof: "abcd", status: "complete" });
   });
 
-  it.each([0, -1, 1.5, "42", null])(
-    "rejects a non-positive-integer polymerIndex: %p",
+  it.each([0, -1, 1.5, "42", Number.MAX_SAFE_INTEGER + 2])(
+    "rejects a non-positive-safe-integer polymerIndex: %p",
     async (v) => {
       const res = await post({ polymerIndex: v, srcChainId: 8453 });
 
-      // `null` means "absent" and falls through to the request path, which then needs the
-      // source-log fields; every other bad value is an outright invalid index.
       expect(res.status).toBe(400);
       expect(polymerCalls).toHaveLength(0);
     }
   );
+
+  it("treats an explicit null polymerIndex as absent and creates a job", async () => {
+    // Serialisers routinely emit null for an unset optional field, so with full coordinates
+    // this means "no job yet" rather than "poll job null".
+    const res = await post({
+      polymerIndex: null,
+      srcChainId: 8453,
+      srcBlockNumber: 23011456,
+      globalLogIndex: 4
+    });
+
+    expect(res.status).toBe(200);
+    expect(methods()).toEqual(["polymer_requestProof", "polymer_queryProof"]);
+  });
 });
 
 describe("POST /polymer — request a proof", () => {
@@ -203,16 +215,26 @@ describe("POST /polymer — request a proof", () => {
     expect(res.status).toBe(200);
   });
 
-  it("rejects an unsafe-integer srcBlockNumber", async () => {
-    // Already rounded by JSON.parse, so the proof would be minted for different coordinates
-    // than the caller actually sent.
-    const res = await post({
-      srcChainId: 8453,
-      srcBlockNumber: Number.MAX_SAFE_INTEGER + 2,
-      globalLogIndex: 4
-    });
+  // Already rounded by JSON.parse, so the proof would be minted for coordinates other than the
+  // ones the caller actually sent. Every numeric field needs the bound, not just the block.
+  it.each([
+    [
+      "srcChainId",
+      { srcChainId: Number.MAX_SAFE_INTEGER + 2, srcBlockNumber: 23011456, globalLogIndex: 4 }
+    ],
+    [
+      "srcBlockNumber",
+      { srcChainId: 8453, srcBlockNumber: Number.MAX_SAFE_INTEGER + 2, globalLogIndex: 4 }
+    ],
+    [
+      "globalLogIndex",
+      { srcChainId: 8453, srcBlockNumber: 23011456, globalLogIndex: Number.MAX_SAFE_INTEGER + 2 }
+    ]
+  ])("rejects an unsafe-integer %s", async (_field, body) => {
+    const res = await post(body);
 
     expect(res.status).toBe(400);
+    expect(verifyCalls).toBe(0);
     expect(polymerCalls).toHaveLength(0);
   });
 

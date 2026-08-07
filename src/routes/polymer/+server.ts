@@ -73,9 +73,10 @@ export const POST: RequestHandler = async ({ request }) => {
     if (!isPositiveInteger(srcBlockNumber)) {
       return json({ error: "Missing or invalid 'srcBlockNumber'" }, { status: 400 });
     }
+    // Not `isPositiveInteger`: a log index of 0 is legitimate. Same safe-integer bound though.
     if (
       typeof globalLogIndex !== "number" ||
-      !Number.isInteger(globalLogIndex) ||
+      !Number.isSafeInteger(globalLogIndex) ||
       globalLogIndex < 0
     ) {
       return json({ error: "Missing or invalid 'globalLogIndex'" }, { status: 400 });

@@ -19,7 +19,7 @@ function getPolymerKey(mainnet: boolean) {
 }
 
 function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -30,6 +30,10 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return json({ error: "Body must be a JSON object" }, { status: 400 });
+  }
+
   const { srcChainId, srcBlockNumber, globalLogIndex, polymerIndex, mainnet } = body as {
     srcChainId: number;
     srcBlockNumber: number;
@@ -38,26 +42,39 @@ export const POST: RequestHandler = async ({ request }) => {
     mainnet?: boolean;
   };
 
-  if (!isPositiveInteger(srcChainId)) {
-    return json({ error: "Missing or invalid 'srcChainId'" }, { status: 400 });
+  const isPolling = polymerIndex !== undefined && polymerIndex !== null;
+
+  if (mainnet !== undefined && mainnet !== null && typeof mainnet !== "boolean") {
+    return json({ error: "Invalid 'mainnet'" }, { status: 400 });
   }
-  if (!isPositiveInteger(srcBlockNumber)) {
-    return json({ error: "Missing or invalid 'srcBlockNumber'" }, { status: 400 });
-  }
-  if (
-    typeof globalLogIndex !== "number" ||
-    !Number.isInteger(globalLogIndex) ||
-    globalLogIndex < 0
-  ) {
-    return json({ error: "Missing or invalid 'globalLogIndex'" }, { status: 400 });
+  const useMainnet = mainnet ?? true;
+
+  if (isPolling) {
+    if (!isPositiveInteger(polymerIndex)) {
+      return json({ error: "Invalid 'polymerIndex'" }, { status: 400 });
+    }
+  } else {
+    if (!isPositiveInteger(srcChainId)) {
+      return json({ error: "Missing or invalid 'srcChainId'" }, { status: 400 });
+    }
+    if (!isPositiveInteger(srcBlockNumber)) {
+      return json({ error: "Missing or invalid 'srcBlockNumber'" }, { status: 400 });
+    }
+    if (
+      typeof globalLogIndex !== "number" ||
+      !Number.isSafeInteger(globalLogIndex) ||
+      globalLogIndex < 0
+    ) {
+      return json({ error: "Missing or invalid 'globalLogIndex'" }, { status: 400 });
+    }
   }
 
   try {
-    const POLYMER_URL = getPolymerUrl(mainnet ?? true);
-    const PRIVATE_POLYMER_ZONE_API_KEY = getPolymerKey(mainnet ?? true);
+    const POLYMER_URL = getPolymerUrl(useMainnet);
+    const PRIVATE_POLYMER_ZONE_API_KEY = getPolymerKey(useMainnet);
 
     let polymerRequestIndex = polymerIndex;
-    if (!polymerRequestIndex) {
+    if (!isPolling) {
       // V2-199 (#53) + #63: confirm the referenced log really is one of the allowlisted
       // output-settler events before spending a Polymer proof request on it.
       const verification = await verifyProvableLog(
@@ -66,6 +83,11 @@ export const POST: RequestHandler = async ({ request }) => {
         Number(globalLogIndex)
       );
       if (verification === "mismatch") {
+        console.warn("polymer proof request rejected: log is not an allowlisted event", {
+          srcChainId,
+          srcBlockNumber,
+          globalLogIndex
+        });
         return json(
           { error: "log is not an OutputFilled or OutputNotFilled event" },
           { status: 400 }
@@ -148,7 +170,14 @@ export const POST: RequestHandler = async ({ request }) => {
       status: dat.result.status
     });
   } catch (error) {
-    console.error("polymer proof request failed", { srcChainId });
+    console.error("polymer proof request failed", {
+      srcChainId,
+      srcBlockNumber,
+      globalLogIndex,
+      polymerIndex: polymerIndex ?? null,
+      polling: isPolling,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return json({ error: "Polymer proof request failed" }, { status: 502 });
   }
 };

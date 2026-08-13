@@ -169,7 +169,12 @@ export const chainList = (mainnet: boolean) => {
 };
 
 export const chainIdList = (mainnet: boolean) => {
-  return chainList(mainnet).map((name) => chainMap[name].id);
+  const evm = chainList(mainnet).map((name) => chainMap[name].id);
+  // Solana is not in `chainMap` (see the ChainMeta note below), so it is
+  // appended here. Devnet only until the live verification in
+  // tests/fixtures/solana/PREFLIGHT.md has been completed on mainnet.
+  if (mainnet) return evm;
+  return [...evm, Number(SOLANA_DEVNET_CHAIN_ID)];
 };
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
@@ -395,6 +400,30 @@ export const coinList = (mainnet: boolean) => {
         name: "usdc",
         chainId: arcTestnet.id,
         decimals: 6
+      },
+      // Solana devnet. Mints are stored as 32-byte hex, not base58, because
+      // `Token.address` is the app's internal identity everywhere — `getCoin`
+      // compares Solana addresses whole rather than truncating to 20 bytes.
+      //
+      // Devnet only for now: mainnet Solana is deliberately absent from
+      // `coinList` and `chainIdList` until the live checks in
+      // tests/fixtures/solana/PREFLIGHT.md pass and a small-value canary has
+      // settled end to end.
+      {
+        // 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+        address: solanaBase58ToBytes32("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
+        name: "usdc",
+        chainId: Number(SOLANA_DEVNET_CHAIN_ID),
+        decimals: 6
+      },
+      {
+        // Wrapped SOL. Native SOL (the zero mint) is a valid OUTPUT via
+        // `native_fill`, but never an input: the escrow's `open` has no
+        // native path, so wSOL is what an order can actually deposit.
+        address: solanaBase58ToBytes32("So11111111111111111111111111111111111111112"),
+        name: "wsol",
+        chainId: Number(SOLANA_DEVNET_CHAIN_ID),
+        decimals: 9
       }
     ] as const;
 };

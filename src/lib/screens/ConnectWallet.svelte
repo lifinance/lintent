@@ -2,6 +2,8 @@
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import { connectWith, listWalletConnectors, walletConnectProjectId } from "$lib/utils/wagmi";
   import { isTronLinkAvailable, connectTronLink } from "$lib/tron/signer";
+  import type { SolanaWalletOption } from "$lib/solana/wallet";
+  import { connectSolanaWallet, listSolanaWallets } from "$lib/solana/wallet";
   import store from "$lib/state.svelte";
 
   const connectors = listWalletConnectors();
@@ -31,6 +33,28 @@
     } catch (error) {
       console.warn("connectTronLink failed", error);
       errorMessage = error instanceof Error ? error.message : "Could not connect TronLink.";
+    } finally {
+      connectingId = null;
+    }
+  };
+
+  // The adapters report availability asynchronously (they wait for injection),
+  // so this is loaded rather than read synchronously like TronLink's.
+  let solanaWallets = $state<SolanaWalletOption[]>([]);
+  $effect(() => {
+    listSolanaWallets()
+      .then((wallets) => (solanaWallets = wallets))
+      .catch((error) => console.warn("listSolanaWallets failed", error));
+  });
+
+  const connectSolana = async (name: string) => {
+    try {
+      connectingId = `solana:${name}`;
+      errorMessage = null;
+      store.solanaWalletConnection = await connectSolanaWallet(name);
+    } catch (error) {
+      console.warn(`connectSolanaWallet failed for ${name}`, error);
+      errorMessage = error instanceof Error ? error.message : `Could not connect ${name}.`;
     } finally {
       connectingId = null;
     }
@@ -74,6 +98,25 @@
         TronLink not detected — install it to use Tron chains.
       </p>
     {/if}
+
+    {#each solanaWallets as wallet (wallet.name)}
+      <button
+        type="button"
+        class="w-full cursor-pointer rounded border border-gray-300 px-4 py-3 text-base font-semibold text-gray-700 hover:border-sky-500 hover:text-sky-700 disabled:cursor-not-allowed disabled:text-gray-400"
+        disabled={connectingId !== null || wallet.readyState === "NotDetected"}
+        onclick={() => connectSolana(wallet.name)}
+      >
+        {#if connectingId === `solana:${wallet.name}`}
+          Connecting {wallet.name}...
+        {:else if store.solanaConnectedAccount && store.solanaWalletConnection.address}
+          {wallet.name} Connected ({store.solanaConnectedAccount.base58Address.slice(0, 6)}...)
+        {:else if wallet.readyState === "NotDetected"}
+          {wallet.name} not detected
+        {:else}
+          Connect {wallet.name}
+        {/if}
+      </button>
+    {/each}
 
     {#if !walletConnectProjectId}
       <p class="text-center text-xs text-gray-500">

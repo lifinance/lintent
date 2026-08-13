@@ -44,9 +44,13 @@ import {
   watchTronConnection
 } from "$lib/tron/signer";
 import { getTronReads } from "$lib/tron/client";
+import type { SolanaWalletConnection } from "$lib/solana/wallet";
+import { getSolanaConnectionState, watchSolanaConnection } from "$lib/solana/wallet";
 import { getTrc20Allowance, getTrc20Balance, getTrxBalance } from "$lib/tron/reads";
+import { getSolanaReads } from "$lib/solana/client";
+import { readSolBalance, readSplBalance } from "$lib/solana/reads";
 import { maxUint256 } from "viem";
-import { isTronChain } from "./utils/chainType";
+import { isSolanaChain, isTronChain } from "./utils/chainType";
 import type { TxRef } from "./utils/txRef";
 
 function generateUUID(): string {
@@ -256,12 +260,40 @@ class Store {
   );
   _unwatchTronConnection?: () => void;
 
+  solanaWalletConnection = $state<SolanaWalletConnection>({ status: "disconnected" });
+  solanaConnectedAccount = $derived(
+    this.solanaWalletConnection.status === "connected" && this.solanaWalletConnection.addressBytes32
+      ? {
+          address: this.solanaWalletConnection.addressBytes32,
+          base58Address: this.solanaWalletConnection.address!
+        }
+      : undefined
+  );
+  _unwatchSolanaConnection?: () => void;
+
   anyWalletConnected = $derived(
-    (!!this.connectedAccount && !!this.walletClient) || !!this.tronConnectedAccount
+    (!!this.connectedAccount && !!this.walletClient) ||
+      !!this.tronConnectedAccount ||
+      !!this.solanaConnectedAccount
   );
 
+  /**
+   * The acting account for a chain, as bytes32-compatible hex.
+   *
+   * Solana returns the 32-byte form of the pubkey rather than base58, because
+   * bytes32 is the app's canonical internal identity everywhere else
+   * (order.user, solveParams.solver). Use `accountDisplayForChain` for UI.
+   */
   accountForChain(chainId: number | bigint): `0x${string}` | undefined {
     if (isTronChain(chainId)) return this.tronConnectedAccount?.address;
+    if (isSolanaChain(chainId)) return this.solanaConnectedAccount?.address;
+    return this.connectedAccount?.address;
+  }
+
+  /** The same account in the form that chain's explorers and wallets show. */
+  accountDisplayForChain(chainId: number | bigint): string | undefined {
+    if (isTronChain(chainId)) return this.tronConnectedAccount?.base58Address;
+    if (isSolanaChain(chainId)) return this.solanaConnectedAccount?.base58Address;
     return this.connectedAccount?.address;
   }
 
@@ -282,13 +314,23 @@ class Store {
     this.refreshEpoch;
     const evmAccount = this.connectedAccount?.address;
     const tronAccount = this.tronConnectedAccount?.address;
+    const solanaAccount = this.solanaConnectedAccount?.base58Address;
     return this.mapOverCoinsCached({
       bucket: "balance",
       ttlMs: 30_000,
       tronTtlMs: 120_000,
       isMainnet: this.mainnet,
-      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}`,
+      // Every connected account is in the scope key: without the Solana one,
+      // cached balances would leak across a Solana wallet switch.
+      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${solanaAccount ?? "none"}`,
       fetcher: async (asset, client, chainId) => {
+        if (isSolanaChain(chainId)) {
+          if (!solanaAccount) return 0n;
+          const reads = await getSolanaReads(chainId);
+          return asset.toLowerCase() === ADDRESS_ZERO
+            ? readSolBalance(reads, solanaAccount)
+            : readSplBalance(reads, { mintBytes32: asset, ownerBase58: solanaAccount });
+        }
         const account = isTronChain(chainId) ? tronAccount : evmAccount;
         if (!account) return 0n;
         if (isTronChain(chainId)) {
@@ -307,6 +349,7 @@ class Store {
     this.refreshEpoch;
     const evmAccount = this.connectedAccount?.address;
     const tronAccount = this.tronConnectedAccount?.address;
+    const solanaAccount = this.solanaConnectedAccount?.base58Address;
     const spender =
       this.inputSettler === INPUT_SETTLER_COMPACT_LIFI ||
       this.inputSettler === MULTICHAIN_INPUT_SETTLER_COMPACT
@@ -317,8 +360,11 @@ class Store {
       ttlMs: 60_000,
       tronTtlMs: 180_000,
       isMainnet: this.mainnet,
-      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${spender}`,
+      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${solanaAccount ?? "none"}:${spender}`,
       fetcher: async (asset, client, chainId) => {
+        // Solana has no allowance concept: `open` debits the user's ATA under
+        // the user's own signature, so nothing is ever "not approved".
+        if (isSolanaChain(chainId)) return maxUint256;
         const account = isTronChain(chainId) ? tronAccount : evmAccount;
         if (!account) return 0n;
         if (isTronChain(chainId)) {
@@ -342,7 +388,8 @@ class Store {
       isMainnet: this.mainnet,
       scopeKey: `${account ?? "none"}:${allocatorId}`,
       fetcher: (asset, client, chainId) => {
-        if (isTronChain(chainId)) return Promise.resolve(0n);
+        // Neither Tron nor Solana has a Compact deployment.
+        if (isTronChain(chainId) || isSolanaChain(chainId)) return Promise.resolve(0n);
         return getCompactBalance(account, asset, client, allocatorId);
       }
     });
@@ -585,7 +632,10 @@ class Store {
   }
 
   async setWalletToCorrectChain(chainId: number | bigint) {
-    if (isTronChain(chainId)) return;
+    // Only EVM wallets have a chain to switch. Tron and Solana wallets are
+    // bound to their own network, and the cluster/network guard in each facade
+    // is what catches a mismatch.
+    if (isTronChain(chainId) || isSolanaChain(chainId)) return;
     try {
       return await switchWalletChain(this.walletClient, Number(chainId));
     } catch (error) {
@@ -647,6 +697,11 @@ class Store {
       this.tronWalletConnection = getTronConnection();
       this._unwatchTronConnection = watchTronConnection((connection) => {
         this.tronWalletConnection = connection;
+      });
+
+      this.solanaWalletConnection = getSolanaConnectionState();
+      this._unwatchSolanaConnection = watchSolanaConnection((connection) => {
+        this.solanaWalletConnection = connection;
       });
     }
 

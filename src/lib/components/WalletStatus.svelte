@@ -97,4 +97,14 @@
   {:else}
     <span class="rounded bg-gray-50 px-2 py-0.5 text-gray-400"> Tron: No wallet </span>
   {/if}
+
+  <span class="text-gray-300">|</span>
+
+  {#if store.solanaConnectedAccount}
+    <span class="rounded bg-green-50 px-2 py-0.5 text-green-700">
+      Solana: {truncate(store.solanaConnectedAccount.base58Address)}
+    </span>
+  {:else}
+    <span class="rounded bg-gray-50 px-2 py-0.5 text-gray-400"> Solana: Not connected </span>
+  {/if}
 </div>

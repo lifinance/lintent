@@ -3,7 +3,10 @@ import type { MandateOutput } from "@lifi/intent";
 import { bytes32ToAddress } from "@lifi/intent";
 import { getClient } from "$lib/config";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
-import { isTronChain } from "$lib/utils/chainType";
+import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import { OUTPUT_SETTLER_SIMPLE_PROGRAM_ID } from "$lib/idl";
+import { getSolanaReads } from "$lib/solana/client";
+import { findOutputFilledLog } from "$lib/solana/events";
 import { getTronReads } from "$lib/tron/client";
 import {
   decodeOutputFilledFromTronLogs,
@@ -38,6 +41,25 @@ export async function getFillDetails(
   return getOrFetchRpc(
     cacheKey,
     async () => {
+      if (isSolanaChain(output.chainId)) {
+        const reads = await getSolanaReads(output.chainId);
+        // "finalized", not "confirmed": this result is cached as immutable, so
+        // it must never come from a slot that can still be dropped.
+        const tx = await reads.getTransaction(fillTransactionHash, { commitment: "finalized" });
+        if (!tx?.meta) {
+          throw new Error("Solana fill is not finalized yet — retry in a few seconds");
+        }
+        if (tx.meta.err) {
+          throw new Error(`Solana fill transaction reverted: ${JSON.stringify(tx.meta.err)}`);
+        }
+        const { solver, timestamp } = findOutputFilledLog(tx.meta.logMessages ?? [], {
+          programId: OUTPUT_SETTLER_SIMPLE_PROGRAM_ID,
+          orderId,
+          output
+        });
+        return { solver, timestamp };
+      }
+
       if (isTronChain(output.chainId)) {
         const reads = await getTronReads();
         // Deliberately the solidity node: this result is cached as immutable,

@@ -16,7 +16,12 @@ import { compactTypes } from "@lifi/intent";
 import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
 import { getFillDetails } from "./fillEvent";
-import { isTronChain } from "$lib/utils/chainType";
+import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import { getSolanaReads } from "$lib/solana/client";
+import { createSolanaPrograms } from "$lib/solana/program";
+import { getSolanaSigner } from "$lib/solana/wallet";
+import { fillOutput as fillSolanaOutput, finalise as finaliseSolana } from "$lib/solana/writes";
+import type { SolanaDeps } from "$lib/solana/types";
 import { getTronReads, getTronSigner } from "$lib/tron/client";
 import {
   fillOutputs as fillTronOutputs,
@@ -28,6 +33,21 @@ import type { TronDeps } from "$lib/tron/types";
 
 async function tronDeps(): Promise<TronDeps> {
   return { reads: await getTronReads(), signer: getTronSigner() };
+}
+
+/**
+ * Assembles the Solana dependency bundle for a chain.
+ *
+ * The chain id is always taken from the order — never from the UI's network
+ * toggle — so a devnet order cannot be signed against mainnet.
+ */
+async function solanaDeps(chainId: bigint): Promise<SolanaDeps> {
+  const signer = await getSolanaSigner(chainId);
+  const [reads, programs] = await Promise.all([
+    getSolanaReads(chainId),
+    createSolanaPrograms({ chainId, publicKey: signer.publicKey })
+  ]);
+  return { chainId, reads, signer, programs };
 }
 
 /**
@@ -95,6 +115,27 @@ export class Solver {
       const orderId = containerToIntent(args.orderContainer).orderId();
 
       const outputChainId = Number(outputs[0].chainId);
+
+      if (isSolanaChain(outputChainId)) {
+        // The Solana settler fills ONE output per instruction — there is no
+        // batch equivalent of fillOrderOutputs — so a multi-output fill on the
+        // same chain is several transactions, and only the first signature is
+        // returned as the fill reference for this group.
+        const deps = await solanaDeps(BigInt(outputChainId));
+        const signatures: string[] = [];
+        for (const output of outputs) {
+          signatures.push(
+            await fillSolanaOutput(deps, {
+              orderId,
+              output,
+              fillDeadline: Number(order.fillDeadline),
+              solverBytes32: addressToBytes32(solverAddress)
+            })
+          );
+        }
+        if (postHook) await postHook();
+        return signatures[0]!;
+      }
 
       if (isTronChain(outputChainId)) {
         const txId = await fillTronOutputs(await tronDeps(), {
@@ -421,8 +462,6 @@ export class Solver {
       const { orderContainer, fillTransactionHashes, sourceChainId } = args;
       const { order, inputSettler } = orderContainer;
       const intent = containerToIntent(orderContainer);
-      if (intent instanceof StandardSolanaIntent)
-        throw new Error("Finalise is not supported for Solana input intents.");
 
       if (fillTransactionHashes.length !== order.outputs.length) {
         throw new Error(
@@ -458,6 +497,20 @@ export class Solver {
         );
       }
 
+      if (isSolanaChain(sourceChainId)) {
+        if (!(intent instanceof StandardSolanaIntent)) {
+          throw new Error("A Solana-input order must be a StandardSolanaIntent");
+        }
+        const signature = await finaliseSolana(await solanaDeps(BigInt(sourceChainId)), {
+          order: intent.asOrder(),
+          orderId: intent.orderId(),
+          solveParams,
+          destinationBytes32: addressToBytes32(account())
+        });
+        if (postHook) await postHook();
+        return signature;
+      }
+
       if (isTronChain(sourceChainId)) {
         if (!("originChainId" in order)) {
           throw new Error("Tron claim only supports single-chain (StandardOrder) intents");
@@ -470,6 +523,15 @@ export class Solver {
         });
         if (postHook) await postHook();
         return `0x${txId.replace("0x", "")}`;
+      }
+
+      if (intent instanceof StandardSolanaIntent) {
+        // Reachable only if the order's namespace and its source chain id
+        // disagree, which means the container is malformed rather than that
+        // some path is unimplemented.
+        throw new Error(
+          `Order is a Solana intent but its source chain ${sourceChainId} is not a Solana chain`
+        );
       }
 
       if (preHook) await preHook(Number(sourceChainId));

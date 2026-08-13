@@ -19,7 +19,7 @@ import type {
 } from "@lifi/intent";
 import { Intent, IntentApi, StandardSolanaIntent } from "@lifi/intent";
 import type { ChainType } from "$lib/utils/chainType";
-import { getChainType, isTronChain } from "$lib/utils/chainType";
+import { getChainType, isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { store } from "$lib/state.svelte";
@@ -286,8 +286,6 @@ export class IntentFactory {
       applyIntentTimings(intentInstance3);
       const sameChain3 = intentInstance3.isSameChain();
       const intent = intentInstance3.order();
-      if (intent instanceof StandardSolanaIntent)
-        throw new Error("openEscrowIntent is not supported for Solana intents.");
       applyExclusivityOverride(intent, opts.exclusiveFor, sameChain3);
 
       const inputChain = inputTokens[0].token.chainId;
@@ -331,6 +329,11 @@ export function escrowApprove(
     for (let i = 0; i < inputTokens.length; ++i) {
       const { token, amount } = inputTokens[i];
       if (preHook) await preHook(token.chainId);
+
+      // Solana has no approval step at all: `open` debits the user's ATA under
+      // the user's own signature, so there is nothing corresponding to an
+      // ERC-20 allowance to set.
+      if (isSolanaChain(token.chainId)) continue;
 
       if (isTronChain(token.chainId)) {
         // Native TRX inputs are attached as callValue on open — no approval.

@@ -3,10 +3,12 @@ import {
   INPUT_SETTLER_COMPACT_LIFI,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   POLYMER_ORACLE,
+  SOLANA_OUTPUT_SETTLER,
+  SOLANA_POLYMER_OUTPUT_ORACLE,
   TRON_MAINNET_OUTPUT_SETTLER,
   WORMHOLE_ORACLE
 } from "$lib/config";
-import { isTronChain } from "$lib/utils/chainType";
+import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
 import { TRON_LEGACY_OUTPUT_SETTLERS, TRON_LEGACY_POLYMER_ORACLES } from "@lifi/intent";
 
@@ -48,6 +50,8 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
           TRON_MAINNET_OUTPUT_SETTLER,
           ...(TRON_LEGACY_OUTPUT_SETTLERS[chainId.toString()] ?? [])
         );
+      } else if (isSolanaChain(chainId)) {
+        allowed.push(SOLANA_OUTPUT_SETTLER);
       } else {
         allowed.push(COIN_FILLER);
       }
@@ -63,12 +67,21 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     if (sameChainFill) {
       // output.oracle is the output settler; the library no longer accepts
       // COIN_FILLER implicitly, so the EVM case must return it explicitly.
-      return isTronChain(outputChainId)
-        ? [
-            TRON_MAINNET_OUTPUT_SETTLER,
-            ...(TRON_LEGACY_OUTPUT_SETTLERS[outputChainId.toString()] ?? [])
-          ]
-        : [COIN_FILLER];
+      if (isTronChain(outputChainId)) {
+        return [
+          TRON_MAINNET_OUTPUT_SETTLER,
+          ...(TRON_LEGACY_OUTPUT_SETTLERS[outputChainId.toString()] ?? [])
+        ];
+      }
+      return isSolanaChain(outputChainId) ? [SOLANA_OUTPUT_SETTLER] : [COIN_FILLER];
+    }
+    // A Solana OUTPUT is identified to Polymer by the oracle PROGRAM ID, not
+    // by the input chain's oracle. The rule below only holds because
+    // PolymerOracle is CREATE2-identical across EVM chains; on Solana,
+    // oracle_polymer::submit compares against its own program id, so an order
+    // built the EVM way fills and can then never be proven.
+    if (isSolanaChain(outputChainId)) {
+      return [SOLANA_POLYMER_OUTPUT_ORACLE];
     }
     const allowed: `0x${string}`[] = [];
     // Polymer stores proofs under the INPUT chain's oracle, so output.oracle
@@ -94,11 +107,14 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
         ...(TRON_LEGACY_OUTPUT_SETTLERS[chainId.toString()] ?? [])
       ];
     }
+    if (isSolanaChain(chainId)) return [SOLANA_OUTPUT_SETTLER];
     return [COIN_FILLER];
   },
   supportsNativeOutput(chainId) {
-    // Native (zero-token) outputs are only enabled for Tron in this release;
-    // the deployed Tron output settler's fillOrderOutputs is payable.
-    return isTronChain(chainId);
+    // Tron's deployed fillOrderOutputs is payable; Solana has a dedicated
+    // `native_fill` for zero-token outputs. Note this covers native OUTPUTS
+    // only — a Solana order still cannot take a native SOL *input*, because
+    // `open` has no such path, and that is rejected at issuance instead.
+    return isTronChain(chainId) || isSolanaChain(chainId);
   }
 };

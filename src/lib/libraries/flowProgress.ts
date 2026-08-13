@@ -18,7 +18,15 @@ import { bytes32ToAddress } from "@lifi/intent";
 import { containerToIntent } from "$lib/utils/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
-import { isTronChain } from "$lib/utils/chainType";
+import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import type { TxRef } from "$lib/utils/txRef";
+import { getSolanaReads } from "$lib/solana/client";
+import {
+  readIsLocallyAttested,
+  readIsOrderFinalised,
+  readIsOutputFilled as readIsSolanaOutputFilled,
+  readIsProvenOnSolana
+} from "$lib/solana/reads";
 import { getFillDetails } from "$lib/libraries/fillEvent";
 import { getTronReads } from "$lib/tron/client";
 import { readIsOutputFilled, readIsProven, readOrderStatus } from "$lib/tron/reads";
@@ -48,6 +56,14 @@ function isValidHash(hash: string | undefined): hash is `0x${string}` {
 async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
   const outputKey = getOutputStorageKey(output);
   const outputHash = getOutputHash(output);
+  if (isSolanaChain(output.chainId)) {
+    return getOrFetchRpc(
+      `progress:filled:${orderId}:${outputKey}`,
+      async () =>
+        readIsSolanaOutputFilled(await getSolanaReads(output.chainId), { orderId, output }),
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
   if (isTronChain(output.chainId)) {
     return getOrFetchRpc(
       `progress:filled:${orderId}:${outputKey}`,
@@ -94,6 +110,27 @@ async function isOutputValidatedOnChain(
   const outputHash = keccak256(encodedOutput);
 
   const provenCacheKey = `progress:proven:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`;
+  if (isSolanaChain(inputChain)) {
+    // On Solana "proven" is not a mapping lookup — the oracle CREATES an
+    // attestation account, so its existence is the proof. Same-chain fills
+    // never reach an oracle at all: the fill itself writes a LocalAttestation.
+    const sameChain = output.chainId === inputChain;
+    return getOrFetchRpc(
+      provenCacheKey,
+      async () => {
+        const reads = await getSolanaReads(inputChain);
+        if (sameChain) {
+          return readIsLocallyAttested(reads, { orderId, output, solver });
+        }
+        return readIsProvenOnSolana(reads, {
+          inputOracle: orderContainer.order.inputOracle,
+          output,
+          payloadHash: outputHash
+        });
+      },
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
   if (isTronChain(inputChain)) {
     return getOrFetchRpc(
       provenCacheKey,
@@ -129,6 +166,18 @@ async function isInputChainFinalised(chainId: bigint, container: OrderContainer)
   const { order, inputSettler } = container;
   const intent = containerToIntent(container);
   const orderId = intent.orderId();
+
+  if (isSolanaChain(chainId)) {
+    // No status enum on Solana: finalise and refund both close order_context,
+    // so "context gone, consumed_order still present" is the terminal signal.
+    // That folds Claimed and Refunded into one state, exactly as the EVM and
+    // Tron branches below already do.
+    return getOrFetchRpc(
+      `progress:finalised:solana:${orderId}`,
+      async () => readIsOrderFinalised(await getSolanaReads(chainId), orderId),
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
 
   if (isTronChain(chainId)) {
     return getOrFetchRpc(
@@ -196,7 +245,7 @@ async function isInputChainFinalised(chainId: bigint, container: OrderContainer)
 
 export async function getOrderProgressChecks(
   orderContainer: OrderContainer,
-  fillTransactions: Record<string, `0x${string}`>
+  fillTransactions: Record<string, TxRef>
 ): Promise<FlowCheckState> {
   try {
     const intent = containerToIntent(orderContainer);

@@ -47,6 +47,7 @@ import { getTronReads } from "$lib/tron/client";
 import { getTrc20Allowance, getTrc20Balance, getTrxBalance } from "$lib/tron/reads";
 import { maxUint256 } from "viem";
 import { isTronChain } from "./utils/chainType";
+import type { TxRef } from "./utils/txRef";
 
 function generateUUID(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -142,12 +143,12 @@ class Store {
     if (!db) await initDb();
     if (!db) return;
     const rows = await db!.select().from(fillTransactionsTable);
-    const loaded: { [outputId: string]: `0x${string}` } = {};
-    for (const row of rows) loaded[row.outputHash] = row.txHash as `0x${string}`;
+    const loaded: { [outputId: string]: TxRef } = {};
+    for (const row of rows) loaded[row.outputHash] = row.txHash;
     this.fillTransactions = loaded;
   }
 
-  async saveFillTransaction(outputHash: string, txHash: `0x${string}`) {
+  async saveFillTransaction(outputHash: string, txHash: TxRef) {
     if (!browser) return;
     if (!db) await initDb();
     if (!db) return;
@@ -268,7 +269,9 @@ class Store {
   manualTokenKeys = $state<Set<string>>(new Set());
   inputTokens = $state<AppTokenContext[]>([]);
   outputTokens = $state<AppTokenContext[]>([]);
-  fillTransactions = $state<{ [outputId: string]: `0x${string}` }>({});
+  // TxRef, not `0x${string}`: a Solana fill signature is base58. The schema
+  // column is already `text`, so this needs no migration.
+  fillTransactions = $state<{ [outputId: string]: TxRef }>({});
   transactionReceipts = $state<Record<string, string>>({});
 
   refreshEpoch = $state(0);

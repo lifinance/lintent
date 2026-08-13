@@ -1,7 +1,10 @@
-import { browser } from "$app/environment";
 import { SOLANA_DEVNET_CHAIN_ID, SOLANA_MAINNET_CHAIN_ID } from "@lifi/intent";
 import { isSolanaChain, isSolanaMainnet } from "$lib/utils/chainType";
 import type { SolanaConnectionLike } from "./types";
+
+// Plain runtime check instead of $app/environment so bun tests can import this
+// module — same reason as src/lib/tron/signer.ts.
+const browser = typeof window !== "undefined";
 
 // Public endpoints rate-limit aggressively against the app's balance polling,
 // so a dedicated RPC is strongly recommended. PUBLIC_ prefix = shipped in the

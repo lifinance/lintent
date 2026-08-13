@@ -18,10 +18,15 @@ import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
 import { getFillDetails } from "./fillEvent";
 import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import { isValidTxRef } from "$lib/utils/txRef";
 import { getSolanaReads } from "$lib/solana/client";
 import { createSolanaPrograms } from "$lib/solana/program";
 import { getSolanaSigner } from "$lib/solana/wallet";
-import { fillOutputs as fillSolanaOutputs, finalise as finaliseSolana } from "$lib/solana/writes";
+import {
+  fillOutputs as fillSolanaOutputs,
+  finalise as finaliseSolana,
+  submitFillProof as submitSolanaFillProof
+} from "$lib/solana/writes";
 import type { SolanaDeps } from "$lib/solana/types";
 import { getTronReads, getTronSigner } from "$lib/tron/client";
 import {
@@ -239,15 +244,39 @@ export class Solver {
       if (existingValidation) return existingValidation;
 
       const validationPromise = (async () => {
-        if (
-          !fillTransactionHash ||
-          !fillTransactionHash.startsWith("0x") ||
-          fillTransactionHash.length !== 66
-        ) {
+        // Validated against the OUTPUT chain: a Solana fill is a base58
+        // signature even when the order's source chain is EVM.
+        if (!isValidTxRef(fillTransactionHash, output.chainId)) {
           throw new Error(`Invalid fill transaction hash: ${fillTransactionHash}`);
         }
 
         const orderId = containerToIntent(args.orderContainer).orderId();
+
+        // A Solana OUTPUT is proven by submitting the fill to Polymer, which
+        // reads the `Prove:` log the submit instruction writes. A same-chain
+        // Solana fill needs nothing at all: `fill` already created the
+        // LocalAttestation that `finalise` reads, so there is no separate
+        // attestation step to mirror Tron's `setAttestation`.
+        if (isSolanaChain(output.chainId)) {
+          const { solver, timestamp } = await getFillDetails(orderId, output, fillTransactionHash);
+          if (output.chainId === BigInt(sourceChainId)) {
+            if (postHook) await postHook();
+            return;
+          }
+          const signature = await submitSolanaFillProof(await solanaDeps(output.chainId), {
+            orderId,
+            output,
+            solverBytes32: solver,
+            timestamp
+          });
+          if (postHook) await postHook();
+          return signature;
+        }
+
+        // A Solana INPUT chain receives the proof instead: the oracle writes
+        // the attestation account that `finalise` looks for. Everything up to
+        // the proof request is the shared EVM path below, so this branch is
+        // handled after the proof has been fetched.
         const sameChainAttestation =
           order.inputOracle.toLowerCase() === bytes32ToAddress(output.settler).toLowerCase() ||
           order.inputOracle === COIN_FILLER;
@@ -381,6 +410,23 @@ export class Solver {
         if (!proof) {
           throw new Error(
             `Polymer proof unavailable for output on ${output.chainId.toString()}. Try again after the fill attestation is indexed.`
+          );
+        }
+
+        if (isSolanaChain(sourceChainId)) {
+          // Receiving a proof ON Solana needs two things this app cannot yet
+          // determine: the Polymer prover's program id (readable from the
+          // OraclePolymer account) and the seeds of its cache/result/internal
+          // scratch PDAs, which are only documented in a stale reference test.
+          // `receiveProof` in $lib/solana/writes is written and tested against
+          // the DI seam; it is deliberately not called with guessed accounts.
+          //
+          // Failing here — rather than falling through to the EVM path, which
+          // would call getClient() on a Solana chain id — keeps the blocker
+          // legible. See the unverified list in
+          // tests/fixtures/solana/PREFLIGHT.md.
+          throw new Error(
+            `Receiving a Polymer proof on Solana is not wired up yet: the prover program id and its scratch-PDA seeds must be confirmed on chain first (see tests/fixtures/solana/PREFLIGHT.md). The proof itself was fetched successfully for chain ${Number(sourceChainId)}.`
           );
         }
 

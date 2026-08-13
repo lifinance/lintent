@@ -214,3 +214,36 @@ export function chainMappingPda(
     programId
   );
 }
+
+/** SPL Token program. Mints created before Token-2022 are owned by this one. */
+export const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+/** Token-2022. The settlers accept either via Anchor's `TokenInterface`. */
+export const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+export const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+export const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+
+/**
+ * The associated token account for (mint, owner).
+ *
+ * Every token account in the escrow and settler instructions is constrained
+ * `associated_token::…`, so this derivation — not an arbitrary token account —
+ * is the only address the programs accept.
+ *
+ * `tokenProgramId` is a parameter because the mint's owning program is part of
+ * the seed: the same mint address under Token-2022 yields a different ATA, and
+ * passing the wrong one derives an account the program will reject.
+ */
+export function associatedTokenAddress(
+  mint: string,
+  owner: string,
+  tokenProgramId: string = TOKEN_PROGRAM_ID
+): PublicKey {
+  return derive(
+    [
+      new PublicKey(owner).toBytes(),
+      new PublicKey(tokenProgramId).toBytes(),
+      new PublicKey(mint).toBytes()
+    ],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+}

@@ -1,0 +1,917 @@
+{
+  "address": "LiFiRp8RM7nJUZyUYC9FPPpDr7sAy5XPfBN6ABzBgT7",
+  "metadata": {
+    "name": "input_settler_escrow",
+    "version": "0.0.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "finalise",
+      "docs": [
+        "Finalise a filled order and send the order's input funds to the order's solver.",
+        "`order` is the open order to be finalised.",
+        "`solve_params` are the solver parameters that filled each output (one per output). The first solver must be",
+        "the signer."
+      ],
+      "discriminator": [197, 63, 114, 249, 245, 72, 39, 132],
+      "accounts": [
+        {
+          "name": "solver",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "input_settler_escrow",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
+                  114, 111, 119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user"
+        },
+        {
+          "name": "sponsor",
+          "docs": ["via the `has_one = sponsor` constraint on `order_context`."],
+          "writable": true,
+          "relations": ["order_context"]
+        },
+        {
+          "name": "destination"
+        },
+        {
+          "name": "destination_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "destination"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "order_context",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [111, 114, 100, 101, 114, 95, 99, 111, 110, 116, 101, 120, 116]
+              },
+              {
+                "kind": "arg",
+                "path": "order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order_pda_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "order_context"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true
+        },
+        {
+          "name": "intents_protocol_program",
+          "address": "LiFixdGLT5CMdLsHBvaijTXpPy4Uux9Y53SXkuR4HaK"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "order",
+          "type": {
+            "defined": {
+              "name": "StandardOrder"
+            }
+          }
+        },
+        {
+          "name": "solve_params",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "SolveParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize",
+      "docs": [
+        "Creates `input settler escrow` PDA.",
+        "`input settler escrow` PDA is used to store the chain identifier."
+      ],
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+      "accounts": [
+        {
+          "name": "deployer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "chain_id"
+        },
+        {
+          "name": "input_settler_escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
+                  114, 111, 119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "intents_protocol_program",
+          "address": "LiFixdGLT5CMdLsHBvaijTXpPy4Uux9Y53SXkuR4HaK"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "open",
+      "docs": [
+        "Open the given `StandardOrder`. The order input funds will be pulled from the provided",
+        "user signer account, and will be escrowed until the order is finalised or expired."
+      ],
+      "discriminator": [228, 220, 155, 71, 199, 189, 60, 45],
+      "accounts": [
+        {
+          "name": "sponsor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "input_settler_escrow",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
+                  114, 111, 119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "order_context",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [111, 114, 100, 101, 114, 95, 99, 111, 110, 116, 101, 120, 116]
+              },
+              {
+                "kind": "arg",
+                "path": "order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "consumed_order",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 115, 117, 109, 101, 100, 95, 111, 114, 100, 101, 114]
+              },
+              {
+                "kind": "arg",
+                "path": "order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order_pda_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "order_context"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "order",
+          "type": {
+            "defined": {
+              "name": "StandardOrder"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "refund",
+      "docs": ["Refund an order and send the order's input funds back to the user."],
+      "discriminator": [2, 96, 183, 251, 63, 208, 46, 46],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user"
+        },
+        {
+          "name": "sponsor",
+          "docs": ["via the `has_one = sponsor` constraint on `order_context`."],
+          "writable": true,
+          "relations": ["order_context"]
+        },
+        {
+          "name": "input_settler_escrow",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
+                  114, 111, 119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "order_context",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [111, 114, 100, 101, 114, 95, 99, 111, 110, 116, 101, 120, 116]
+              },
+              {
+                "kind": "arg",
+                "path": "order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order_pda_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "order_context"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "order",
+          "type": {
+            "defined": {
+              "name": "StandardOrder"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "refund_on_non_fill",
+      "docs": [
+        "Refund an order as soon as one of its outputs is proven not filled before the fill deadline,",
+        "sending the order's input funds back to the user. Does not require `expires` to have passed.",
+        "`order` is the open order to be refunded.",
+        "`output_index` is the index of the output proven not filled."
+      ],
+      "discriminator": [53, 164, 197, 243, 243, 43, 185, 108],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user"
+        },
+        {
+          "name": "sponsor",
+          "docs": ["via the `has_one = sponsor` constraint on `order_context`."],
+          "writable": true,
+          "relations": ["order_context"]
+        },
+        {
+          "name": "input_settler_escrow",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
+                  114, 111, 119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "order_context",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [111, 114, 100, 101, 114, 95, 99, 111, 110, 116, 101, 120, 116]
+              },
+              {
+                "kind": "arg",
+                "path": "order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order_pda_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "order_context"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
+                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+              ]
+            }
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "order",
+          "type": {
+            "defined": {
+              "name": "StandardOrder"
+            }
+          }
+        },
+        {
+          "name": "output_index",
+          "type": "u8"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "ChainId",
+      "discriminator": [203, 146, 201, 161, 230, 71, 157, 218]
+    },
+    {
+      "name": "ConsumedOrder",
+      "discriminator": [149, 74, 117, 35, 63, 65, 71, 140]
+    },
+    {
+      "name": "InputSettlerEscrowAccount",
+      "discriminator": [85, 112, 162, 215, 22, 13, 16, 72]
+    },
+    {
+      "name": "OrderContext",
+      "discriminator": [240, 83, 159, 216, 26, 11, 225, 229]
+    }
+  ],
+  "events": [
+    {
+      "name": "RefundedEvent",
+      "discriminator": [220, 3, 153, 244, 133, 189, 73, 119]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "SolversLengthMismatch",
+      "msg": "Solvers length mismatch."
+    },
+    {
+      "code": 6001,
+      "name": "FirstSolverNotInSolvers",
+      "msg": "First solver not in solvers."
+    },
+    {
+      "code": 6002,
+      "name": "FinaliseTxTooLarge",
+      "msg": "Finalise transaction would exceed Solana's max packet size."
+    },
+    {
+      "code": 6003,
+      "name": "OutputIndexOutOfBounds",
+      "msg": "Output index is out of bounds."
+    },
+    {
+      "code": 6004,
+      "name": "WrongAttestationCount",
+      "msg": "Exactly one attestation account is required."
+    }
+  ],
+  "types": [
+    {
+      "name": "ChainId",
+      "docs": ["Type used to store the chain id of the chain."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ConsumedOrder",
+      "docs": [
+        "This account should be used to track if an order has already been opened by a user.",
+        "It should be unique to each order for each user.",
+        "This means a user should not be allowed to open the same order twice.",
+        "This account should always live on chain and not be closed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    },
+    {
+      "name": "InputSettlerEscrowAccount",
+      "docs": [
+        "Represents the input settler implementation type.",
+        "Implements the `InputSettlerBaseTrait` trait."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MandateInput",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "token",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MandateOutput",
+      "docs": [
+        "Defines the output state and where and how it should be filled.",
+        "DEV NOTES:",
+        "`oracle`: the implementation responsible for collecting the proof from settler on output chain",
+        "`settler`: the implementation on the output chain responsible for settling the output payment.",
+        "`callback_data`: the data to be passed to the callback function. MUST be empty if no callback is needed.",
+        "`context`: The output context for the output settlement, encoding order types or other information."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "oracle",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "settler",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "chain_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "token",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "amount",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "recipient",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "callback_data",
+            "type": "bytes"
+          },
+          {
+            "name": "context",
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderContext",
+      "docs": [
+        "The context to opened as an account after opening an order.",
+        "`input_token` is the token account of the input \"Mint\".",
+        "`user` is the user who opened the order.",
+        "`sponsor` is the account that paid for the tx and the rent for this account.",
+        "The order_context rent refund is sent back to this account on finalise/refund.",
+        "It can be the user itself or a third party that paid on the user's behalf.",
+        "`bump` is the bump of this account to be reused during finalisation."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "input_token",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "sponsor",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RefundedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SolveParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "solver",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StandardOrder",
+      "docs": [
+        "Defines the standard order structure.",
+        "DEV NOTES:",
+        "`expires`: the timestamp the order should be filled before. IMPORTANT for solvers to check.",
+        "`fill_deadline`: the timestamp for the funds to be reached to `user` on the output chain. IMPORTANT for solvers to check.",
+        "`input_oracle`: the oracle responsible for collecting the proof from the output chain."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "nonce",
+            "type": "u128"
+          },
+          {
+            "name": "origin_chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "expires",
+            "type": "u32"
+          },
+          {
+            "name": "fill_deadline",
+            "type": "u32"
+          },
+          {
+            "name": "input_oracle",
+            "type": "pubkey"
+          },
+          {
+            "name": "input",
+            "type": {
+              "defined": {
+                "name": "MandateInput"
+              }
+            }
+          },
+          {
+            "name": "outputs",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "MandateOutput"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

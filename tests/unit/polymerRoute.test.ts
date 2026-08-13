@@ -9,6 +9,9 @@ mock.module("$env/static/private", () => ({
   PRIVATE_ROUTEMESH_API_KEY: "routemesh-key"
 }));
 
+// The Solana source path reads its optional RPC URL from `$env/dynamic/private`.
+mock.module("$env/dynamic/private", () => ({ env: {} }));
+
 type PolymerCall = { url: string; method: string; params: unknown[]; auth: string };
 
 const polymerCalls: PolymerCall[] = [];

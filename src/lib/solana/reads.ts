@@ -155,16 +155,41 @@ export async function readSolBalance(
  * funded is a zero balance, not an error, and surfacing it as one would put a
  * spurious failure in front of every user holding none of a listed token.
  */
+// A mint's owning program is fixed for the life of the mint, so this is
+// cached: without it every balance refresh would spend an extra RPC call
+// re-reading a value that cannot change.
+const mintProgramCache = new Map<string, string>();
+
+/** Clears the mint→token-program memo. Test-only seam. */
+export function invalidateMintProgramCache(): void {
+  mintProgramCache.clear();
+}
+
+/**
+ * The program that owns `mint`, memoised.
+ *
+ * Needed because the owning program is part of the associated-token-account
+ * seed: SPL and Token-2022 give different ATAs for the same mint, so assuming
+ * SPL would read a Token-2022 balance as zero — indistinguishable from
+ * "you hold none of this".
+ */
+async function tokenProgramForMint(
+  reads: SolanaConnectionLike,
+  mint: string
+): Promise<string | undefined> {
+  const cached = mintProgramCache.get(mint);
+  if (cached) return cached;
+  const owner = (await reads.getAccountInfo(mint))?.owner;
+  if (owner) mintProgramCache.set(mint, owner);
+  return owner;
+}
+
 export async function readSplBalance(
   reads: SolanaConnectionLike,
   args: { mintBytes32: `0x${string}`; ownerBase58: string; tokenProgramId?: string }
 ): Promise<bigint> {
   const mint = bytes32ToPubkey(args.mintBytes32).toBase58();
-  // The mint's owning program is part of the ATA seed, so SPL and Token-2022
-  // give different addresses for the same mint. Defaulting to SPL would read a
-  // Token-2022 balance as zero, which looks like "you hold none" rather than
-  // "we looked in the wrong place" — so resolve it unless the caller knows.
-  const tokenProgramId = args.tokenProgramId ?? (await reads.getAccountInfo(mint))?.owner;
+  const tokenProgramId = args.tokenProgramId ?? (await tokenProgramForMint(reads, mint));
   if (!tokenProgramId) return 0n;
   const ata = associatedTokenAddress(mint, args.ownerBase58, tokenProgramId);
   return reads.getTokenAccountBalance(ata.toBase58());

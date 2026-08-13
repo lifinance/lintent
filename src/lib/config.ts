@@ -171,10 +171,9 @@ export const chainList = (mainnet: boolean) => {
 export const chainIdList = (mainnet: boolean) => {
   const evm = chainList(mainnet).map((name) => chainMap[name].id);
   // Solana is not in `chainMap` (see the ChainMeta note below), so it is
-  // appended here. Devnet only until the live verification in
-  // tests/fixtures/solana/PREFLIGHT.md has been completed on mainnet.
-  if (mainnet) return evm;
-  return [...evm, Number(SOLANA_DEVNET_CHAIN_ID)];
+  // appended here. Both clusters run the same deployment, verified on chain:
+  // see the "Verified on chain" table in tests/fixtures/solana/PREFLIGHT.md.
+  return [...evm, Number(mainnet ? SOLANA_MAINNET_CHAIN_ID : SOLANA_DEVNET_CHAIN_ID)];
 };
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
@@ -319,6 +318,35 @@ export const coinList = (mainnet: boolean) => {
         name: "usdc",
         chainId: pharos.id,
         decimals: 6
+      },
+      // Solana mainnet. Mints stored as 32-byte hex, like the devnet entries
+      // below — `Token.address` is the app's internal identity, and `getCoin`
+      // compares Solana addresses whole rather than truncating to 20 bytes.
+      //
+      // Decimals and owning program read from mainnet on 2026-08-13: all three
+      // are legacy SPL Token (not Token-2022).
+      {
+        // EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+        address: solanaBase58ToBytes32("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+        name: "usdc",
+        chainId: Number(SOLANA_MAINNET_CHAIN_ID),
+        decimals: 6
+      },
+      {
+        // Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
+        address: solanaBase58ToBytes32("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"),
+        name: "usdt",
+        chainId: Number(SOLANA_MAINNET_CHAIN_ID),
+        decimals: 6
+      },
+      {
+        // Wrapped SOL. Native SOL is a valid OUTPUT via `native_fill` but never
+        // an input — the escrow's `open` has no native path — so wSOL is what
+        // an order can actually deposit.
+        address: solanaBase58ToBytes32("So11111111111111111111111111111111111111112"),
+        name: "wsol",
+        chainId: Number(SOLANA_MAINNET_CHAIN_ID),
+        decimals: 9
       }
     ] as const;
   else

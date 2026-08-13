@@ -7,6 +7,8 @@ import {
   SOLANA_POLYMER_ORACLE_PROGRAM
 } from "@lifi/intent";
 import {
+  chainIdList,
+  coinList,
   SOLANA_OUTPUT_SETTLER,
   SOLANA_POLYMER_OUTPUT_ORACLE,
   chainMetaById,
@@ -75,5 +77,41 @@ describe("config (solana)", () => {
       expect(chainMetaById[Number(chainId)]).toBeDefined();
       expect(() => getClient(chainId)).toThrow();
     }
+  });
+});
+
+describe("solana tokens", () => {
+  test("mainnet lists USDC, USDT and wSOL as 32-byte mints", () => {
+    // Decimals and owning program read from mainnet-beta on 2026-08-13; all
+    // three are legacy SPL Token, so the default ATA derivation applies.
+    const solana = coinList(true).filter((t) => t.chainId === Number(SOLANA_MAINNET_CHAIN_ID));
+    expect(solana.map((t) => t.name).sort()).toEqual(["usdc", "usdt", "wsol"]);
+    for (const token of solana) {
+      // 0x + 64 hex: a truncated 20-byte address would match the wrong token.
+      expect(token.address).toHaveLength(66);
+    }
+    expect(solana.find((t) => t.name === "wsol")?.decimals).toBe(9);
+    expect(solana.find((t) => t.name === "usdc")?.decimals).toBe(6);
+  });
+
+  test("devnet lists its own USDC and wSOL", () => {
+    const solana = coinList(false).filter((t) => t.chainId === Number(SOLANA_DEVNET_CHAIN_ID));
+    expect(solana.map((t) => t.name).sort()).toEqual(["usdc", "wsol"]);
+  });
+
+  test("no Solana token is the zero mint", () => {
+    // Native SOL is a valid output but never an input, so it is not listed —
+    // `open` has no native path and would fail at signing time.
+    const all = [...coinList(true), ...coinList(false)].filter((t) =>
+      [Number(SOLANA_MAINNET_CHAIN_ID), Number(SOLANA_DEVNET_CHAIN_ID)].includes(t.chainId)
+    );
+    for (const token of all) expect(BigInt(token.address)).not.toBe(0n);
+  });
+
+  test("chainIdList offers the matching cluster per network", () => {
+    expect(chainIdList(true)).toContain(Number(SOLANA_MAINNET_CHAIN_ID));
+    expect(chainIdList(true)).not.toContain(Number(SOLANA_DEVNET_CHAIN_ID));
+    expect(chainIdList(false)).toContain(Number(SOLANA_DEVNET_CHAIN_ID));
+    expect(chainIdList(false)).not.toContain(Number(SOLANA_MAINNET_CHAIN_ID));
   });
 });

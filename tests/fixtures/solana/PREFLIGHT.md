@@ -199,6 +199,18 @@ assumptions; they are now measurements.
 The mainnet oracle owner matches the ceremony key pinned in
 `scripts/initialize_programs.ts`.
 
+### Listed mints (read from chain, same date)
+
+| Network | Token | Mint                                           | Decimals | Program   |
+| ------- | ----- | ---------------------------------------------- | -------- | --------- |
+| mainnet | USDC  | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` | 6        | SPL Token |
+| mainnet | USDT  | `Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB` | 6        | SPL Token |
+| mainnet | wSOL  | `So11111111111111111111111111111111111111112`  | 9        | SPL Token |
+| devnet  | USDC  | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` | 6        | SPL Token |
+
+All legacy SPL Token, so the default ATA derivation applies; none exercise the
+Token-2022 path.
+
 ### Prover scratch PDAs — seed scheme confirmed
 
 The prover's accounts are `["cache", authority]`, `["result", authority]` and
@@ -229,7 +241,6 @@ The remaining unknowns. Nothing below should be treated as fact until checked.
 - [ ] **Polymer's proof-request API shape for a Solana source.** The
       `{srcChainId, txSignature, programID}` body is inferred from a previous
       attempt (PR #47), not from Polymer documentation.
-- [ ] **SPL mints and decimals** for the tokens listed in `config.ts`.
 - [ ] One real devnet fill, with its full log dump saved beside this file as
       `tx-fill-devnet.json` (the analogue of Tron's
       `txinfo-fill-old-settler.json`).

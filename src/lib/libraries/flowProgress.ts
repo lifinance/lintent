@@ -19,7 +19,7 @@ import { containerToIntent } from "$lib/utils/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
-import type { TxRef } from "$lib/utils/txRef";
+import { isValidTxRef, type TxRef } from "$lib/utils/txRef";
 import { getSolanaReads } from "$lib/solana/client";
 import {
   readIsLocallyAttested,
@@ -47,10 +47,6 @@ export function getOutputStorageKey(output: MandateOutput) {
     types: compactTypes,
     primaryType: "MandateOutput"
   });
-}
-
-function isValidHash(hash: string | undefined): hash is `0x${string}` {
-  return !!hash && hash.startsWith("0x") && hash.length === 66;
 }
 
 async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
@@ -92,7 +88,7 @@ async function isOutputValidatedOnChain(
   inputChain: bigint,
   orderContainer: OrderContainer,
   output: MandateOutput,
-  fillTransactionHash: `0x${string}`
+  fillTransactionHash: TxRef
 ) {
   const outputKey = getOutputStorageKey(output);
 
@@ -264,7 +260,10 @@ export async function getOrderProgressChecks(
         inputChains.flatMap((inputChain) =>
           outputs.map(async (output) => {
             const fillHash = fillTransactions[getOutputStorageKey(output)];
-            if (!isValidHash(fillHash)) return false;
+            // Validated against the OUTPUT chain: a Solana fill is base58, so
+            // a 0x-only check would discard it here and the order could never
+            // report as validated.
+            if (!isValidTxRef(fillHash, output.chainId)) return false;
             return isOutputValidatedOnChain(orderId, inputChain, orderContainer, output, fillHash);
           })
         )

@@ -157,10 +157,13 @@ export async function readSplBalance(
   reads: SolanaConnectionLike,
   args: { mintBytes32: `0x${string}`; ownerBase58: string; tokenProgramId?: string }
 ): Promise<bigint> {
-  const ata = associatedTokenAddress(
-    bytes32ToPubkey(args.mintBytes32).toBase58(),
-    args.ownerBase58,
-    args.tokenProgramId
-  );
+  const mint = bytes32ToPubkey(args.mintBytes32).toBase58();
+  // The mint's owning program is part of the ATA seed, so SPL and Token-2022
+  // give different addresses for the same mint. Defaulting to SPL would read a
+  // Token-2022 balance as zero, which looks like "you hold none" rather than
+  // "we looked in the wrong place" — so resolve it unless the caller knows.
+  const tokenProgramId = args.tokenProgramId ?? (await reads.getAccountInfo(mint))?.owner;
+  if (!tokenProgramId) return 0n;
+  const ata = associatedTokenAddress(mint, args.ownerBase58, tokenProgramId);
   return reads.getTokenAccountBalance(ata.toBase58());
 }

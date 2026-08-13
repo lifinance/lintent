@@ -203,7 +203,51 @@ export async function fillOutput(
     solverBytes32: `0x${string}`;
   }
 ): Promise<string> {
+  return fillOutputs(deps, { ...args, outputs: [args.output] });
+}
+
+/**
+ * Fills several outputs in ONE transaction.
+ *
+ * The settler takes a single `MandateOutput` per instruction — there is no
+ * batch equivalent of the EVM `fillOrderOutputs` — but the instructions can
+ * share a transaction, and they must: the caller stores one transaction
+ * reference per output, and solver/timestamp are later recovered by searching
+ * that transaction's logs for each output's `OutputFilledEvent`. Filling
+ * across separate transactions would leave outputs 2..N pointing at a
+ * transaction that does not contain their event — they would be filled and
+ * then unprovable.
+ *
+ * Transactions are capped at 1232 bytes, so a large group will not fit; that
+ * surfaces as a send failure from the RPC rather than being silently split.
+ */
+export async function fillOutputs(
+  deps: SolanaDeps,
+  args: {
+    orderId: `0x${string}`;
+    outputs: MandateOutput[];
+    fillDeadline: number;
+    solverBytes32: `0x${string}`;
+  }
+): Promise<string> {
   await assertSolanaCluster(deps.chainId, deps.reads);
+  if (args.outputs.length === 0) throw new Error("fillOutputs requires at least one output");
+  const instructions: SolanaInstructionLike[] = [];
+  for (const output of args.outputs) {
+    instructions.push(await buildFillInstruction(deps, { ...args, output }));
+  }
+  return deps.signer.signAndSend(instructions);
+}
+
+async function buildFillInstruction(
+  deps: SolanaDeps,
+  args: {
+    orderId: `0x${string}`;
+    output: MandateOutput;
+    fillDeadline: number;
+    solverBytes32: `0x${string}`;
+  }
+): Promise<SolanaInstructionLike> {
   const c = await codecs();
   const { orderId, output, fillDeadline, solverBytes32 } = args;
 
@@ -266,7 +310,7 @@ export async function fillOutput(
           .instruction();
       })();
 
-  return deps.signer.signAndSend([instruction]);
+  return instruction;
 }
 
 /**
@@ -522,15 +566,22 @@ export async function finalise(
 /**
  * Reads `sponsor` out of a raw OrderContext account.
  *
- * Layout: 8-byte Anchor discriminator, then `sponsor: Pubkey`. Decoded by hand
- * rather than through the Anchor account coder so this stays on the DI seam
- * and unit tests can supply plain bytes. Falls back to `user` when the data is
- * too short to contain it, which is what the account looks like on a cluster
- * running a different build.
+ * Layout (input_settler_escrow/src/state/input_settler_escrow.rs):
+ *   discriminator[8] | input_token: Pubkey | user: Pubkey | sponsor: Pubkey | bump
+ * so `sponsor` starts at byte 72, NOT immediately after the discriminator.
+ *
+ * The sponsor is whoever paid the rent at open — often but not always the
+ * user — and `finalise` refunds the closed account to it under a
+ * `has_one = sponsor` constraint, so reading the wrong offset makes every
+ * claim fail. Decoded by hand rather than through the Anchor account coder so
+ * this stays on the DI seam and tests can supply plain bytes.
  */
+const ORDER_CONTEXT_SPONSOR_OFFSET = 8 + 32 + 32;
+
 function readSponsor(data: Uint8Array, fallback: string): string {
-  if (data.length < 8 + 32) return fallback;
-  const bytes = data.subarray(8, 40);
+  const end = ORDER_CONTEXT_SPONSOR_OFFSET + 32;
+  if (data.length < end) return fallback;
+  const bytes = data.subarray(ORDER_CONTEXT_SPONSOR_OFFSET, end);
   let hex = "0x";
   for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
   return bytes32ToPubkey(hex as `0x${string}`).toBase58();

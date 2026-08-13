@@ -27,7 +27,14 @@ import type {
   SolanaProgramLike,
   SolanaProgramsLike
 } from "../../src/lib/solana/types";
-import { fillOutput, finalise, openEscrow, submitFillProof } from "../../src/lib/solana/writes";
+import {
+  fillOutput,
+  fillOutputs,
+  finalise,
+  openEscrow,
+  submitFillProof
+} from "../../src/lib/solana/writes";
+import { PublicKey } from "@solana/web3.js";
 
 const CHAIN_ID = SOLANA_DEVNET_CHAIN_ID;
 const DEVNET_GENESIS = SOLANA_GENESIS_HASHES[CHAIN_ID.toString()]!;
@@ -145,6 +152,21 @@ function makeDeps(
   };
 
   return { deps, calls, sent };
+}
+
+/**
+ * A raw OrderContext account.
+ *
+ * Layout (input_settler_escrow/src/state/input_settler_escrow.rs):
+ *   discriminator[8] | input_token: Pubkey | user: Pubkey | sponsor: Pubkey | bump
+ * The sponsor is at byte 72 — reading it from byte 8 yields `input_token`.
+ */
+function orderContextData(opts: { inputToken: string; user: string; sponsor: string }): Uint8Array {
+  const data = new Uint8Array(8 + 32 + 32 + 32 + 1);
+  data.set(new PublicKey(opts.inputToken).toBytes(), 8);
+  data.set(new PublicKey(opts.user).toBytes(), 40);
+  data.set(new PublicKey(opts.sponsor).toBytes(), 72);
+  return data;
 }
 
 function makeOutput(overrides: Partial<MandateOutput> = {}): MandateOutput {
@@ -427,5 +449,102 @@ describe("finalise", () => {
       ).toBase58()
     );
     expect(call.remaining?.[1]?.pubkey).not.toBe(call.remaining?.[0]?.pubkey);
+  });
+});
+
+describe("finalise sponsor resolution", () => {
+  const solver = pubkeyToBytes32(bytes32ToPubkey(b32("5")));
+  const solverBase58 = bytes32ToPubkey(solver).toBase58();
+  const SPONSOR = "49zLKETMq34CUC2E2wL1xvv6uN2AUgyhjVX221mjE3Rw";
+
+  test("reads sponsor from byte 72, not from the discriminator", async () => {
+    // The bug this pins: reading bytes 8..40 yields `input_token` (the mint).
+    // finalise has `has_one = sponsor`, so passing the mint there makes every
+    // claim fail on chain — invisible to a zero-filled fixture.
+    const order = makeOrder();
+    const context = orderContextPda(ORDER_ID).toBase58();
+    const user = bytes32ToPubkey(order.user as `0x${string}`).toBase58();
+    const { deps, calls } = makeDeps({
+      signerPublicKey: solverBase58,
+      accounts: {
+        [MINT]: { owner: TOKEN_PROGRAM_ID },
+        [context]: {
+          owner: INPUT_SETTLER_ESCROW_PROGRAM_ID,
+          data: orderContextData({ inputToken: MINT, user, sponsor: SPONSOR })
+        }
+      }
+    });
+
+    await finalise(deps, {
+      order,
+      orderId: ORDER_ID,
+      solveParams: [{ solver, timestamp: 1_700_000_000 }],
+      destinationBytes32: solver
+    });
+
+    const call = calls.find((c) => c.method === "finalise")!;
+    expect(call.accounts?.sponsor).toBe(SPONSOR);
+    expect(call.accounts?.sponsor).not.toBe(MINT);
+    expect(call.accounts?.user).toBe(user);
+  });
+});
+
+describe("fillOutputs batching", () => {
+  test("sends every output in ONE transaction", async () => {
+    // Each output needs its own instruction, but they must share a
+    // transaction: the caller stores one reference per output and later
+    // searches that transaction's logs for each output's OutputFilledEvent.
+    // Separate transactions leave outputs 2..N filled but unprovable.
+    const outputs = [makeOutput(), makeOutput({ amount: 2_000_000n })];
+    const { deps, calls, sent } = makeDeps();
+
+    const signature = await fillOutputs(deps, {
+      orderId: ORDER_ID,
+      outputs,
+      fillDeadline: 1_700_000_900,
+      solverBytes32: b32("5")
+    });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toHaveLength(2);
+    expect(signature).toBe("sig1");
+    expect(calls.filter((c) => c.method === "fill")).toHaveLength(2);
+  });
+
+  test("derives a distinct fill_id per output", async () => {
+    const outputs = [makeOutput(), makeOutput({ amount: 2_000_000n })];
+    const { deps, calls } = makeDeps();
+    await fillOutputs(deps, {
+      orderId: ORDER_ID,
+      outputs,
+      fillDeadline: 1,
+      solverBytes32: b32("5")
+    });
+    const fills = calls.filter((c) => c.method === "fill");
+    expect(fills[0]!.accounts?.fillId).not.toBe(fills[1]!.accounts?.fillId);
+  });
+
+  test("rejects an empty output list", async () => {
+    const { deps } = makeDeps();
+    await expect(
+      fillOutputs(deps, {
+        orderId: ORDER_ID,
+        outputs: [],
+        fillDeadline: 1,
+        solverBytes32: b32("5")
+      })
+    ).rejects.toThrow("at least one output");
+  });
+
+  test("fillOutput is the single-output case of fillOutputs", async () => {
+    const { deps, sent } = makeDeps();
+    await fillOutput(deps, {
+      orderId: ORDER_ID,
+      output: makeOutput(),
+      fillDeadline: 1,
+      solverBytes32: b32("5")
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toHaveLength(1);
   });
 });

@@ -104,14 +104,14 @@ export function getSolanaReads(chainId: number | bigint): Promise<SolanaConnecti
       },
       getBalance: async (address) => BigInt(await connection.getBalance(new PublicKey(address))),
       getTokenAccountBalance: async (address) => {
-        try {
-          const balance = await connection.getTokenAccountBalance(new PublicKey(address));
-          return BigInt(balance.value.amount);
-        } catch {
-          // An ATA that has never been funded simply does not exist. That is a
-          // zero balance, not an error — the UI must not show it as a failure.
-          return 0n;
-        }
+        // An ATA that has never been funded does not exist, and that is a zero
+        // balance rather than an error. Everything else — rate limits, network
+        // failures — must propagate: reporting those as 0n tells the user they
+        // hold nothing, which is worse than showing an error.
+        const info = await connection.getAccountInfo(new PublicKey(address));
+        if (!info) return 0n;
+        const balance = await connection.getTokenAccountBalance(new PublicKey(address));
+        return BigInt(balance.value.amount);
       },
       getLatestBlockhash: () => connection.getLatestBlockhash()
     };

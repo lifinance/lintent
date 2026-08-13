@@ -4,6 +4,7 @@ import { bytes32ToAddress } from "@lifi/intent";
 import { getClient } from "$lib/config";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import type { TxRef } from "$lib/utils/txRef";
 import { OUTPUT_SETTLER_SIMPLE_PROGRAM_ID } from "$lib/idl";
 import { getSolanaReads } from "$lib/solana/client";
 import { findOutputFilledLog } from "$lib/solana/events";
@@ -35,7 +36,7 @@ const FILL_DETAILS_TTL_MS = 300_000; // immutable once mined — cache generousl
 export async function getFillDetails(
   orderId: `0x${string}`,
   output: MandateOutput,
-  fillTransactionHash: `0x${string}`
+  fillTransactionHash: TxRef
 ): Promise<FillDetails> {
   const cacheKey = `fill-details:${orderId}:${outputStructHash(output)}:${fillTransactionHash}`;
   return getOrFetchRpc(
@@ -76,8 +77,9 @@ export async function getFillDetails(
         return { solver, timestamp };
       }
 
+      // Reached only on the EVM branch, where a TxRef is a 0x hash.
       const receipt = await getClient(output.chainId).getTransactionReceipt({
-        hash: fillTransactionHash
+        hash: fillTransactionHash as `0x${string}`
       });
       if (receipt.status !== "success") {
         throw new Error(`Fill transaction ${fillTransactionHash} reverted`);

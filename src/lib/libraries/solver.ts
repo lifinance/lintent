@@ -4,6 +4,7 @@ import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import {
   addressToBytes32,
   bytes32ToAddress,
+  bytes32ToSolanaBase58,
   StandardSolanaIntent,
   TRON_LEGACY_POLYMER_ORACLES
 } from "@lifi/intent";
@@ -20,7 +21,7 @@ import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import { getSolanaReads } from "$lib/solana/client";
 import { createSolanaPrograms } from "$lib/solana/program";
 import { getSolanaSigner } from "$lib/solana/wallet";
-import { fillOutput as fillSolanaOutput, finalise as finaliseSolana } from "$lib/solana/writes";
+import { fillOutputs as fillSolanaOutputs, finalise as finaliseSolana } from "$lib/solana/writes";
 import type { SolanaDeps } from "$lib/solana/types";
 import { getTronReads, getTronSigner } from "$lib/tron/client";
 import {
@@ -117,24 +118,18 @@ export class Solver {
       const outputChainId = Number(outputs[0].chainId);
 
       if (isSolanaChain(outputChainId)) {
-        // The Solana settler fills ONE output per instruction — there is no
-        // batch equivalent of fillOrderOutputs — so a multi-output fill on the
-        // same chain is several transactions, and only the first signature is
-        // returned as the fill reference for this group.
-        const deps = await solanaDeps(BigInt(outputChainId));
-        const signatures: string[] = [];
-        for (const output of outputs) {
-          signatures.push(
-            await fillSolanaOutput(deps, {
-              orderId,
-              output,
-              fillDeadline: Number(order.fillDeadline),
-              solverBytes32: addressToBytes32(solverAddress)
-            })
-          );
-        }
+        // One instruction per output, but ONE transaction: the caller stores a
+        // single reference for the whole group, and each output's solver and
+        // timestamp are later recovered from that transaction's logs. Separate
+        // transactions would leave outputs 2..N filled but unprovable.
+        const signature = await fillSolanaOutputs(await solanaDeps(BigInt(outputChainId)), {
+          orderId,
+          outputs,
+          fillDeadline: Number(order.fillDeadline),
+          solverBytes32: addressToBytes32(solverAddress)
+        });
         if (postHook) await postHook();
-        return signatures[0]!;
+        return signature;
       }
 
       if (isTronChain(outputChainId)) {
@@ -489,11 +484,25 @@ export class Solver {
       );
 
       // The input settler derives the order owner from solveParams[0].solver
-      // and requires msg.sender to be that owner.
-      const owner = bytes32ToAddress(solveParams[0].solver);
-      if (owner.toLowerCase() !== account().toLowerCase()) {
+      // and requires the caller to be that owner.
+      //
+      // Compared as bytes32 on Solana: a Solana solver identity IS 32 bytes, so
+      // truncating it to the low 20 (as the EVM comparison does) would never
+      // match the connected wallet and would reject the rightful solver.
+      const solverBytes32 = solveParams[0].solver;
+      const connected = account();
+      const ownerMatches = isSolanaChain(sourceChainId)
+        ? solverBytes32.toLowerCase() === connected.toLowerCase()
+        : bytes32ToAddress(solverBytes32).toLowerCase() === connected.toLowerCase();
+      if (!ownerMatches) {
+        const owner = isSolanaChain(sourceChainId)
+          ? bytes32ToSolanaBase58(solverBytes32)
+          : bytes32ToAddress(solverBytes32);
+        const connectedDisplay = isSolanaChain(sourceChainId)
+          ? bytes32ToSolanaBase58(connected)
+          : connected;
         throw new Error(
-          `This order was filled for solver ${owner} — connect that wallet to claim (connected: ${account()}).`
+          `This order was filled for solver ${owner} — connect that wallet to claim (connected: ${connectedDisplay}).`
         );
       }
 

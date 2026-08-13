@@ -15,6 +15,7 @@ import {
 } from "$lib/idl";
 import { localAttestationDataHash } from "./encode";
 import {
+  POLYMER_PROVER_PROGRAM_ID,
   associatedTokenAddress,
   attestationPda,
   bytes32ToPubkey,
@@ -22,7 +23,8 @@ import {
   fillIdPda,
   localAttestationPda,
   orderContextPda,
-  outputSettlerSimplePda
+  outputSettlerSimplePda,
+  polymerOraclePda
 } from "./pda";
 import type { SolanaConnectionLike } from "./types";
 
@@ -166,4 +168,36 @@ export async function readSplBalance(
   if (!tokenProgramId) return 0n;
   const ata = associatedTokenAddress(mint, args.ownerBase58, tokenProgramId);
   return reads.getTokenAccountBalance(ata.toBase58());
+}
+
+/**
+ * The Polymer prover program id, read from the on-chain `OraclePolymer`
+ * account.
+ *
+ * `OraclePolymer` layout (oracle_polymer/src/state):
+ *   discriminator[8] | polymer_prover_id: Pubkey | owner: Pubkey | chain_id u128 | bump
+ *
+ * The prover belongs to Polymer, not to this protocol, so its id is read
+ * rather than assumed — a rotation on their side would otherwise surface as an
+ * opaque CPI failure mid-proof. The result is checked against the pinned
+ * constant so a change is loud rather than silent.
+ */
+export async function readPolymerProverId(reads: SolanaConnectionLike): Promise<string> {
+  const oracle = polymerOraclePda().toBase58();
+  const info = await reads.getAccountInfo(oracle);
+  if (!info) {
+    throw new Error(`Polymer oracle account ${oracle} does not exist on this cluster`);
+  }
+  if (info.data.length < 8 + 32) {
+    throw new Error(`Polymer oracle account ${oracle} is too short to hold a prover id`);
+  }
+  let hex = "0x";
+  for (const byte of info.data.subarray(8, 40)) hex += byte.toString(16).padStart(2, "0");
+  const onChain = bytes32ToPubkey(hex as `0x${string}`).toBase58();
+  if (onChain !== POLYMER_PROVER_PROGRAM_ID) {
+    throw new Error(
+      `Polymer rotated its prover program: the oracle names ${onChain}, but this build pins ${POLYMER_PROVER_PROGRAM_ID}. Update POLYMER_PROVER_PROGRAM_ID and re-verify the scratch-PDA seeds.`
+    );
+  }
+  return onChain;
 }

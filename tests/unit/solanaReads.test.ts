@@ -8,15 +8,18 @@ import {
 } from "../../src/lib/idl";
 import { localAttestationDataHash } from "../../src/lib/solana/encode";
 import {
+  POLYMER_PROVER_PROGRAM_ID,
   attestationPda,
   bytes32ToPubkey,
   consumedOrderPda,
   fillIdPda,
   localAttestationPda,
   orderContextPda,
-  outputSettlerSimplePda
+  outputSettlerSimplePda,
+  polymerOraclePda
 } from "../../src/lib/solana/pda";
 import {
+  readPolymerProverId,
   readIsLocallyAttested,
   readIsOrderFinalised,
   readIsOrderOpen,
@@ -25,6 +28,7 @@ import {
   readSplBalance
 } from "../../src/lib/solana/reads";
 import type { SolanaAccountInfoLike, SolanaConnectionLike } from "../../src/lib/solana/types";
+import { PublicKey } from "@solana/web3.js";
 
 const b32 = (nibble: string) => `0x${nibble.repeat(64)}` as `0x${string}`;
 const ORDER_ID = b32("6");
@@ -51,7 +55,7 @@ function makeOutput(overrides: Partial<MandateOutput> = {}): MandateOutput {
  * hand against SolanaConnectionLike — no @solana/web3.js in the test process,
  * which is the point of the DI seam.
  */
-function makeReads(accounts: Record<string, { owner: string }> = {}) {
+function makeReads(accounts: Record<string, { owner: string; data?: Uint8Array }> = {}) {
   const requested: string[] = [];
   const reads: SolanaConnectionLike = {
     rpcEndpoint: "https://test.invalid",
@@ -60,7 +64,11 @@ function makeReads(accounts: Record<string, { owner: string }> = {}) {
       requested.push(address);
       const account = accounts[address];
       return account
-        ? ({ owner: account.owner, lamports: 1, data: new Uint8Array() } as SolanaAccountInfoLike)
+        ? ({
+            owner: account.owner,
+            lamports: 1,
+            data: account.data ?? new Uint8Array()
+          } as SolanaAccountInfoLike)
         : null;
     },
     getMultipleAccountsInfo: async (addresses) => {
@@ -68,7 +76,11 @@ function makeReads(accounts: Record<string, { owner: string }> = {}) {
       return addresses.map((address) => {
         const account = accounts[address];
         return account
-          ? ({ owner: account.owner, lamports: 1, data: new Uint8Array() } as SolanaAccountInfoLike)
+          ? ({
+              owner: account.owner,
+              lamports: 1,
+              data: account.data ?? new Uint8Array()
+            } as SolanaAccountInfoLike)
           : null;
       });
     },
@@ -189,5 +201,46 @@ describe("readSplBalance", () => {
     expect(
       await readSplBalance(reads, { mintBytes32: b32("3"), ownerBase58: SYSTEM_PROGRAM })
     ).toBe(0n);
+  });
+});
+
+describe("readPolymerProverId", () => {
+  const oracle = polymerOraclePda().toBase58();
+
+  /**
+   * A raw OraclePolymer account:
+   *   discriminator[8] | polymer_prover_id | owner | chain_id u128 | bump
+   */
+  function oracleAccount(proverBase58: string): Uint8Array {
+    const data = new Uint8Array(8 + 32 + 32 + 16 + 1);
+    data.set(new PublicKey(proverBase58).toBytes(), 8);
+    return data;
+  }
+
+  test("returns the pinned id when the account agrees", async () => {
+    const { reads } = makeReads({
+      [oracle]: {
+        owner: INTENTS_PROTOCOL_PROGRAM_ID,
+        data: oracleAccount(POLYMER_PROVER_PROGRAM_ID)
+      }
+    });
+    expect(await readPolymerProverId(reads)).toBe(POLYMER_PROVER_PROGRAM_ID);
+  });
+
+  test("throws when Polymer has rotated its prover", async () => {
+    // An external program: a rotation must be loud here rather than surfacing
+    // as an opaque CPI failure part-way through proving.
+    const { reads } = makeReads({
+      [oracle]: {
+        owner: INTENTS_PROTOCOL_PROGRAM_ID,
+        data: oracleAccount("BkEw3WHFvJR9a5deUcwPLJ79yK3r9YGdQ61TehFXzAQ")
+      }
+    });
+    await expect(readPolymerProverId(reads)).rejects.toThrow("rotated its prover program");
+  });
+
+  test("throws when the oracle account is missing", async () => {
+    const { reads } = makeReads();
+    await expect(readPolymerProverId(reads)).rejects.toThrow("does not exist");
   });
 });

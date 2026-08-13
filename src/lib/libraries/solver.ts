@@ -1,5 +1,5 @@
 import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
-import { encodeFunctionData, hashStruct, maxUint256, parseEventLogs } from "viem";
+import { encodeFunctionData, hashStruct, hexToBytes, maxUint256, parseEventLogs } from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import {
   addressToBytes32,
@@ -25,8 +25,11 @@ import { getSolanaSigner } from "$lib/solana/wallet";
 import {
   fillOutputs as fillSolanaOutputs,
   finalise as finaliseSolana,
+  receiveProof as receiveSolanaProof,
   submitFillProof as submitSolanaFillProof
 } from "$lib/solana/writes";
+import { polymerScratchPdas } from "$lib/solana/pda";
+import { readPolymerProverId } from "$lib/solana/reads";
 import type { SolanaDeps } from "$lib/solana/types";
 import { getTronReads, getTronSigner } from "$lib/tron/client";
 import {
@@ -414,20 +417,25 @@ export class Solver {
         }
 
         if (isSolanaChain(sourceChainId)) {
-          // Receiving a proof ON Solana needs two things this app cannot yet
-          // determine: the Polymer prover's program id (readable from the
-          // OraclePolymer account) and the seeds of its cache/result/internal
-          // scratch PDAs, which are only documented in a stale reference test.
-          // `receiveProof` in $lib/solana/writes is written and tested against
-          // the DI seam; it is deliberately not called with guessed accounts.
-          //
-          // Failing here — rather than falling through to the EVM path, which
-          // would call getClient() on a Solana chain id — keeps the blocker
-          // legible. See the unverified list in
-          // tests/fixtures/solana/PREFLIGHT.md.
-          throw new Error(
-            `Receiving a Polymer proof on Solana is not wired up yet: the prover program id and its scratch-PDA seeds must be confirmed on chain first (see tests/fixtures/solana/PREFLIGHT.md). The proof itself was fetched successfully for chain ${Number(sourceChainId)}.`
-          );
+          const deps = await solanaDeps(BigInt(sourceChainId));
+          // The prover program id is pinned but verified against the on-chain
+          // OraclePolymer account here: it is external to this protocol, so a
+          // rotation would otherwise surface as an opaque CPI failure.
+          const proverProgramId = await readPolymerProverId(deps.reads);
+          const { solver, timestamp } = await getFillDetails(orderId, output, fillTransactionHash);
+          const { attestSignature, attestation } = await receiveSolanaProof(deps, {
+            proof: hexToBytes(`0x${proof.replace(/^0x/, "")}`),
+            orderId,
+            output,
+            solverBytes32: solver,
+            timestamp,
+            proverProgramId,
+            proverAccounts: polymerScratchPdas(deps.signer.publicKey, proverProgramId)
+          });
+          if (postHook) await postHook();
+          // No signature means the attestation already existed — re-running is
+          // a no-op, not a failure.
+          return { transactionHash: attestSignature, attestation };
         }
 
         if (isTronChain(sourceChainId)) {

@@ -26,8 +26,8 @@ export function solanaRpcUrl(chainId: number | bigint): string {
  * cluster it actually serves. Same reasoning as
  * TRON_MAINNET_GENESIS_BLOCK_ID in the Tron facade.
  *
- * UNVERIFIED against a live RPC — see tests/fixtures/solana/PREFLIGHT.md.
- * These are the widely published values; confirm before enabling mainnet.
+ * Both values read from live RPC on 2026-08-13 and recorded in
+ * tests/fixtures/solana/PREFLIGHT.md.
  */
 export const SOLANA_GENESIS_HASHES: Record<string, string> = {
   [SOLANA_MAINNET_CHAIN_ID.toString()]: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",

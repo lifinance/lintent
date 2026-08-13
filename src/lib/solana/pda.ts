@@ -247,3 +247,34 @@ export function associatedTokenAddress(
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 }
+
+/**
+ * Polymer's prover program.
+ *
+ * An external program, not one of ours. The authoritative value lives on chain
+ * in `OraclePolymer.polymer_prover_id`; this constant is the value read from
+ * BOTH mainnet and devnet (they match), pinned so the receive path does not
+ * need an extra round trip before every proof. `assertPolymerProverId` below
+ * checks the pin against the account when it matters.
+ */
+export const POLYMER_PROVER_PROGRAM_ID = "CdvSq48QUukYuMczgZAVNZrwcHNshBdtqrjW26sQiGPs";
+
+/**
+ * The prover's scratch accounts: a proof is loaded into `cache`, validated
+ * into `result`, and `internal` holds program-wide state.
+ *
+ * `cache` and `result` are per-authority, so two solvers proving concurrently
+ * do not collide. `internal` is a singleton — its existence on both clusters,
+ * owned by the prover program, is what confirms this seed scheme.
+ */
+export function polymerScratchPdas(
+  authority: string,
+  proverProgramId: string = POLYMER_PROVER_PROGRAM_ID
+): { cache: string; result: string; internal: string } {
+  const authorityBytes = new PublicKey(authority).toBytes();
+  return {
+    cache: derive([utf8.encode("cache"), authorityBytes], proverProgramId).toBase58(),
+    result: derive([utf8.encode("result"), authorityBytes], proverProgramId).toBase58(),
+    internal: derive([utf8.encode("internal")], proverProgramId).toBase58()
+  };
+}

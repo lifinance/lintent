@@ -180,30 +180,50 @@ from inside a dependency at signing time.
 
 ---
 
-## NOT YET VERIFIED ON CHAIN
+## Verified on chain (2026-08-13, `finalized`)
 
-Everything above is derived from source. The following must be confirmed
-against live RPCs **before mainnet is enabled**, and nothing here should be
-treated as fact until it is. All reads at `finalized` commitment.
+Read directly from mainnet-beta and devnet RPC. These were previously
+assumptions; they are now measurements.
 
-- [ ] **`ChainId` PDA contents on each cluster.** The programs enforce
-      `output.chain_id == chain_id`, so a wrong value silently invalidates
-      every fill. Expect `1151111081099710` (mainnet) / `1151111081099712`
-      (devnet). **If this is wrong, stop.**
-- [ ] **Genesis hashes**, which back the network guard in
-      `src/lib/solana/client.ts`. Currently the widely published values,
-      marked UNVERIFIED in code:
-      mainnet `5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`,
-      devnet `EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG`.
+| Fact                              | mainnet                                        | devnet                                         |
+| --------------------------------- | ---------------------------------------------- | ---------------------------------------------- |
+| Genesis hash                      | `5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d` | `EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG` |
+| `ChainId` PDA contents            | `1151111081099710` ✅                          | `1151111081099712` ✅                          |
+| `OraclePolymer.chain_id`          | `1151111081099710`                             | `1151111081099712`                             |
+| `OraclePolymer.polymer_prover_id` | `CdvSq48QUukYuMczgZAVNZrwcHNshBdtqrjW26sQiGPs` | same                                           |
+| `OraclePolymer.owner`             | `7P94xcg7X4Xc8goZ3GW2VQDJUhiab7h7rnTfvnNShZ29` | `DED5bXSyFUL8YDFF8jZ5o7Aj7vpzhKvS8CgKw6MYHQY1` |
+| `InputSettlerEscrow` PDA          | initialised, owned by `LiFiRp8RM7…`, 25 bytes  | same                                           |
+| `OutputSettlerSimple` PDA         | initialised, owned by `LiFiEDFjz5…`, 25 bytes  | same                                           |
+| Prover program                    | deployed, executable, BPFLoaderUpgradeable     | same                                           |
+
+The mainnet oracle owner matches the ceremony key pinned in
+`scripts/initialize_programs.ts`.
+
+### Prover scratch PDAs — seed scheme confirmed
+
+The prover's accounts are `["cache", authority]`, `["result", authority]` and
+`["internal"]`, derived under the prover program id. `cache` and `result` are
+per-authority (so concurrent solvers do not collide) and exist only during a
+proof, but the `internal` singleton derives to
+`4w6Lac3Yc8ZdJ7H4Nt9FS98VMt8w6DwkGRJL1h4Ww5z1`, **which exists on both
+clusters owned by the prover program** — confirming the scheme. Pinned in
+`tests/unit/solanaPda.test.ts`.
+
+`readPolymerProverId` re-checks the pinned prover id against the on-chain
+account before every receive. The prover belongs to Polymer, not to this
+protocol, so a rotation on their side must fail loudly rather than as an
+opaque CPI error mid-proof.
+
+---
+
+## STILL NOT VERIFIED
+
+The remaining unknowns. Nothing below should be treated as fact until checked.
+
 - [ ] **Deployed binary matches the audited source** — program accounts
       executable, program-data address resolved, binary hash recorded, upgrade
       authority recorded (or immutability confirmed). Matching a PDA and a
       chain id does not prove this.
-- [ ] **Settler PDAs initialised** with the expected account owner and
-      discriminator.
-- [ ] **`OraclePolymer.polymer_prover_id` and `owner`.** The prover's
-      `cache`/`result`/`internal` PDA seeds currently come from a stale test
-      and must be confirmed against the prover's published IDL.
 - [ ] **`chain_mapping` PDAs** exist for every EVM chain offered as a
       counterpart.
 - [ ] **Polymer's proof-request API shape for a Solana source.** The

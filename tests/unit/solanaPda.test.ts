@@ -12,6 +12,7 @@ import {
   POLYMER_PROGRAM_ID
 } from "../../src/lib/idl";
 import {
+  POLYMER_PROVER_PROGRAM_ID,
   bytes32ToPubkey,
   chainIdPda,
   consumedOrderPda,
@@ -20,6 +21,7 @@ import {
   outputSettlerSimplePda,
   polymerOraclePda,
   orderContextPda,
+  polymerScratchPdas,
   pubkeyToBytes32,
   u128ToLeBytes
 } from "../../src/lib/solana/pda";
@@ -111,5 +113,32 @@ describe("encoding helpers", () => {
   test("pubkeyToBytes32 and bytes32ToPubkey round-trip", () => {
     const pda = polymerOraclePda();
     expect(bytes32ToPubkey(pubkeyToBytes32(pda)).toBase58()).toBe(pda.toBase58());
+  });
+});
+
+describe("polymer prover", () => {
+  test("pins the program id read from both clusters", () => {
+    // Read from OraclePolymer.polymer_prover_id on mainnet AND devnet
+    // (identical). readPolymerProverId re-checks this against the account, so
+    // a rotation on Polymer's side fails loudly instead of as a CPI error.
+    expect(POLYMER_PROVER_PROGRAM_ID).toBe("CdvSq48QUukYuMczgZAVNZrwcHNshBdtqrjW26sQiGPs");
+  });
+
+  test("derives the singleton internal PDA that exists on chain", () => {
+    // This exact address exists on mainnet and devnet owned by the prover
+    // program — which is what confirms the seed scheme for cache/result too,
+    // since those are per-authority and only exist mid-proof.
+    const { internal } = polymerScratchPdas("BkEw3WHFvJR9a5deUcwPLJ79yK3r9YGdQ61TehFXzAQ");
+    expect(internal).toBe("4w6Lac3Yc8ZdJ7H4Nt9FS98VMt8w6DwkGRJL1h4Ww5z1");
+  });
+
+  test("cache and result are per-authority, internal is not", () => {
+    // Two solvers proving at once must not share scratch accounts.
+    const a = polymerScratchPdas("BkEw3WHFvJR9a5deUcwPLJ79yK3r9YGdQ61TehFXzAQ");
+    const b = polymerScratchPdas("49zLKETMq34CUC2E2wL1xvv6uN2AUgyhjVX221mjE3Rw");
+    expect(a.cache).not.toBe(b.cache);
+    expect(a.result).not.toBe(b.result);
+    expect(a.internal).toBe(b.internal);
+    expect(a.cache).not.toBe(a.result);
   });
 });

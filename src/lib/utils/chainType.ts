@@ -3,7 +3,9 @@ import {
   SOLANA_MAINNET_CHAIN_ID,
   SOLANA_TESTNET_CHAIN_ID,
   TRON_MAINNET_CHAIN_ID,
+  bytes32ToSolanaBase58,
   hexToTronBase58,
+  isSolanaBase58Address,
   isTronBase58Address
 } from "@lifi/intent";
 
@@ -52,14 +54,13 @@ export function isEvmChain(chainId: number | bigint): boolean {
   return getChainType(chainId) === "evm";
 }
 
-// Address validation and conversion live in @lifi/intent (Base58Check with
-// checksum verification) — re-exported here for existing import sites.
-export { isTronBase58Address };
+// Address validation and conversion live in @lifi/intent — Base58Check with
+// checksum verification for Tron, raw base58 for Solana. Re-exported here for
+// existing import sites.
+export { isSolanaBase58Address, isTronBase58Address };
 
 export function formatAddressForChain(address: `0x${string}`, chainId: number | bigint): string {
   if (isTronChain(chainId)) return hexToTronBase58(address);
-  // TODO(solana): render Solana values as base58 via bytes32ToSolanaBase58
-  // once @lifi/intent 0.4.0 is published. Until then a Solana address renders
-  // as its 32-byte hex, which is correct but unfriendly.
+  if (isSolanaChain(chainId)) return bytes32ToSolanaBase58(address);
   return address;
 }

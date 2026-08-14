@@ -250,6 +250,21 @@ Two traps worth restating, because both cost a debugging session:
   `.result` blindly yields `undefined`, which then queries as `not_found` and is
   indistinguishable from "not ready yet".
 
+## Read commitment
+
+Fill details (solver + timestamp, decoded from `OutputFilledEvent`) are read at
+**`confirmed`**, not `finalized`. `finalized` added roughly 13 seconds — about
+32 slots — to every fill before the proof could even be built, and `signAndSend`
+has already waited for `confirmed` and read the transaction back, so this read
+costs nothing.
+
+Accepted risk, decided deliberately: a confirmed slot can in principle still be
+dropped, and `getFillDetails` memoises for the session, so a dropped slot would
+leave a stale timestamp that fails every retry with
+`InvalidLocalAttestationTimestamp` until a page reload. It cannot produce a
+false proof — `oracle_base::validate_payload` compares the payload against the
+on-chain `LocalAttestation` — so the failure mode is loud, not silent.
+
 ## STILL NOT VERIFIED
 
 The remaining unknowns. Nothing below should be treated as fact until checked.

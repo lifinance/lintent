@@ -44,11 +44,26 @@ export async function getFillDetails(
     async () => {
       if (isSolanaChain(output.chainId)) {
         const reads = await getSolanaReads(output.chainId);
-        // "finalized", not "confirmed": this result is cached as immutable, so
-        // it must never come from a slot that can still be dropped.
-        const tx = await reads.getTransaction(fillTransactionHash, { commitment: "finalized" });
+        // "confirmed", deliberately: `signAndSend` has already waited for this
+        // commitment and read the transaction back, so by the time we get here
+        // the read costs nothing. Waiting for "finalized" instead added ~13s
+        // (about 32 slots) to every fill before the proof could even be built.
+        //
+        // What that trades away: a confirmed slot can in principle still be
+        // dropped, and the result below is memoised for the session. If that
+        // ever happened the cached timestamp would be stale and every retry
+        // would fail with InvalidLocalAttestationTimestamp until a reload. It
+        // cannot mint a false proof — `validate_payload` compares against the
+        // on-chain LocalAttestation — so the failure is loud, not silent.
+        const tx = await reads.getTransaction(fillTransactionHash, { commitment: "confirmed" });
         if (!tx?.meta) {
-          throw new Error("Solana fill is not finalized yet — retry in a few seconds");
+          // Deliberately does not blame finality. An empty result means "this
+          // RPC does not have the transaction", which is just as often a
+          // pruned history or a load-balanced node that has not caught up as
+          // it is a fill that has not landed.
+          throw new Error(
+            `Solana RPC returned no transaction for ${fillTransactionHash}. It may not have landed yet, or this endpoint may not carry it — retry, and if it persists check the fill signature.`
+          );
         }
         if (tx.meta.err) {
           throw new Error(`Solana fill transaction reverted: ${JSON.stringify(tx.meta.err)}`);

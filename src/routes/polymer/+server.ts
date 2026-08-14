@@ -14,6 +14,48 @@ import {
 } from "$lib/libraries/provableSolanaLogVerify";
 import { isSolanaChain } from "$lib/utils/chainType";
 
+/**
+ * Solana's chain id in Polymer's own registry.
+ *
+ * Polymer does NOT use the OIF chain id (1151111081099710 and friends) for
+ * Solana; it has its own small integer namespace and rejects anything else with
+ * `srcChainId is required for Solana and must be 2`. Read off that error from
+ * the live API on 2026-08-14 — their docs do not state it.
+ *
+ * The cluster is selected by which API host we talk to (api.polymer.zone vs
+ * api.testnet.polymer.zone), so this same id is used for both. Only mainnet has
+ * been confirmed against the live API; devnet is assumed to match and is listed
+ * as unverified in tests/fixtures/solana/PREFLIGHT.md.
+ */
+const POLYMER_SOLANA_CHAIN_ID = 2;
+
+/**
+ * Reads the request index out of a `polymer_requestProof` response.
+ *
+ * JSON-RPC reports failures in `error`, not by HTTP status, so axios resolves
+ * happily and `result` is simply absent. Reading `.result` blindly yields
+ * `undefined`, which then gets passed to `polymer_queryProof` and comes back as
+ * a bare `not_found` — the caller sees "no proof yet" and polls forever for a
+ * request that was never accepted. Fail loudly with Polymer's own reason
+ * instead.
+ */
+function assertRequestAccepted(data: unknown, source: "solana" | "evm"): number {
+  const body = data as { result?: unknown; error?: { code?: number; message?: string } };
+  if (body?.error) {
+    throw new Error(
+      `Polymer rejected the ${source} proof request: ${body.error.message ?? "unknown error"}${
+        body.error.code === undefined ? "" : ` (code ${body.error.code})`
+      }`
+    );
+  }
+  if (typeof body?.result !== "number") {
+    throw new Error(
+      `Polymer returned no request index for the ${source} proof request: ${JSON.stringify(data)}`
+    );
+  }
+  return body.result;
+}
+
 function getPolymerUrl(mainnet: boolean) {
   return mainnet
     ? ("https://api.polymer.zone/v1/" as const)
@@ -164,7 +206,9 @@ export const POST: RequestHandler = async ({ request }) => {
           method: "polymer_requestProof",
           params: [
             {
-              srcChainId,
+              // Polymer's own id, not the OIF one we validate above — the two
+              // namespaces are unrelated for Solana.
+              srcChainId: POLYMER_SOLANA_CHAIN_ID,
               txSignature,
               programID
             }
@@ -178,7 +222,7 @@ export const POST: RequestHandler = async ({ request }) => {
           }
         }
       );
-      polymerRequestIndex = requestProof.data.result;
+      polymerRequestIndex = assertRequestAccepted(requestProof.data, "solana");
     } else if (evmSource) {
       // V2-199 (#53) + #63: confirm the referenced log really is one of the allowlisted
       // output-settler events before spending a Polymer proof request on it.
@@ -220,7 +264,7 @@ export const POST: RequestHandler = async ({ request }) => {
           }
         }
       );
-      polymerRequestIndex = requestProof.data.result;
+      polymerRequestIndex = assertRequestAccepted(requestProof.data, "evm");
     }
     const requestProofData = await axios.post(
       POLYMER_URL,
@@ -254,8 +298,12 @@ export const POST: RequestHandler = async ({ request }) => {
             status: "complete";
             proof: "string";
           }
+        // "initialized" and "pending" are both in-progress; "not_found" comes
+        // back when the queried index does not exist. All three observed live —
+        // only "error" and "complete" are terminal, and the caller polls on
+        // anything else.
         | {
-            status: "initialized";
+            status: "initialized" | "pending" | "not_found";
           }
       );
     } = requestProofData.data;

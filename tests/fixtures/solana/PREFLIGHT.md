@@ -228,6 +228,28 @@ opaque CPI error mid-proof.
 
 ---
 
+## Polymer's Solana proof API (verified on chain 2026-08-14)
+
+Confirmed end to end against the live **mainnet** API with a real `submit`
+transaction; the returned proof was 534 bytes.
+
+| Thing                   | Value                                                                           | How we know                                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body            | `{srcChainId, txSignature, programID}`                                          | Accepted by `polymer_requestProof`                                                                                                             |
+| `srcChainId` for Solana | **`2`** — Polymer's own registry id, NOT the OIF chain id                       | Rejected `1151111081099710` with `srcChainId is required for Solana and must be 2` (code -32000)                                               |
+| `txSignature`           | the **`submit`** signature, not the fill's                                      | Posting the fill signature returns `transaction does not contain a Polymer Prove log`; the `Prove:` log is emitted by `oracle_polymer::submit` |
+| `programID`             | the Polymer oracle **program id** `LiFiBtfyPT1DnTHTAeZ2rwr5RgMrThwA5kt7KGT5nBV` | Pinned and re-checked by the route                                                                                                             |
+| Statuses observed       | `pending`, `initialized`, `complete`, `error`, `not_found`                      | Only `complete` and `error` are terminal                                                                                                       |
+
+Two traps worth restating, because both cost a debugging session:
+
+- **The cluster is chosen by the API host** (`api.polymer.zone` vs
+  `api.testnet.polymer.zone`), not by `srcChainId`. The same id `2` is sent to
+  both. Only mainnet has been confirmed — devnet is assumed to match.
+- **A rejection arrives as a JSON-RPC `error`, with HTTP 200.** Reading
+  `.result` blindly yields `undefined`, which then queries as `not_found` and is
+  indistinguishable from "not ready yet".
+
 ## STILL NOT VERIFIED
 
 The remaining unknowns. Nothing below should be treated as fact until checked.
@@ -238,9 +260,9 @@ The remaining unknowns. Nothing below should be treated as fact until checked.
       chain id does not prove this.
 - [ ] **`chain_mapping` PDAs** exist for every EVM chain offered as a
       counterpart.
-- [ ] **Polymer's proof-request API shape for a Solana source.** The
-      `{srcChainId, txSignature, programID}` body is inferred from a previous
-      attempt (PR #47), not from Polymer documentation.
+- [ ] **Polymer's Solana chain id on the TESTNET API.** Mainnet is confirmed as
+      `2`; devnet is assumed to be the same because the host selects the
+      cluster, but has not been exercised.
 - [ ] One real devnet fill, with its full log dump saved beside this file as
       `tx-fill-devnet.json` (the analogue of Tron's
       `txinfo-fill-old-settler.json`).

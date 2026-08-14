@@ -304,6 +304,54 @@ unmapped id; read from chain:
 Note `SOLANA_POLYMER_CHAIN_ID = 2` is hardcoded in `PolymerOracle`, matching what
 Polymer's API demands — the same `2` documented above.
 
+## The quote API's Solana notation (verified against order.li.fi 2026-08-14)
+
+`POST /api/v1/integrator/quote/request` identifies every party as a CAIP-2
+`namespace:chainId` chain, and reads that party's sibling `asset`, `receiver`
+and `user` fields **in that namespace's own notation**. The two must agree.
+
+| Field               | Solana form                                    |
+| ------------------- | ---------------------------------------------- |
+| `chain`             | `solana:1151111081099710` — **not** `eip155:…` |
+| `asset`             | base58 mint (`EPjFWdd5…`), not 32-byte hex     |
+| `receiver` / `user` | base58 pubkey                                  |
+
+Declaring a Solana output under `eip155:` fails with
+
+```
+400 intent.outputs.0.asset: bytes32 value has non-zero upper bytes: 0xc6fa7af3…
+```
+
+because the API reads an `eip155` asset as a left-padded 20-byte EVM address,
+and a full 32-byte Solana key never fits. The same error appears for a correct
+`solana:` chain still carrying the hex form, so **a wrong namespace and a wrong
+encoding are indistinguishable from the response** — check both.
+
+`@lifi/intent`'s `getQuotes` converts hex to base58 from the `namespace` on each
+input/output, so callers keep the internal hex form; the namespace is what must
+be supplied. lintent derives it with `namespaceForChain`.
+
+One further API rule, learned from a rejection rather than from docs:
+
+```
+400 intent.outputs.0.receiver: Invalid address format:
+    expected on-curve wallet pubkey (not a PDA), got: 4wBqpZM9…
+```
+
+The receiver must be an **on-curve** pubkey. This is not currently checked
+client-side; a PDA recipient is rejected only at quote time.
+
+Confirmed accepted (HTTP 200) with the corrected notation:
+
+```json
+{
+  "chain": "solana:1151111081099710",
+  "receiver": "DQVzbZe8bKqrNxk37udwnYMWag8u2mDBTbFbPUZiGWFM",
+  "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "amount": "0"
+}
+```
+
 ## STILL NOT VERIFIED
 
 The remaining unknowns. Nothing below should be treated as fact until checked.

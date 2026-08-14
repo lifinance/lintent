@@ -11,7 +11,8 @@ import {
   isEvmChain,
   isSolanaChain,
   isSolanaMainnet,
-  isTronChain
+  isTronChain,
+  namespaceForChain
 } from "../../src/lib/utils/chainType";
 
 describe("chainType (solana)", () => {
@@ -75,6 +76,24 @@ describe("chainType (solana)", () => {
     expect(isSolanaMainnet(SOLANA_MAINNET_CHAIN_ID)).toBe(true);
     expect(isSolanaMainnet(SOLANA_DEVNET_CHAIN_ID)).toBe(false);
     expect(isSolanaMainnet(1)).toBe(false);
+  });
+
+  test("namespaceForChain names each chain type on the wire", () => {
+    expect(namespaceForChain(1)).toBe("eip155");
+    expect(namespaceForChain(8453)).toBe("eip155");
+    expect(namespaceForChain(TRON_MAINNET_CHAIN_ID)).toBe("tron");
+    for (const chainId of SOLANA_CHAIN_IDS) {
+      expect(namespaceForChain(chainId)).toBe("solana");
+      expect(namespaceForChain(Number(chainId))).toBe("solana");
+    }
+  });
+
+  test("namespaceForChain never labels a solana chain eip155", () => {
+    // The regression this pins: a Solana output sent as
+    // `eip155:1151111081099710` makes the order service read its 32-byte mint
+    // as a left-padded 20-byte EVM address and reject the quote with
+    // "bytes32 value has non-zero upper bytes".
+    expect(namespaceForChain(SOLANA_MAINNET_CHAIN_ID)).not.toBe("eip155");
   });
 
   test("SOLANA_CHAIN_IDS is the single source of truth", () => {

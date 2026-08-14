@@ -253,7 +253,8 @@
             useProductionApi={store.useProductionApi}
             inputTokens={store.inputTokens}
             bind:outputTokens={store.outputTokens}
-            {account}
+            accountForChain={(chainId) => store.accountForChain(chainId)}
+            outputRecipient={resolveRecipient(store.recipient)}
           ></GetQuote>
         </div>
       {/snippet}

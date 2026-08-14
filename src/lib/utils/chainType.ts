@@ -1,3 +1,4 @@
+import type { Namespace } from "@lifi/intent";
 import {
   SOLANA_DEVNET_CHAIN_ID,
   SOLANA_MAINNET_CHAIN_ID,
@@ -58,6 +59,27 @@ export function isEvmChain(chainId: number | bigint): boolean {
 // checksum verification for Tron, raw base58 for Solana. Re-exported here for
 // existing import sites.
 export { isSolanaBase58Address, isTronBase58Address };
+
+/**
+ * The CAIP-2 namespace a chain id belongs to.
+ *
+ * This is the app's chain *type* under the name the wire uses. It travels with
+ * a chain id into `@lifi/intent` — into `token.chainNamespace` when building an
+ * intent, and into the quote request, where it selects both the `namespace:id`
+ * chain prefix and the encoding of every address and asset alongside it. The
+ * two must agree: a Solana mint declared under `eip155` is rejected by the
+ * order service as `bytes32 value has non-zero upper bytes`, because a 32-byte
+ * key cannot be read as a left-padded 20-byte EVM address.
+ */
+const NAMESPACE_BY_CHAIN_TYPE = {
+  evm: "eip155",
+  tron: "tron",
+  solana: "solana"
+} as const satisfies Record<ChainType, Namespace>;
+
+export function namespaceForChain(chainId: number | bigint): Namespace {
+  return NAMESPACE_BY_CHAIN_TYPE[getChainType(chainId)];
+}
 
 export function formatAddressForChain(address: `0x${string}`, chainId: number | bigint): string {
   if (isTronChain(chainId)) return hexToTronBase58(address);

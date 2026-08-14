@@ -18,8 +18,7 @@ import type {
   StandardOrder
 } from "@lifi/intent";
 import { Intent, IntentApi, StandardSolanaIntent } from "@lifi/intent";
-import type { ChainType } from "$lib/utils/chainType";
-import { getChainType, isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import { isSolanaChain, isTronChain, namespaceForChain } from "$lib/utils/chainType";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { store } from "$lib/state.svelte";
@@ -29,12 +28,6 @@ import { getTronReads, getTronSigner } from "$lib/tron/client";
 import { getTrc20Allowance } from "$lib/tron/reads";
 import { approveToken } from "$lib/tron/writes";
 import { intentDeps } from "./coreDeps";
-
-const NAMESPACE_BY_CHAIN_TYPE = {
-  evm: "eip155",
-  tron: "tron",
-  solana: "solana"
-} as const satisfies Record<ChainType, TokenContext["token"]["chainNamespace"]>;
 
 const FILL_DEADLINE_SECONDS = 10 * 60; // 10 minutes
 const SAME_CHAIN_DURATION_SECONDS = 10 * 60; // 10 minutes
@@ -88,7 +81,7 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
       name: input.token.name,
       chainId,
       decimals: input.token.decimals,
-      chainNamespace: NAMESPACE_BY_CHAIN_TYPE[getChainType(chainId)]
+      chainNamespace: namespaceForChain(chainId)
     },
     amount: input.amount
   };

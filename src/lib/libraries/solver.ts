@@ -519,7 +519,10 @@ export class Solver {
       }
       for (let i = 0; i < fillTransactionHashes.length; i++) {
         const hash = fillTransactionHashes[i];
-        if (!hash || !hash.startsWith("0x") || hash.length !== 66) {
+        // Checked against the OUTPUT chain, not sourceChainId: a Solana fill
+        // is a base58 signature even when the order's input chain is EVM, and
+        // the reverse holds for an EVM fill of a Solana-input order.
+        if (!isValidTxRef(hash, order.outputs[i]?.chainId)) {
           throw new Error(`Invalid fill tx hash at index ${i}: ${hash}`);
         }
       }
@@ -532,7 +535,7 @@ export class Solver {
       const solveParams = await Promise.all(
         fillTransactionHashes.map(async (fth, i) => {
           const output = order.outputs[i];
-          const { solver, timestamp } = await getFillDetails(orderId, output, fth as `0x${string}`);
+          const { solver, timestamp } = await getFillDetails(orderId, output, fth);
           return { timestamp, solver };
         })
       );

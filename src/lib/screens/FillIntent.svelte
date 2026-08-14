@@ -12,7 +12,7 @@
   import { compactTypes } from "@lifi/intent";
   import { hashStruct } from "viem";
   import { isTronBase58Address } from "$lib/utils/chainType";
-  import { isValidTxRef, normalizeTxRef, txRefError } from "$lib/utils/txRef";
+  import { isValidTxRef, normalizeTxRef, txRefError, txRefPlaceholder } from "$lib/utils/txRef";
   import { isOutputFilled } from "$lib/libraries/fillStatus";
   import { tronBase58ToHex } from "@lifi/intent";
 
@@ -207,7 +207,7 @@
             <input
               type="text"
               class="h-7 min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-sky-300"
-              placeholder="0x... fill tx hash"
+              placeholder={`${txRefPlaceholder(output.chainId)} fill tx`}
               value={getManualFillTxInputValue(output)}
               oninput={(event) => {
                 const value = (event.currentTarget as HTMLInputElement).value;

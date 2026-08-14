@@ -77,3 +77,32 @@ describe("messages", () => {
     expect(txRefError(1)).toContain("32-byte");
   });
 });
+
+describe("the signature the claim path rejected", () => {
+  // Regression: Solver.claim validated fill hashes with a hardcoded
+  // `startsWith("0x") && length === 66`, which the txRef refactor missed. A
+  // real devnet fill signature was rejected as "Invalid fill tx hash at index
+  // 0" even though the fill had landed, stranding the order before finalise.
+  const REAL_FILL_SIGNATURE =
+    "5B72eWR4yk58nkmJFcGDXtRi3KS9EHNuZgQSSwXnYQPJnuCtrC4U6aV3wPTopQAATkxkmDcxBqwxPyJ6CVpMRfkQ";
+
+  test("is a well-formed 64-byte Solana signature", () => {
+    expect(base58.decode(REAL_FILL_SIGNATURE).length).toBe(64);
+  });
+
+  test("is accepted for a Solana output chain", () => {
+    expect(isValidTxRef(REAL_FILL_SIGNATURE, SOLANA_DEVNET_CHAIN_ID)).toBe(true);
+    expect(isValidTxRef(REAL_FILL_SIGNATURE, SOLANA_MAINNET_CHAIN_ID)).toBe(true);
+  });
+
+  test("fails the old hardcoded EVM check, which is why the bug existed", () => {
+    const oldCheck = (h: string) => h.startsWith("0x") && h.length === 66;
+    expect(oldCheck(REAL_FILL_SIGNATURE)).toBe(false);
+  });
+
+  test("is still rejected when the output chain is EVM", () => {
+    // The fill hash belongs to output.chainId, so passing an EVM chain here
+    // must reject — a base58 signature on an EVM output is genuinely wrong.
+    expect(isValidTxRef(REAL_FILL_SIGNATURE, 8453)).toBe(false);
+  });
+});

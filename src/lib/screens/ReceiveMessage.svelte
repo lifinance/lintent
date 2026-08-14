@@ -15,7 +15,7 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
   import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
-  import { isValidTxRef } from "$lib/utils/txRef";
+  import { isValidTxRef, type TxRef } from "$lib/utils/txRef";
   import { getSolanaReads } from "$lib/solana/client";
   import { readIsLocallyAttested, readIsProvenOnSolana } from "$lib/solana/reads";
   import { getFillDetails } from "$lib/libraries/fillEvent";
@@ -60,7 +60,11 @@
     chainId: bigint,
     orderContainer: OrderContainer,
     output: MandateOutput,
-    fillTransactionHash: `0x${string}`,
+    // TxRef, not `0x${string}`: this holds a base58 signature whenever the
+    // output chain is Solana. Note `chainId` above is the INPUT chain — the
+    // two are different chains, and validating against the wrong one silently
+    // rejects every Solana fill.
+    fillTransactionHash: TxRef,
     _?: any
   ) {
     // Validated against the OUTPUT chain: a Solana fill of an EVM-input order
@@ -156,7 +160,7 @@
             inputChain,
             orderContainer,
             output,
-            fillTxHashes[outputIndex] as `0x${string}`,
+            fillTxHashes[outputIndex],
             refreshValidation
           )
       }))
@@ -180,6 +184,22 @@
       scroll(5)();
     });
   });
+
+  /**
+   * Chains this row will actually ask for a signature on, other than the input
+   * chain it is labelled with.
+   *
+   * Proving a Solana output runs `submit` on Solana rather than
+   * `receiveMessage` on the input chain (Solver.validate branches on
+   * `output.chainId` before it looks at the source chain), so a Base-labelled
+   * row can legitimately open a Solana wallet.
+   */
+  function proofChains(inputChain: bigint | number): bigint[] {
+    const elsewhere = orderContainer.order.outputs
+      .filter((output) => isSolanaChain(output.chainId) && output.chainId !== BigInt(inputChain))
+      .map((output) => output.chainId);
+    return [...new Set(elsewhere)];
+  }
 </script>
 
 <ScreenFrame
@@ -192,6 +212,18 @@
         <ChainActionRow chainLabel={getChainName(inputChain)}>
           {#snippet action()}
             <div class="text-[11px] font-semibold text-gray-500 uppercase">Validate outputs</div>
+            <!--
+              The row is grouped by INPUT chain, but validating a Solana output
+              submits the fill to the Solana oracle — so the signature comes
+              from the Solana wallet, not the wallet for the chain named above.
+              Said out loud, because an unexplained Solflare prompt on a row
+              labelled "Base" reads as a bug.
+            -->
+            {#each proofChains(inputChain) as proofChain (proofChain)}
+              <div class="text-[10px] text-gray-400 normal-case">
+                signs on {getChainName(proofChain)}
+              </div>
+            {/each}
           {/snippet}
           {#snippet chips()}
             {#each orderContainer.order.outputs as output}

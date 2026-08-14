@@ -7,7 +7,7 @@
 
 import { solanaBase58ToBytes32 } from "@lifi/intent";
 import { assertSolanaCluster, getSolanaReads, solanaRpcUrl } from "./client";
-import type { SolanaInstructionLike, SolanaSignerLike } from "./types";
+import type { SolanaConnectionLike, SolanaInstructionLike, SolanaSignerLike } from "./types";
 
 // Plain runtime check instead of $app/environment so bun tests can import this
 // module — same reason as src/lib/tron/signer.ts.
@@ -255,6 +255,49 @@ async function simulationLogs(error: unknown, connection: unknown): Promise<stri
 }
 
 /**
+ * Whether `error` is web3.js signalling that the blockhash expired before a
+ * confirmation arrived.
+ *
+ * Matched by name rather than `instanceof`: the class is only reachable
+ * through the lazily-imported module, and an `instanceof` against a second
+ * copy of it would silently never match.
+ */
+function isBlockheightExceeded(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const named = error as { name?: unknown; message?: unknown };
+  return (
+    named.name === "TransactionExpiredBlockheightExceededError" ||
+    (typeof named.message === "string" && named.message.includes("block height exceeded"))
+  );
+}
+
+/**
+ * Reads a transaction back, tolerating indexing lag.
+ *
+ * A transaction is queryable only once the RPC has indexed it, which trails
+ * confirmation by a second or two — and by longer on a public endpoint under
+ * load. A single immediate read therefore reports a perfectly good
+ * transaction as unreadable, so this polls before giving up.
+ */
+async function readBackTransaction(reads: SolanaConnectionLike, signature: string) {
+  let lastError: unknown;
+  for (const waitMs of [0, 1000, 2000, 3000, 5000]) {
+    if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    try {
+      const tx = await reads.getTransaction(signature, { commitment: "confirmed" });
+      if (tx?.meta) return tx;
+    } catch (error) {
+      // A read failure here is transport noise, not a verdict on the
+      // transaction — keep polling and let the caller decide after the budget
+      // is spent.
+      lastError = error;
+    }
+  }
+  if (lastError) console.warn(`Could not read back Solana transaction ${signature}`, lastError);
+  return null;
+}
+
+/**
  * A signer bound to `chainId`.
  *
  * The chain id is required, not inferred from any UI state: the cluster
@@ -322,20 +365,32 @@ export async function getSolanaSigner(chainId: number | bigint): Promise<SolanaS
           throw new Error(`${message}\n\nProgram logs:\n${logs.join("\n")}`, { cause: error });
         });
 
-      const confirmation = await connection.confirmTransaction(
-        { signature, blockhash, lastValidBlockHeight },
-        "confirmed"
-      );
-      if (confirmation.value.err) {
-        throw new Error(
-          `Solana transaction ${signature} failed: ${JSON.stringify(confirmation.value.err)}`
+      try {
+        const confirmation = await connection.confirmTransaction(
+          { signature, blockhash, lastValidBlockHeight },
+          "confirmed"
         );
+        if (confirmation.value.err) {
+          throw new Error(
+            `Solana transaction ${signature} failed: ${JSON.stringify(confirmation.value.err)}`
+          );
+        }
+      } catch (error) {
+        // `TransactionExpiredBlockheightExceededError` means the blockhash
+        // stopped being valid before this client saw a confirmation — NOT that
+        // the transaction failed. It routinely fires on a transaction that
+        // landed, when the signature subscription drops or the fill lands near
+        // the boundary. The read-back below is the authoritative answer, so
+        // expiry falls through to it instead of surfacing as a failure on a
+        // transaction the user can see succeeded.
+        if (!isBlockheightExceeded(error)) throw error;
       }
 
       // Confirmation alone is not proof the instructions succeeded — read the
       // transaction back and check `meta.err`. Absent metadata means "not
-      // indexed yet", which must never be reported as success.
-      const tx = await reads.getTransaction(signature, { commitment: "confirmed" });
+      // indexed yet", which must never be reported as success; it is also the
+      // normal state for a few seconds after landing, hence the retries.
+      const tx = await readBackTransaction(reads, signature);
       if (!tx?.meta) {
         throw new Error(
           `Solana transaction ${signature} landed but its result could not be read back; treat it as unconfirmed`

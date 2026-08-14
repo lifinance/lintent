@@ -19,6 +19,7 @@ import { finaliseIntent } from "./intentExecution";
 import { getFillDetails } from "./fillEvent";
 import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import { isValidTxRef, type TxRef } from "$lib/utils/txRef";
+import { polymerReceiveFunction } from "./polymerReceive";
 import { getSolanaReads } from "$lib/solana/client";
 import { createSolanaPrograms } from "$lib/solana/program";
 import { getSolanaSigner } from "$lib/solana/wallet";
@@ -591,9 +592,11 @@ export class Solver {
       if (preHook) await preHook(Number(sourceChainId));
 
       const proofHex = `0x${proof.replace("0x", "")}` as `0x${string}`;
+      // Chosen by the chain the proof came FROM, not the chain we are calling.
+      const receiveFn = polymerReceiveFunction(output.chainId);
       const simCalldata = encodeFunctionData({
         abi: POLYMER_ORACLE_ABI,
-        functionName: "receiveMessage",
+        functionName: receiveFn,
         args: [proofHex]
       });
       try {
@@ -604,7 +607,7 @@ export class Solver {
         });
       } catch (simError) {
         throw new Error(
-          `receiveMessage simulation failed on chain ${Number(sourceChainId)}: ${Solver.extractRevertReason(simError)}`,
+          `${receiveFn} simulation failed on chain ${Number(sourceChainId)}: ${Solver.extractRevertReason(simError)}`,
           { cause: simError as Error }
         );
       }
@@ -614,7 +617,7 @@ export class Solver {
         account: account(),
         address: order.inputOracle,
         abi: POLYMER_ORACLE_ABI,
-        functionName: "receiveMessage",
+        functionName: receiveFn,
         args: [proofHex]
       });
 

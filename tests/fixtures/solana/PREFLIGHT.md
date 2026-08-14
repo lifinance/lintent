@@ -265,6 +265,45 @@ leave a stale timestamp that fails every retry with
 false proof — `oracle_base::validate_payload` compares the payload against the
 on-chain `LocalAttestation` — so the failure mode is loud, not silent.
 
+## The Base input oracle (verified on chain 2026-08-14)
+
+`0x008C3800F3Ad9b3B662d002E90Cc00000000eE17` on Base is **`PolymerOracleMapped`**
+(verified source, compiler 0.8.30), constructed with
+`crossL2Prover = 0x95ccEAE71605c5d97A0AC0EA13013b058729d075`.
+
+**It has two receive entry points and they are not interchangeable:**
+
+| Entry point                   | Prover call                                    | Use for            |
+| ----------------------------- | ---------------------------------------------- | ------------------ |
+| `receiveMessage(bytes)`       | `validateEvent` — parses an EVM event log      | EVM / Tron outputs |
+| `receiveSolanaMessage(bytes)` | `validateSolLogs` — parses Solana program logs | **Solana outputs** |
+
+Sending a Solana proof to `receiveMessage` reverts with no reason string.
+Confirmed by simulating one real proof against both on Base: `receiveMessage`
+reverts, `receiveSolanaMessage` succeeds.
+
+They also key the attestation differently, which is why `output.oracle` must be
+the Polymer PROGRAM ID for a Solana output:
+
+- EVM path: `_attestations[chain][address(this).toIdentifier()][emittingContract][hash]`
+- Solana path: `_attestations[chain][returnedProgramId][application][hash]`
+
+where for Solana `application` is the first 32 bytes of the decoded log — the
+**OutputSettlerSimple PDA** — and the payload hash is `keccak256` of the rest.
+
+**Chain map is configured** (this closes the earlier `chain_mapping` unknown for
+Base <-> Solana). `PolymerOracleMapped._getChainId` reverts `ZeroValue()` on an
+unmapped id; read from chain:
+
+| Call                                  | Value              |
+| ------------------------------------- | ------------------ |
+| `chainIdMap(2)`                       | `1151111081099710` |
+| `reverseChainIdMap(1151111081099710)` | `2`                |
+| `chainIdMap(8453)`                    | `8453`             |
+
+Note `SOLANA_POLYMER_CHAIN_ID = 2` is hardcoded in `PolymerOracle`, matching what
+Polymer's API demands — the same `2` documented above.
+
 ## STILL NOT VERIFIED
 
 The remaining unknowns. Nothing below should be treated as fact until checked.
@@ -274,7 +313,8 @@ The remaining unknowns. Nothing below should be treated as fact until checked.
       authority recorded (or immutability confirmed). Matching a PDA and a
       chain id does not prove this.
 - [ ] **`chain_mapping` PDAs** exist for every EVM chain offered as a
-      counterpart.
+      counterpart. (Base <-> Solana confirmed on the EVM side; the Solana-side
+      PDAs for other EVM counterparts are still unchecked.)
 - [ ] **Polymer's Solana chain id on the TESTNET API.** Mainnet is confirmed as
       `2`; devnet is assumed to be the same because the host selects the
       cluster, but has not been exercised.

@@ -6,7 +6,7 @@
 // cost is a Buffer polyfill, installed in src/hooks.client.ts.
 
 import { solanaBase58ToBytes32 } from "@lifi/intent";
-import { assertSolanaCluster, getSolanaReads } from "./client";
+import { assertSolanaCluster, getSolanaReads, solanaRpcUrl } from "./client";
 import type { SolanaInstructionLike, SolanaSignerLike } from "./types";
 
 // Plain runtime check instead of $app/environment so bun tests can import this
@@ -230,6 +230,31 @@ export function watchSolanaConnection(
 }
 
 /**
+ * Program logs from a failed `sendRawTransaction`.
+ *
+ * `SendTransactionError` exposes them two ways and neither is guaranteed: the
+ * RPC sometimes returns them inline (`logs`), and otherwise they have to be
+ * fetched with `getLogs(connection)`. Both are tried, and a failure to read
+ * them is swallowed — this runs on an error path and must not replace the
+ * original error with one about log fetching.
+ */
+async function simulationLogs(error: unknown, connection: unknown): Promise<string[]> {
+  if (!error || typeof error !== "object") return [];
+  const candidate = error as {
+    logs?: unknown;
+    getLogs?: (connection: unknown) => Promise<unknown>;
+  };
+  if (Array.isArray(candidate.logs) && candidate.logs.length) return candidate.logs.map(String);
+  if (typeof candidate.getLogs !== "function") return [];
+  try {
+    const logs = await candidate.getLogs(connection);
+    return Array.isArray(logs) ? logs.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * A signer bound to `chainId`.
  *
  * The chain id is required, not inferred from any UI state: the cluster
@@ -274,16 +299,28 @@ export async function getSolanaSigner(chainId: number | bigint): Promise<SolanaS
         );
       }
 
-      const connection = new Connection(
-        reads.rpcEndpoint ?? "https://api.mainnet-beta.solana.com",
-        "confirmed"
-      );
+      // solanaRpcUrl, not a literal: api.mainnet-beta.solana.com 403s
+      // application traffic, so hardcoding it as a fallback would send writes
+      // to an endpoint that cannot answer them.
+      const connection = new Connection(reads.rpcEndpoint ?? solanaRpcUrl(chainId), "confirmed");
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = new PublicKey(address);
 
       const signed = await adapter.signTransaction(transaction);
-      const signature = await connection.sendRawTransaction(signed.serialize());
+      // A preflight failure carries the program logs, but only on the error
+      // object — the message alone reduces an Anchor failure to a bare
+      // `custom program error: 0x…`, which names neither the account nor the
+      // constraint that rejected it. Surface the logs or the send is
+      // undiagnosable from the browser console.
+      const signature = await connection
+        .sendRawTransaction(signed.serialize())
+        .catch(async (error: unknown) => {
+          const logs = await simulationLogs(error, connection);
+          if (!logs.length) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`${message}\n\nProgram logs:\n${logs.join("\n")}`, { cause: error });
+        });
 
       const confirmation = await connection.confirmTransaction(
         { signature, blockhash, lastValidBlockHeight },

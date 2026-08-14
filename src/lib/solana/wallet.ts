@@ -19,6 +19,8 @@ export type SolanaWalletConnection = {
   address?: string;
   /** The same key as 32-byte hex — the app's canonical internal identity. */
   addressBytes32?: `0x${string}`;
+  /** Which adapter is connected, so the UI can label the right wallet. */
+  walletName?: string;
 };
 
 export type SolanaWalletOption = {
@@ -41,40 +43,103 @@ type Adapter = {
   off(event: string, handler: () => void): void;
 };
 
-let adapters: Adapter[] | undefined;
+let adapters: Promise<Adapter[]> | undefined;
 let active: Adapter | undefined;
 
-async function loadAdapters(): Promise<Adapter[]> {
+/**
+ * The adapter singletons.
+ *
+ * The *promise* is memoised, not the resolved array: several callers subscribe
+ * during startup (the store's connection watcher plus every component showing
+ * a connect affordance), and caching only the settled value lets concurrent
+ * callers each construct their own adapter set. The last one would win,
+ * stranding earlier subscribers on orphaned adapters that never fire again.
+ */
+function loadAdapters(): Promise<Adapter[]> {
   if (adapters) return adapters;
-  const [{ PhantomWalletAdapter }, { SolflareWalletAdapter }] = await Promise.all([
+  const created = Promise.all([
     import("@solana/wallet-adapter-phantom"),
     import("@solana/wallet-adapter-solflare")
-  ]);
-  adapters = [
+  ]).then(([{ PhantomWalletAdapter }, { SolflareWalletAdapter }]) => [
     new PhantomWalletAdapter() as unknown as Adapter,
     new SolflareWalletAdapter() as unknown as Adapter
-  ];
-  return adapters;
+  ]);
+  // A failed dynamic import must not be cached forever, or one flaky network
+  // moment disables Solana for the whole session.
+  created.catch(() => {
+    if (adapters === created) adapters = undefined;
+  });
+  adapters = created;
+  return created;
+}
+
+function describeWallet(adapter: Adapter): SolanaWalletOption {
+  return {
+    name: adapter.name,
+    readyState: String(adapter.readyState),
+    icon: adapter.icon
+  };
 }
 
 /** The wallets we offer, with whatever the adapter knows about availability. */
 export async function listSolanaWallets(): Promise<SolanaWalletOption[]> {
   if (!browser) return [];
   const all = await loadAdapters();
-  return all.map((adapter) => ({
-    name: adapter.name,
-    readyState: String(adapter.readyState),
-    icon: adapter.icon
-  }));
+  return all.map(describeWallet);
+}
+
+/**
+ * Whether a wallet can actually be connected right now.
+ *
+ * Solflare reports "Loadable" rather than "Installed" because it has a web
+ * fallback that works without the extension, so only NotDetected/Unsupported
+ * are genuinely unusable.
+ */
+export function isSolanaWalletDetected(wallet: SolanaWalletOption): boolean {
+  return wallet.readyState !== "NotDetected" && wallet.readyState !== "Unsupported";
+}
+
+/**
+ * Subscribes to wallet *availability* (as opposed to connection state).
+ *
+ * `readyState` is not static: an adapter reports NotDetected until its
+ * extension injects, which routinely lands after first paint. A list captured
+ * once at mount therefore leaves an installed wallet permanently greyed out,
+ * so anything rendering a connect affordance must subscribe rather than read
+ * `listSolanaWallets()` a single time.
+ */
+export function watchSolanaWallets(onChange: (wallets: SolanaWalletOption[]) => void): () => void {
+  if (!browser) return () => undefined;
+
+  let disposed = false;
+  const detachers: (() => void)[] = [];
+
+  void loadAdapters()
+    .then((all) => {
+      if (disposed) return;
+      const emit = () => onChange(all.map(describeWallet));
+      for (const adapter of all) {
+        adapter.on("readyStateChange", emit);
+        detachers.push(() => adapter.off("readyStateChange", emit));
+      }
+      emit();
+    })
+    .catch((error) => console.warn("Could not load Solana wallet adapters", error));
+
+  return () => {
+    disposed = true;
+    for (const detach of detachers) detach();
+  };
 }
 
 function toConnection(adapter: Adapter | undefined): SolanaWalletConnection {
   const address = adapter?.connected ? adapter.publicKey?.toBase58() : undefined;
-  if (!address) return { status: "disconnected" };
+  if (!address || !adapter) return { status: "disconnected" };
   return {
     status: "connected",
     address,
-    addressBytes32: solanaBase58ToBytes32(address)
+    addressBytes32: solanaBase58ToBytes32(address),
+    walletName: adapter.name
   };
 }
 
@@ -82,7 +147,7 @@ export function getSolanaConnectionState(): SolanaWalletConnection {
   return toConnection(active);
 }
 
-export async function connectSolanaWallet(name: string): Promise<SolanaWalletConnection> {
+async function doConnect(name: string): Promise<SolanaWalletConnection> {
   const all = await loadAdapters();
   const adapter = all.find((candidate) => candidate.name === name);
   if (!adapter) throw new Error(`Unknown Solana wallet: ${name}`);
@@ -96,6 +161,28 @@ export async function connectSolanaWallet(name: string): Promise<SolanaWalletCon
   await adapter.connect();
   active = adapter;
   return toConnection(adapter);
+}
+
+let connectQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Connects `name`, serialised against any other in-flight connect.
+ *
+ * The queue is module-level because more than one component renders a connect
+ * affordance (the status bar and the full-screen picker are mounted together),
+ * and each tracks its own "connecting" flag. Without this, two overlapping
+ * attempts can both pass the `active` check above, connect different adapters,
+ * and leave `active` and the store disagreeing about which wallet is live.
+ */
+export function connectSolanaWallet(name: string): Promise<SolanaWalletConnection> {
+  // Settle either way before starting the next: a rejected attempt must not
+  // block the queue.
+  const next = connectQueue.then(
+    () => doConnect(name),
+    () => doConnect(name)
+  );
+  connectQueue = next.catch(() => undefined);
+  return next;
 }
 
 export async function disconnectSolanaWallet(): Promise<SolanaWalletConnection> {
@@ -119,20 +206,22 @@ export function watchSolanaConnection(
   let disposed = false;
   const detachers: (() => void)[] = [];
 
-  void loadAdapters().then((all) => {
-    if (disposed) return;
-    for (const adapter of all) {
-      const handler = () => {
-        if (adapter.connected) active = adapter;
-        else if (active === adapter) active = undefined;
-        onChange(toConnection(active));
-      };
-      for (const event of ["connect", "disconnect", "error"]) {
-        adapter.on(event, handler);
-        detachers.push(() => adapter.off(event, handler));
+  void loadAdapters()
+    .then((all) => {
+      if (disposed) return;
+      for (const adapter of all) {
+        const handler = () => {
+          if (adapter.connected) active = adapter;
+          else if (active === adapter) active = undefined;
+          onChange(toConnection(active));
+        };
+        for (const event of ["connect", "disconnect", "error"]) {
+          adapter.on(event, handler);
+          detachers.push(() => adapter.off(event, handler));
+        }
       }
-    }
-  });
+    })
+    .catch((error) => console.warn("Could not load Solana wallet adapters", error));
 
   return () => {
     disposed = true;

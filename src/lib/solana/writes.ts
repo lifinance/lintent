@@ -8,12 +8,7 @@
 
 import { getOutputHash } from "@lifi/intent";
 import type { MandateOutput, StandardSolana } from "@lifi/intent";
-import {
-  INPUT_SETTLER_ESCROW_PROGRAM_ID,
-  INTENTS_PROTOCOL_PROGRAM_ID,
-  OUTPUT_SETTLER_SIMPLE_PROGRAM_ID,
-  POLYMER_PROGRAM_ID
-} from "$lib/idl";
+import { INTENTS_PROTOCOL_PROGRAM_ID, POLYMER_PROGRAM_ID } from "$lib/idl";
 import { assertSolanaCluster } from "./client";
 import {
   assertSolanaAmountFitsU64,

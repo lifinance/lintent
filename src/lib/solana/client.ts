@@ -6,11 +6,19 @@ import type { SolanaConnectionLike } from "./types";
 // module — same reason as src/lib/tron/signer.ts.
 const browser = typeof window !== "undefined";
 
-// Public endpoints rate-limit aggressively against the app's balance polling,
-// so a dedicated RPC is strongly recommended. PUBLIC_ prefix = shipped in the
-// client bundle, which is fine for an RPC URL.
+// NOT api.mainnet-beta.solana.com: Solana Labs' public mainnet endpoint
+// answers application traffic with a flat `403 Access forbidden` — it is
+// reserved for CLI/development use, and no amount of request pacing gets past
+// it. publicnode serves the same cluster (genesis hash asserted below) with
+// `Access-Control-Allow-Origin: *`. Devnet's public endpoint is not restricted
+// this way and works as-is.
+//
+// Both remain best-effort community endpoints: fine for a demo, but a
+// dedicated RPC is worth setting for anything sustained, mainly because public
+// endpoints prune transaction history and `getFillDetails` reads fills back by
+// signature. PUBLIC_ prefix = shipped in the client bundle, fine for an RPC URL.
 const mainnetRpcUrl =
-  import.meta.env?.PUBLIC_SOLANA_MAINNET_RPC_URL?.trim() || "https://api.mainnet-beta.solana.com";
+  import.meta.env?.PUBLIC_SOLANA_MAINNET_RPC_URL?.trim() || "https://solana-rpc.publicnode.com";
 const devnetRpcUrl =
   import.meta.env?.PUBLIC_SOLANA_DEVNET_RPC_URL?.trim() || "https://api.devnet.solana.com";
 

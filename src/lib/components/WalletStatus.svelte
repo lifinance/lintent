@@ -1,13 +1,28 @@
 <script lang="ts">
   import store from "$lib/state.svelte";
-  import { connectWith, listWalletConnectors, disconnectWallet } from "$lib/utils/wagmi";
+  import { connectWith, listWalletConnectors } from "$lib/utils/wagmi";
   import { isTronLinkAvailable, connectTronLink } from "$lib/tron/signer";
+  import type { SolanaWalletOption } from "$lib/solana/wallet";
+  import {
+    connectSolanaWallet,
+    isSolanaWalletDetected,
+    watchSolanaWallets
+  } from "$lib/solana/wallet";
 
   let connectingEvm = $state(false);
   let connectingTron = $state(false);
+  let connectingSolana = $state(false);
   let showEvmDropdown = $state(false);
+  let showSolanaDropdown = $state(false);
 
   const connectors = listWalletConnectors();
+
+  // Subscribed rather than read once: see watchSolanaWallets. Returning the
+  // unsubscribe makes Svelte tear the listeners down with the component.
+  let solanaWallets = $state<SolanaWalletOption[]>([]);
+  $effect(() => watchSolanaWallets((wallets) => (solanaWallets = wallets)));
+
+  const availableSolanaWallets = $derived(solanaWallets.filter(isSolanaWalletDetected));
 
   async function onConnectEvm(connectorId: string) {
     try {
@@ -30,6 +45,18 @@
       console.warn("TronLink connect failed", error);
     } finally {
       connectingTron = false;
+    }
+  }
+
+  async function onConnectSolana(name: string) {
+    try {
+      connectingSolana = true;
+      showSolanaDropdown = false;
+      store.solanaWalletConnection = await connectSolanaWallet(name);
+    } catch (error) {
+      console.warn(`Solana connect failed for ${name}`, error);
+    } finally {
+      connectingSolana = false;
     }
   }
 
@@ -104,7 +131,39 @@
     <span class="rounded bg-green-50 px-2 py-0.5 text-green-700">
       Solana: {truncate(store.solanaConnectedAccount.base58Address)}
     </span>
+  {:else if availableSolanaWallets.length === 1}
+    <button
+      class="cursor-pointer rounded bg-sky-50 px-2 py-0.5 text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+      disabled={connectingSolana}
+      onclick={() => onConnectSolana(availableSolanaWallets[0].name)}
+    >
+      {connectingSolana ? "Connecting..." : "Connect Solana"}
+    </button>
+  {:else if availableSolanaWallets.length > 1}
+    <div class="relative">
+      <button
+        class="cursor-pointer rounded bg-sky-50 px-2 py-0.5 text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={connectingSolana}
+        onclick={() => (showSolanaDropdown = !showSolanaDropdown)}
+      >
+        {connectingSolana ? "Connecting..." : "Connect Solana"}
+      </button>
+      {#if showSolanaDropdown}
+        <div
+          class="absolute top-full left-0 z-50 mt-1 rounded border border-gray-200 bg-white shadow-md"
+        >
+          {#each availableSolanaWallets as wallet (wallet.name)}
+            <button
+              class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs whitespace-nowrap text-gray-700 hover:bg-sky-50"
+              onclick={() => onConnectSolana(wallet.name)}
+            >
+              {wallet.name}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   {:else}
-    <span class="rounded bg-gray-50 px-2 py-0.5 text-gray-400"> Solana: Not connected </span>
+    <span class="rounded bg-gray-50 px-2 py-0.5 text-gray-400"> Solana: No wallet </span>
   {/if}
 </div>

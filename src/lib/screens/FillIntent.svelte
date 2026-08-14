@@ -1,10 +1,7 @@
 <script lang="ts">
-  import { BYTES32_ZERO, formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
-  import { bytes32ToAddress } from "@lifi/intent";
-  import { getOutputHash } from "@lifi/intent";
+  import { formatTokenAmount, getChainName, getCoin } from "$lib/config";
   import type { MandateOutput, OrderContainer } from "@lifi/intent";
   import { Solver } from "$lib/libraries/solver";
-  import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
   import AwaitButton from "$lib/components/AwaitButton.svelte";
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
@@ -14,7 +11,7 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
   import { hashStruct } from "viem";
-  import { isTronChain, isTronBase58Address } from "$lib/utils/chainType";
+  import { isTronBase58Address } from "$lib/utils/chainType";
   import { isValidTxRef, normalizeTxRef, txRefError } from "$lib/utils/txRef";
   import { isOutputFilled } from "$lib/libraries/fillStatus";
   import { tronBase58ToHex } from "@lifi/intent";

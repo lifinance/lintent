@@ -312,6 +312,64 @@ describe("fillOutput", () => {
     expect(calls.find((c) => c.method === "fill")).toBeUndefined();
   });
 
+  test("encodes a JSON-round-tripped output identically to a bigint one", async () => {
+    // Orders reloaded from the local DB carry `amount`/`chainId` as decimal
+    // STRINGS (BigInt.prototype.toJSON on the way in, plain JSON.parse on the
+    // way out). `toBytes32` used to format those with `String.prototype
+    // .toString(16)`, which ignores the radix, so the decimal digits were
+    // re-read as hex: amount 1000000 went out as 0x…01000000. The PDAs come
+    // from `getOutputHash`, which coerces through viem and stayed correct, so
+    // the program derived fill_id from a different hash than the client and the
+    // fill died with ConstraintSeeds (2006) — after which the transfer would
+    // have moved the wrong number of tokens.
+    const output = makeOutput();
+    const roundTripped = JSON.parse(
+      JSON.stringify(output, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value
+      )
+    ) as MandateOutput;
+    expect(typeof (roundTripped as unknown as { amount: unknown }).amount).toBe("string");
+
+    const bigintRun = makeDeps();
+    await fillOutput(bigintRun.deps, {
+      orderId: ORDER_ID,
+      output,
+      fillDeadline: 1_700_000_900,
+      solverBytes32: b32("5")
+    });
+    const stringRun = makeDeps();
+    await fillOutput(stringRun.deps, {
+      orderId: ORDER_ID,
+      output: roundTripped,
+      fillDeadline: 1_700_000_900,
+      solverBytes32: b32("5")
+    });
+
+    const encoded = (run: { calls: RecordedCall[] }) => {
+      const call = run.calls.find((c) => c.method === "fill")!;
+      return JSON.stringify({ args: call.args, accounts: call.accounts });
+    };
+    expect(encoded(stringRun)).toBe(encoded(bigintRun));
+  });
+
+  test("rejects a field that is not 32-byte hex before signing", async () => {
+    // A base58 address reaching the instruction encoder must never be padded
+    // into NaN bytes (borsh-encodes as zeroes) — that ships an argument the
+    // client's own PDAs disagree with, i.e. another opaque ConstraintSeeds.
+    // viem's hex parsing in `getOutputHash` is the first line of defence and
+    // wins here; `bytes32Array` backstops any path that skips it.
+    const { deps, sent } = makeDeps();
+    await expect(
+      fillOutput(deps, {
+        orderId: ORDER_ID,
+        output: makeOutput({ recipient: MINT as unknown as `0x${string}` }),
+        fillDeadline: 1_700_000_900,
+        solverBytes32: b32("5")
+      })
+    ).rejects.toThrow(/Invalid byte sequence|32-byte hex/);
+    expect(sent).toHaveLength(0);
+  });
+
   test("rejects a zero solver before signing", async () => {
     const { deps, sent } = makeDeps();
     await expect(

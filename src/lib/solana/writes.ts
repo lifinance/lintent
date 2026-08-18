@@ -55,9 +55,21 @@ async function codecs() {
 
 type Codecs = Awaited<ReturnType<typeof codecs>>;
 
-/** bytes32 hex → the `[u8; 32]` Anchor expects. */
+/**
+ * bytes32 hex → the `[u8; 32]` Anchor expects.
+ *
+ * Validated rather than trusted: the loop below reads exactly 32 bytes, so a
+ * short, odd-length or non-hex value (a base58 Solana address, say) would fill
+ * the tail with `NaN` — borsh-encoded as zeroes — and produce an instruction
+ * argument that disagrees with the PDAs the client derived from the same field.
+ * That surfaces on chain as an opaque `ConstraintSeeds`, so it is rejected
+ * here instead.
+ */
 function bytes32Array(value: `0x${string}`): number[] {
   const hex = value.replace(/^0x/, "");
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error(`Expected 32-byte hex for a Solana instruction argument, got ${value}`);
+  }
   const out: number[] = [];
   for (let i = 0; i < 64; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
   return out;
@@ -76,8 +88,32 @@ function toAnchorOutput(output: MandateOutput) {
   };
 }
 
+/**
+ * A numeric order field → 32-byte big-endian hex.
+ *
+ * `BigInt(value)` is not redundant despite the `bigint` type: orders are
+ * persisted with `JSON.stringify` under the `BigInt.prototype.toJSON` polyfill
+ * and read back with a plain `JSON.parse`, so every amount and chain id in a
+ * container that has been through the local DB is a decimal STRING at runtime.
+ * `String.prototype.toString` ignores its radix argument, so the unguarded
+ * version re-read those decimal digits as hex — amount `1496250` became
+ * `0x…01496250` (21,455,440) and chain id `1151111081099710` became
+ * `0x…1151111081099710`.
+ *
+ * Only the instruction arguments went through here; the fill's PDAs are seeded
+ * off `getOutputHash`, which coerces through viem and stayed correct. So the
+ * client asked the program to derive `fill_id` from a different mandate-output
+ * hash than the one it had derived itself, and the fill died in `try_accounts`
+ * with `ConstraintSeeds` (2006 / 0x7d6) — before `validate_chain_id_is_output_chain_id`
+ * could name the real problem. Had the seeds happened to line up, the SPL
+ * transfer would have moved 21.455440 USDC instead of 1.496250.
+ */
 function toBytes32(value: bigint): `0x${string}` {
-  return `0x${value.toString(16).padStart(64, "0")}`;
+  const asBigInt = BigInt(value);
+  if (asBigInt < 0n || asBigInt >= 1n << 256n) {
+    throw new Error(`Value ${asBigInt} does not fit in bytes32`);
+  }
+  return `0x${asBigInt.toString(16).padStart(64, "0")}`;
 }
 
 function toAnchorOrder(order: StandardSolana, c: Codecs) {
@@ -499,7 +535,11 @@ export async function finalise(
 
   const remaining = order.outputs.map((output, index) => {
     const params = solveParams[index] ?? first;
-    const sameChain = output.chainId === order.originChainId;
+    // Compared as bigints, not with `===`: a container reloaded from the local
+    // DB carries these as decimal strings (see `toBytes32`), and a string/bigint
+    // pair is never `===`. That silently classified a same-chain output as
+    // remote and put the wrong attestation account in `remainingAccounts`.
+    const sameChain = BigInt(output.chainId) === BigInt(order.originChainId);
     const pubkey = sameChain
       ? localAttestationPda(
           outputSettlerSimplePda(),

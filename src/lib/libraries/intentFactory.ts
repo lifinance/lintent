@@ -30,7 +30,10 @@ import { approveToken } from "$lib/tron/writes";
 import { intentDeps } from "./coreDeps";
 
 const FILL_DEADLINE_SECONDS = 10 * 60; // 10 minutes
-const SAME_CHAIN_DURATION_SECONDS = 10 * 60; // 10 minutes
+// Must stay strictly greater than FILL_DEADLINE_SECONDS: the Solana input
+// settler requires `fill_deadline < expires` (EVM only rejects `>`), so equal
+// deadlines fail `open` with FillDeadlineAfterExpiry on same-chain Solana.
+const SAME_CHAIN_DURATION_SECONDS = 20 * 60; // 20 minutes
 const SAME_CHAIN_EXCLUSIVITY_SECONDS = 12 * 3; // 36 seconds
 // SOLV-544 widened the exclusivity window to 5 minutes so solvers have time to
 // fill before exclusivity ends. @lifi/intent 0.2.1 still encodes ONE_MINUTE in

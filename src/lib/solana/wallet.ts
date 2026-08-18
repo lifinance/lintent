@@ -229,29 +229,78 @@ export function watchSolanaConnection(
   };
 }
 
+/** Where a set of recovered program logs came from, for labelling the error. */
+type LogSource = "inline" | "transaction" | "re-simulation";
+
+/** The parts of a web3.js `Connection` the log recovery below needs. */
+type LogRecoveryConnection = {
+  simulateTransaction(transaction: unknown): Promise<{
+    value: { logs?: string[] | null };
+  }>;
+};
+
 /**
- * Program logs from a failed `sendRawTransaction`.
+ * Program logs for a failed `sendRawTransaction`, from whichever of three
+ * sources can actually answer.
  *
- * `SendTransactionError` exposes them two ways and neither is guaranteed: the
- * RPC sometimes returns them inline (`logs`), and otherwise they have to be
- * fetched with `getLogs(connection)`. Both are tried, and a failure to read
- * them is swallowed — this runs on an error path and must not replace the
- * original error with one about log fetching.
+ * The message alone reduces an Anchor failure to a bare `custom program error:
+ * 0x…`, which names neither the account nor the constraint that rejected it, so
+ * recovering the logs is the difference between a diagnosable failure and an
+ * undiagnosable one. Sources, in order of authority:
+ *
+ *  1. `error.logs` — what the RPC returned inline with the preflight rejection.
+ *     Exactly what happened, but many providers omit it.
+ *  2. `error.getLogs(connection)` — authoritative when the transaction LANDED
+ *     and then failed, because it reads the recorded logs back. Useless for a
+ *     preflight rejection: it is `getTransaction(signature)` underneath
+ *     (@solana/web3.js `SendTransactionError.getLogs`), and a transaction
+ *     rejected at preflight never landed, so it rejects with "Log messages not
+ *     found".
+ *  3. Re-simulating the signed transaction. This is the only source that works
+ *     for a preflight rejection — the case that used to surface as no logs at
+ *     all. It is a fresh execution against current state rather than a record
+ *     of the original attempt, hence the distinct `source` so the caller can
+ *     say so. Safe to replay an already-signed transaction: for a legacy
+ *     `Transaction`, `simulateTransaction` installs a fresh blockhash and does
+ *     not set `sigVerify`, so the stale signatures are not checked.
+ *
+ * Every failure here is swallowed: this runs on an error path and must never
+ * replace the original error with one about log fetching.
  */
-async function simulationLogs(error: unknown, connection: unknown): Promise<string[]> {
-  if (!error || typeof error !== "object") return [];
-  const candidate = error as {
-    logs?: unknown;
-    getLogs?: (connection: unknown) => Promise<unknown>;
-  };
-  if (Array.isArray(candidate.logs) && candidate.logs.length) return candidate.logs.map(String);
-  if (typeof candidate.getLogs !== "function") return [];
-  try {
-    const logs = await candidate.getLogs(connection);
-    return Array.isArray(logs) ? logs.map(String) : [];
-  } catch {
-    return [];
+async function failureLogs(
+  error: unknown,
+  connection: LogRecoveryConnection,
+  signed: unknown
+): Promise<{ logs: string[]; source: LogSource } | undefined> {
+  if (error && typeof error === "object") {
+    const candidate = error as {
+      logs?: unknown;
+      getLogs?: (connection: unknown) => Promise<unknown>;
+    };
+    if (Array.isArray(candidate.logs) && candidate.logs.length) {
+      return { logs: candidate.logs.map(String), source: "inline" };
+    }
+    if (typeof candidate.getLogs === "function") {
+      try {
+        const logs = await candidate.getLogs(connection);
+        if (Array.isArray(logs) && logs.length) {
+          return { logs: logs.map(String), source: "transaction" };
+        }
+      } catch {
+        // Expected for a preflight rejection — fall through to re-simulation.
+      }
+    }
   }
+  try {
+    const simulated = await connection.simulateTransaction(signed);
+    const logs = simulated.value.logs;
+    if (Array.isArray(logs) && logs.length) {
+      return { logs: logs.map(String), source: "re-simulation" };
+    }
+  } catch (resimulationError) {
+    console.warn("Could not re-simulate a failed Solana transaction", resimulationError);
+  }
+  return undefined;
 }
 
 /**
@@ -351,18 +400,24 @@ export async function getSolanaSigner(chainId: number | bigint): Promise<SolanaS
       transaction.feePayer = new PublicKey(address);
 
       const signed = await adapter.signTransaction(transaction);
-      // A preflight failure carries the program logs, but only on the error
-      // object — the message alone reduces an Anchor failure to a bare
-      // `custom program error: 0x…`, which names neither the account nor the
-      // constraint that rejected it. Surface the logs or the send is
-      // undiagnosable from the browser console.
+      // Attach the program logs to the thrown error — see `failureLogs` for why
+      // three sources are needed and which one answers for a preflight
+      // rejection. Without this an Anchor failure reaches the console as a bare
+      // `custom program error: 0x…` and has to be reproduced offline before it
+      // can be read.
       const signature = await connection
         .sendRawTransaction(signed.serialize())
         .catch(async (error: unknown) => {
-          const logs = await simulationLogs(error, connection);
-          if (!logs.length) throw error;
+          const found = await failureLogs(error, connection, signed);
+          if (!found) throw error;
           const message = error instanceof Error ? error.message : String(error);
-          throw new Error(`${message}\n\nProgram logs:\n${logs.join("\n")}`, { cause: error });
+          // A re-simulation is labelled as such: it ran against current state,
+          // so it is evidence about the failure rather than a record of it.
+          const heading =
+            found.source === "re-simulation"
+              ? "Program logs (re-simulated after the failure; chain state may have moved since)"
+              : "Program logs";
+          throw new Error(`${message}\n\n${heading}:\n${found.logs.join("\n")}`, { cause: error });
         });
 
       try {

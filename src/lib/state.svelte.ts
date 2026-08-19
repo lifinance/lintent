@@ -28,7 +28,7 @@ import {
   tokens as tokensTable
 } from "./schema";
 import { and, eq, ne, notInArray } from "drizzle-orm";
-import { containerToIntent } from "./utils/intent";
+import { containerToIntent, reviveOrderBigInts } from "./utils/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {
   getCurrentConnection,
@@ -73,6 +73,9 @@ class Store {
     const rows = await db!.select().from(intents);
     this.orders = rows.map((r) => {
       const order = JSON.parse(r.data) as OrderContainerWithMeta;
+      // The blob was stringified under the BigInt.prototype.toJSON polyfill,
+      // so every bigint field is a decimal string here until revived.
+      order.order = reviveOrderBigInts(order.order);
       // Re-attach the authoritative column values dropped by JSON.parse. The
       // dedicated `created_at` column always wins over anything stale in the
       // blob; `submitTime` (order-server time) round-trips inside the blob.

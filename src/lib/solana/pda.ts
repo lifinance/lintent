@@ -49,11 +49,17 @@ function bytes32Seed(value: `0x${string}`, label: string): Uint8Array {
  * isolated here rather than inlined at each call site.
  */
 export function u128ToLeBytes(value: bigint): Uint8Array {
-  if (value < 0n || value >= 1n << 128n) {
-    throw new Error(`chain id ${value} does not fit in u128`);
+  // `BigInt(value)` despite the `bigint` type: an order container that has been
+  // through the local DB carries decimal STRINGS in its bigint fields (see
+  // toBytes32 in ./writes.ts), and `"…" & 0xffn` throws "Cannot mix BigInt and
+  // other types" — which killed every attestationPda/chainMappingPda derivation
+  // for a rehydrated order.
+  const asBigInt = BigInt(value);
+  if (asBigInt < 0n || asBigInt >= 1n << 128n) {
+    throw new Error(`chain id ${asBigInt} does not fit in u128`);
   }
   const bytes = new Uint8Array(16);
-  let rest = value;
+  let rest = asBigInt;
   for (let i = 0; i < 16; i++) {
     bytes[i] = Number(rest & 0xffn);
     rest >>= 8n;

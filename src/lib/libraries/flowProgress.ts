@@ -110,7 +110,10 @@ async function isOutputValidatedOnChain(
     // On Solana "proven" is not a mapping lookup — the oracle CREATES an
     // attestation account, so its existence is the proof. Same-chain fills
     // never reach an oracle at all: the fill itself writes a LocalAttestation.
-    const sameChain = output.chainId === inputChain;
+    // BigInt() on both sides: a DB-rehydrated container carries chain ids as
+    // decimal strings, and a string/bigint pair is never strictly equal — which
+    // silently classified a same-chain fill as remote.
+    const sameChain = BigInt(output.chainId) === BigInt(inputChain);
     return getOrFetchRpc(
       provenCacheKey,
       async () => {

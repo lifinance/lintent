@@ -110,6 +110,16 @@ describe("encoding helpers", () => {
     expect(u128ToLeBytes(0n)).toEqual(new Uint8Array(16));
   });
 
+  test("u128ToLeBytes accepts the decimal strings a DB round-trip produces", () => {
+    // Containers rehydrated with a plain JSON.parse carry chain ids as decimal
+    // strings despite the bigint type; the unguarded version threw "Cannot mix
+    // BigInt and other types" from every attestationPda derivation.
+    expect(u128ToLeBytes("1151111081099710" as unknown as bigint)).toEqual(
+      u128ToLeBytes(1151111081099710n)
+    );
+    expect(() => u128ToLeBytes("not a number" as unknown as bigint)).toThrow();
+  });
+
   test("pubkeyToBytes32 and bytes32ToPubkey round-trip", () => {
     const pda = polymerOraclePda();
     expect(bytes32ToPubkey(pubkeyToBytes32(pda)).toBase58()).toBe(pda.toBase58());

@@ -13,7 +13,7 @@
   import WalletStatus from "$lib/components/WalletStatus.svelte";
   import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
   import store from "$lib/state.svelte";
-  import { containerToIntent } from "$lib/utils/intent";
+  import { containerToIntent, reviveOrderBigInts } from "$lib/utils/intent";
   import { getChainType } from "$lib/utils/chainType";
 
   BigInt.prototype.toJSON = function () {
@@ -68,7 +68,15 @@
               type: "None",
               payload: "0x"
             } as NoSignature);
-        const orderContainer = { ...order, allocatorSignature, sponsorSignature };
+        // The socket hands over raw parsed JSON (`user:vm-order-submit` skips
+        // the BigInt conversion getAndParseOrders does), so every bigint field
+        // arrives as a decimal string — which broke Solana PDA derivations.
+        const orderContainer = {
+          ...order,
+          order: reviveOrderBigInts(order.order),
+          allocatorSignature,
+          sponsorSignature
+        };
 
         // Deduplicate: only add if not already present
         const orderId = containerToIntent(orderContainer).orderId();

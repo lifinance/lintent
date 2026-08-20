@@ -2,6 +2,7 @@
   import { IntentApi } from "@lifi/intent";
   import type { AppTokenContext } from "$lib/appTypes";
   import { resolveDemoQuoteParams } from "$lib/libraries/demoQuote";
+  import { namespaceForChain } from "$lib/utils/chainType";
   import { interval } from "rxjs";
 
   let {
@@ -11,7 +12,8 @@
     integratorKey = "",
     inputTokens,
     outputTokens = $bindable(),
-    account,
+    accountForChain,
+    outputRecipient,
     mainnet,
     useProductionApi
   }: {
@@ -21,14 +23,46 @@
     integratorKey?: string;
     inputTokens: AppTokenContext[];
     outputTokens: AppTokenContext[];
-    account: () => `0x${string}`;
+    /**
+     * The acting account on a chain, or undefined when no wallet for that
+     * chain's namespace is connected. Deliberately not the screen's single
+     * `account()`: every party in a quote is named in its own chain's
+     * namespace, so an EVM -> Solana quote needs both wallets (or an explicit
+     * recipient) before it can be requested at all.
+     */
+    accountForChain: (chainId: number | bigint) => `0x${string}` | undefined;
+    /** The issuance form's recipient override, when set. */
+    outputRecipient?: `0x${string}`;
     mainnet: boolean;
     useProductionApi: boolean | null;
   } = $props();
 
   const intentApi = $derived(new IntentApi(useProductionApi ?? mainnet));
 
+  /**
+   * Raised when a party in the quote has no address in its own namespace. It is
+   * caught below and shown as "No Quote" rather than a broken request: asking
+   * for a cross-namespace quote without a destination identity is a state the
+   * user resolves by connecting a wallet or naming a recipient.
+   */
+  class MissingQuoteAddress extends Error {}
+
+  function requireAccount(chainId: number | bigint): `0x${string}` {
+    const resolved = accountForChain(chainId);
+    if (!resolved) {
+      throw new MissingQuoteAddress(`No connected account for chain ${chainId}`);
+    }
+    return resolved;
+  }
+
+  // Only the newest request may write back. Editing the recipient or switching
+  // a destination wallet starts a new quote while an older one is in flight;
+  // without this the slower response wins and the displayed output amount stops
+  // matching what issuance would encode.
+  let requestSeq = 0;
+
   async function getQuoteAndSet() {
+    const seq = ++requestSeq;
     try {
       const { exclusiveFor: requestedExclusiveFor, integratorKey: requestedIntegratorKey } =
         resolveDemoQuoteParams({
@@ -38,28 +72,40 @@
           exclusiveFor
         });
 
+      const userChainId = inputTokens[0].token.chainId;
+
+      // Every chain, address and asset is declared in its own CAIP-2 namespace.
+      // `@lifi/intent` re-encodes the address fields to match the namespace it
+      // is given, so the internal hex form is passed through unchanged here and
+      // a Solana mint reaches the API as base58.
       const response = await intentApi.getQuotes({
-        user: account(),
-        userChainId: inputTokens[0].token.chainId,
+        user: requireAccount(userChainId),
+        userChainId,
+        userNamespace: namespaceForChain(userChainId),
         exclusiveFor: requestedExclusiveFor,
         integratorKey: requestedIntegratorKey,
         inputs: inputTokens.map(({ token, amount }) => {
           return {
-            sender: account(),
+            sender: requireAccount(token.chainId),
             asset: token.address,
             chainId: token.chainId,
+            namespace: namespaceForChain(token.chainId),
             amount: amount
           };
         }),
         outputs: outputTokens.map(({ token }) => {
           return {
-            receiver: account(),
+            // The recipient override wins when set, matching what issuance will
+            // actually encode; otherwise the destination chain's own wallet.
+            receiver: outputRecipient ?? requireAccount(token.chainId),
             asset: token.address,
             chainId: token.chainId,
+            namespace: namespaceForChain(token.chainId),
             amount: 0n
           };
         })
       });
+      if (seq !== requestSeq) return;
       if (response?.quotes?.length ?? 0) {
         const quote = response.quotes[0];
         quoteExpires = new Date().getTime() + 30 * 1000;
@@ -73,6 +119,12 @@
         quoteExpires = 0;
       }
     } catch (e) {
+      if (seq !== requestSeq) return;
+      // A missing counterparty wallet is an ordinary UI state, not a failure:
+      // show "No Quote" and stop, rather than leaving the previous quote's
+      // countdown running against a request that was never sent.
+      quoteExpires = 0;
+      if (e instanceof MissingQuoteAddress) return;
       console.log("Could not fetch a quote", e);
       return;
     }
@@ -94,11 +146,42 @@
     quoteRequest = getQuoteAndSet();
   }
 
+  /**
+   * Everything the request is built from, as a comparable value.
+   *
+   * Each party is now named in its own namespace, so a quote depends on the
+   * destination wallet and the recipient override as much as on the tokens.
+   * Tracking only `mainnet` left a stale quote — and a stale output amount —
+   * on screen after either changed, while issuance already used the new one.
+   *
+   * The output amount is deliberately absent: this component writes it back
+   * from the response, so including it would re-trigger on its own result.
+   */
+  const quoteInputs = $derived(
+    JSON.stringify({
+      mainnet,
+      useProductionApi,
+      outputRecipient: outputRecipient ?? null,
+      inputs: inputTokens.map(({ token, amount }) => [
+        String(token.chainId),
+        token.address,
+        amount.toString(),
+        accountForChain(token.chainId) ?? null
+      ]),
+      outputs: outputTokens.map(({ token }) => [
+        String(token.chainId),
+        token.address,
+        accountForChain(token.chainId) ?? null
+      ])
+    })
+  );
+
   $effect(() => {
-    mainnet;
-    setTimeout(() => {
-      updateQuote();
-    }, 1000);
+    quoteInputs;
+    // Debounced, and cancelled on change, so typing an amount or a recipient
+    // sends one request rather than one per keystroke.
+    const handle = setTimeout(() => updateQuote(), 1000);
+    return () => clearTimeout(handle);
   });
 
   $effect(() => {

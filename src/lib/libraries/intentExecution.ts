@@ -16,13 +16,23 @@ import {
 import { compact_type_hash } from "@lifi/intent";
 import { addressToBytes32 } from "@lifi/intent";
 import { signMultichainCompact, signStandardCompact } from "@lifi/intent";
-import { MultichainOrderIntent, StandardEVMIntent } from "@lifi/intent";
+import { MultichainOrderIntent, StandardEVMIntent, StandardSolanaIntent } from "@lifi/intent";
 import type { NoSignature, Signature } from "@lifi/intent";
 import type { TypedDataSigner } from "@lifi/intent";
 import { switchWalletChain } from "$lib/utils/walletClientRuntime";
 import { isTronChain } from "$lib/utils/chainType";
+import type { TxRef } from "$lib/utils/txRef";
 import { getTronReads, getTronSigner } from "$lib/tron/client";
 import { openEscrow as openTronEscrow } from "$lib/tron/writes";
+import { getSolanaReads } from "$lib/solana/client";
+import { createSolanaPrograms } from "$lib/solana/program";
+import { getSolanaSigner } from "$lib/solana/wallet";
+import { openEscrow as openSolanaEscrow } from "$lib/solana/writes";
+
+/** The connected Solana wallet, needed so Anchor can populate signer accounts. */
+async function solanaAccount(chainId: bigint): Promise<string> {
+  return (await getSolanaSigner(chainId)).publicKey;
+}
 
 function combineSignatures(signatures: {
   sponsorSignature: Signature | NoSignature;
@@ -81,10 +91,26 @@ export async function depositAndRegisterCompact(
 }
 
 export async function openEscrowIntent(
-  intent: StandardEVMIntent | MultichainOrderIntent,
+  intent: StandardEVMIntent | StandardSolanaIntent | MultichainOrderIntent,
   account: `0x${string}`,
   walletClient: WC
-): Promise<`0x${string}`[]> {
+): Promise<TxRef[]> {
+  // Solana signatures are base58, not 0x-hashes, which is why this returns
+  // TxRef rather than `0x${string}`.
+  if (intent instanceof StandardSolanaIntent) {
+    const order = intent.asOrder();
+    const chainId = order.originChainId;
+    const [reads, programs] = await Promise.all([
+      getSolanaReads(chainId),
+      createSolanaPrograms({ chainId, publicKey: await solanaAccount(chainId) })
+    ]);
+    const signer = await getSolanaSigner(chainId);
+    const signature = await openSolanaEscrow(
+      { chainId, reads, signer, programs },
+      { order, orderId: intent.orderId() }
+    );
+    return [signature];
+  }
   if (intent instanceof StandardEVMIntent) {
     const order = intent.asOrder();
     if (isTronChain(order.originChainId)) {

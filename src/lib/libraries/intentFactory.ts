@@ -17,15 +17,8 @@ import type {
   Signature,
   StandardOrder
 } from "@lifi/intent";
-import {
-  Intent,
-  IntentApi,
-  StandardSolanaIntent,
-  SOLANA_MAINNET_CHAIN_ID,
-  SOLANA_TESTNET_CHAIN_ID,
-  SOLANA_DEVNET_CHAIN_ID
-} from "@lifi/intent";
-import { isTronChain } from "$lib/utils/chainType";
+import { Intent, IntentApi, StandardSolanaIntent } from "@lifi/intent";
+import { isSolanaChain, isTronChain, namespaceForChain } from "$lib/utils/chainType";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { store } from "$lib/state.svelte";
@@ -36,14 +29,11 @@ import { getTrc20Allowance } from "$lib/tron/reads";
 import { approveToken } from "$lib/tron/writes";
 import { intentDeps } from "./coreDeps";
 
-const SOLANA_CHAIN_IDS = new Set([
-  SOLANA_MAINNET_CHAIN_ID,
-  SOLANA_TESTNET_CHAIN_ID,
-  SOLANA_DEVNET_CHAIN_ID
-]);
-
 const FILL_DEADLINE_SECONDS = 10 * 60; // 10 minutes
-const SAME_CHAIN_DURATION_SECONDS = 10 * 60; // 10 minutes
+// Must stay strictly greater than FILL_DEADLINE_SECONDS: the Solana input
+// settler requires `fill_deadline < expires` (EVM only rejects `>`), so equal
+// deadlines fail `open` with FillDeadlineAfterExpiry on same-chain Solana.
+const SAME_CHAIN_DURATION_SECONDS = 20 * 60; // 20 minutes
 const SAME_CHAIN_EXCLUSIVITY_SECONDS = 12 * 3; // 36 seconds
 // SOLV-544 widened the exclusivity window to 5 minutes so solvers have time to
 // fill before exclusivity ends. @lifi/intent 0.2.1 still encodes ONE_MINUTE in
@@ -94,11 +84,7 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
       name: input.token.name,
       chainId,
       decimals: input.token.decimals,
-      chainNamespace: SOLANA_CHAIN_IDS.has(chainId)
-        ? "solana"
-        : isTronChain(chainId)
-          ? "tron"
-          : "eip155"
+      chainNamespace: namespaceForChain(chainId)
     },
     amount: input.amount
   };
@@ -296,8 +282,6 @@ export class IntentFactory {
       applyIntentTimings(intentInstance3);
       const sameChain3 = intentInstance3.isSameChain();
       const intent = intentInstance3.order();
-      if (intent instanceof StandardSolanaIntent)
-        throw new Error("openEscrowIntent is not supported for Solana intents.");
       applyExclusivityOverride(intent, opts.exclusiveFor, sameChain3);
 
       const inputChain = inputTokens[0].token.chainId;
@@ -341,6 +325,11 @@ export function escrowApprove(
     for (let i = 0; i < inputTokens.length; ++i) {
       const { token, amount } = inputTokens[i];
       if (preHook) await preHook(token.chainId);
+
+      // Solana has no approval step at all: `open` debits the user's ATA under
+      // the user's own signature, so there is nothing corresponding to an
+      // ERC-20 allowance to set.
+      if (isSolanaChain(token.chainId)) continue;
 
       if (isTronChain(token.chainId)) {
         // Native TRX inputs are attached as callValue on open — no approval.

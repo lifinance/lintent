@@ -9,12 +9,19 @@ mock.module("$env/static/private", () => ({
   PRIVATE_ROUTEMESH_API_KEY: "routemesh-key"
 }));
 
+// The Solana source path reads its optional RPC URL from `$env/dynamic/private`.
+mock.module("$env/dynamic/private", () => ({ env: {} }));
+
 type PolymerCall = { url: string; method: string; params: unknown[]; auth: string };
 
 const polymerCalls: PolymerCall[] = [];
 let verifyCalls = 0;
 let verifyResult: "match" | "mismatch" | "unknown" = "match";
 let queryProofResult: unknown = { jobID: 1, createdAt: 0, updatedAt: 0, status: "initialized" };
+// The whole `polymer_requestProof` envelope, so a test can return a JSON-RPC
+// `error` instead of a `result` — that is how Polymer reports a rejection, and
+// axios resolves happily either way.
+let requestProofResponse: unknown = { jsonrpc: "2.0", id: 1, result: 7777 };
 
 // Drive the real `verifyProvableLog` through its RPC instead of `mock.module`-ing it: bun runs
 // every test file in one process and module mocks are global, so stubbing that path clobbered
@@ -79,7 +86,7 @@ mock.module("axios", () => ({
         auth: headers.Authorization
       });
       if (payload.method === "polymer_requestProof") {
-        return { data: { jsonrpc: "2.0", id: 1, result: 7777 } };
+        return { data: requestProofResponse };
       }
       return { data: { jsonrpc: "2.0", id: 1, result: queryProofResult } };
     }
@@ -105,6 +112,7 @@ beforeEach(() => {
   verifyCalls = 0;
   verifyResult = "match";
   queryProofResult = { jobID: 1, createdAt: 0, updatedAt: 0, status: "initialized" };
+  requestProofResponse = { jsonrpc: "2.0", id: 1, result: 7777 };
 });
 
 describe("POST /polymer — poll by polymerIndex", () => {
@@ -294,5 +302,76 @@ describe("POST /polymer — network selection", () => {
 
     expect(res.status).toBe(400);
     expect(polymerCalls).toHaveLength(0);
+  });
+});
+
+describe("POST /polymer — what the live Polymer API actually demands", () => {
+  const SOLANA_SUBMIT_SIG =
+    "2YunasnHmEatJwn3273q4QMsJAPSJrZXLVtXr1soF3gjQ73DFYFqE6cdTbJxSe6YB3zHD9EvGUCfVEbpjzSVZvE9";
+  const POLYMER_ORACLE_PROGRAM = "LiFiBtfyPT1DnTHTAeZ2rwr5RgMrThwA5kt7KGT5nBV";
+  const OIF_SOLANA_MAINNET = 1151111081099710;
+
+  const solanaBody = {
+    srcChainId: OIF_SOLANA_MAINNET,
+    txSignature: SOLANA_SUBMIT_SIG,
+    programID: POLYMER_ORACLE_PROGRAM,
+    mainnet: true
+  };
+
+  // Polymer keys Solana by its own registry id, NOT the OIF chain id. Sending
+  // the OIF one is rejected with "srcChainId is required for Solana and must
+  // be 2" — observed against the live API, and the reason every Solana proof
+  // request silently failed.
+  it("sends Polymer's Solana chain id, not the OIF one", async () => {
+    const res = await post(solanaBody);
+
+    expect(res.status).toBe(200);
+    const request = polymerCalls.find((c) => c.method === "polymer_requestProof");
+    expect(request?.params).toEqual([
+      {
+        srcChainId: 2,
+        txSignature: SOLANA_SUBMIT_SIG,
+        programID: POLYMER_ORACLE_PROGRAM
+      }
+    ]);
+  });
+
+  // Regression: `requestProof.data.result` was read blindly. On rejection there
+  // is no `result`, so the index became undefined, was passed to queryProof,
+  // and came back as a bare `not_found` — indistinguishable to the caller from
+  // "not ready yet", so the UI polled forever for a request never accepted.
+  it("surfaces a JSON-RPC rejection instead of polling a nonexistent index", async () => {
+    requestProofResponse = {
+      jsonrpc: "2.0",
+      id: 1,
+      error: { code: -32000, message: "srcChainId is required for Solana and must be 2" }
+    };
+
+    const res = await post(solanaBody);
+
+    expect(res.status).toBe(502);
+    // The failure must stop here: querying an index we never got is what
+    // produced the misleading "not_found".
+    expect(methods()).toEqual(["polymer_requestProof"]);
+  });
+
+  it("rejects a request index that is not a number", async () => {
+    requestProofResponse = { jsonrpc: "2.0", id: 1, result: null };
+
+    const res = await post(solanaBody);
+
+    expect(res.status).toBe(502);
+    expect(methods()).toEqual(["polymer_requestProof"]);
+  });
+
+  it("treats an in-progress status as pollable rather than terminal", async () => {
+    // "pending" and "not_found" are both live-observed statuses that were
+    // absent from the typed union; neither is terminal.
+    queryProofResult = { jobID: 1, createdAt: 0, updatedAt: 0, status: "pending" };
+
+    const res = await post({ polymerIndex: 1877308, mainnet: true });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: "pending" });
   });
 });

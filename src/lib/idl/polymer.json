@@ -1,0 +1,591 @@
+{
+  "address": "LiFiBtfyPT1DnTHTAeZ2rwr5RgMrThwA5kt7KGT5nBV",
+  "metadata": {
+    "name": "polymer",
+    "version": "0.0.0",
+    "spec": "0.1.0"
+  },
+  "docs": [
+    "There are two ways to receive a remote proof, both ending in",
+    "[`receive_attest`] which reads the validated event data from the prover's",
+    "`result_account` and registers the attestation:",
+    "",
+    "1. **Single step** — call [`receive_load_proof`] with the full proof. It",
+    "runs the prover's `create_accounts`, `load_proof` and `validate_event`",
+    "CPIs in one transaction, then `receive_attest` finalises it. Use this",
+    "when the proof fits within a single Solana transaction.",
+    "",
+    "2. **Three steps** — for proofs too large to fit in a single Solana",
+    "transaction, the load is chunked across multiple transactions:",
+    "1. [`create_polymer_accounts`] — create the prover's `cache`/`result` PDAs.",
+    "2. [`load_proof_chunk`] — append one chunk of the proof; call once per",
+    "chunk until the full proof is loaded (the prover extends the cache).",
+    "3. [`validate_event`] — validate the accumulated proof in the cache.",
+    "Then `receive_attest` finalises it as above."
+  ],
+  "instructions": [
+    {
+      "name": "create_polymer_accounts",
+      "docs": [
+        "Chunked receive step 1: create the polymer prover's `cache` and",
+        "`result` scratch PDAs. Use this path instead of `receive_load_proof`",
+        "when the proof is too large to load in a single transaction."
+      ],
+      "discriminator": [238, 43, 4, 23, 70, 95, 159, 84],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle_polymer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 121, 109, 101, 114]
+              }
+            ]
+          }
+        },
+        {
+          "name": "polymer_prover_program"
+        },
+        {
+          "name": "cache_account",
+          "writable": true
+        },
+        {
+          "name": "result_account",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "docs": [
+        "Initializes the `oracle_polymer` account. Creates `oracle_polymer` PDA and sets the `polymer_prover_id`.",
+        "`oracle_polymer` PDA is used to store the chain identifier and the owner address."
+      ],
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+      "accounts": [
+        {
+          "name": "deployer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "chain_id"
+        },
+        {
+          "name": "oracle_polymer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 121, 109, 101, 114]
+              }
+            ]
+          }
+        },
+        {
+          "name": "intents_protocol_program",
+          "address": "LiFixdGLT5CMdLsHBvaijTXpPy4Uux9Y53SXkuR4HaK"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "polymer_prover_id",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "load_proof_chunk",
+      "docs": [
+        "Chunked receive step 2: append a single chunk of the proof into the",
+        "prover's `cache` PDA. Call repeatedly until the full proof is loaded."
+      ],
+      "discriminator": [252, 35, 79, 22, 76, 152, 132, 74],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle_polymer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 121, 109, 101, 114]
+              }
+            ]
+          }
+        },
+        {
+          "name": "polymer_prover_program"
+        },
+        {
+          "name": "cache_account",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "proof_chunk",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "receive_attest",
+      "docs": [
+        "Step 2 of receive: read the validated event data left by",
+        "`receive_load_proof`, register the attestation, and close the polymer",
+        "prover's scratch PDAs."
+      ],
+      "discriminator": [112, 136, 131, 35, 95, 206, 124, 161],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle_polymer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 121, 109, 101, 114]
+              }
+            ]
+          }
+        },
+        {
+          "name": "polymer_prover_program"
+        },
+        {
+          "name": "chain_mapping"
+        },
+        {
+          "name": "cache_account",
+          "writable": true
+        },
+        {
+          "name": "internal",
+          "writable": true
+        },
+        {
+          "name": "result_account",
+          "writable": true
+        },
+        {
+          "name": "attestation",
+          "writable": true
+        },
+        {
+          "name": "intents_protocol_program",
+          "address": "LiFixdGLT5CMdLsHBvaijTXpPy4Uux9Y53SXkuR4HaK"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "receive_load_proof",
+      "docs": [
+        "Step 1 of receive: load and validate a single proof via the polymer",
+        "prover. Leaves the validated event data in `result_account` for",
+        "`receive_attest` to consume in a follow-up tx."
+      ],
+      "discriminator": [220, 77, 15, 159, 191, 141, 155, 51],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle_polymer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 121, 109, 101, 114]
+              }
+            ]
+          }
+        },
+        {
+          "name": "polymer_prover_program"
+        },
+        {
+          "name": "cache_account",
+          "writable": true
+        },
+        {
+          "name": "internal",
+          "writable": true
+        },
+        {
+          "name": "result_account",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "set_chain_mapping",
+      "docs": [
+        "Maps polymer chain id to a configured custom chain id.",
+        "Can only be called by the owner of the `oracle_polymer` account.",
+        "Each mapping may only be set once."
+      ],
+      "discriminator": [174, 145, 44, 171, 203, 101, 230, 130],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle_polymer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 121, 109, 101, 114]
+              }
+            ]
+          }
+        },
+        {
+          "name": "chain_mapping",
+          "writable": true
+        },
+        {
+          "name": "intents_protocol_program",
+          "address": "LiFixdGLT5CMdLsHBvaijTXpPy4Uux9Y53SXkuR4HaK"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "protocol_chain_id",
+          "type": "u128"
+        },
+        {
+          "name": "chain_id",
+          "type": "u128"
+        }
+      ]
+    },
+    {
+      "name": "submit",
+      "docs": [
+        "Validates the proofs and emits logs in the form of `Prove: program: {0x...}, {0x...}`."
+      ],
+      "discriminator": [88, 166, 102, 181, 162, 127, 170, 48],
+      "accounts": [
+        {
+          "name": "submitter",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle_polymer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 121, 109, 101, 114]
+              }
+            ]
+          }
+        },
+        {
+          "name": "intents_protocol_program",
+          "address": "LiFixdGLT5CMdLsHBvaijTXpPy4Uux9Y53SXkuR4HaK"
+        }
+      ],
+      "args": [
+        {
+          "name": "source",
+          "type": "pubkey"
+        },
+        {
+          "name": "fill_descriptions",
+          "type": {
+            "vec": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "validate_event",
+      "docs": [
+        "Chunked receive step 3: validate the proof accumulated in the `cache`",
+        "PDA, leaving the validated event data in `result_account` for",
+        "`receive_attest` to consume in a follow-up tx."
+      ],
+      "discriminator": [66, 249, 207, 221, 30, 87, 27, 129],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle_polymer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 121, 109, 101, 114]
+              }
+            ]
+          }
+        },
+        {
+          "name": "polymer_prover_program"
+        },
+        {
+          "name": "cache_account",
+          "writable": true
+        },
+        {
+          "name": "internal",
+          "writable": true
+        },
+        {
+          "name": "result_account",
+          "writable": true
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "ChainId",
+      "discriminator": [203, 146, 201, 161, 230, 71, 157, 218]
+    },
+    {
+      "name": "ChainMapping",
+      "discriminator": [81, 78, 77, 209, 44, 206, 85, 169]
+    },
+    {
+      "name": "OraclePolymer",
+      "discriminator": [30, 219, 153, 176, 126, 163, 80, 138]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidChainId",
+      "msg": "Invalid chain id"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidProof",
+      "msg": "Invalid proof"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidOutputChainId",
+      "msg": "Invalid output chain id"
+    },
+    {
+      "code": 6003,
+      "name": "Unauthorized",
+      "msg": "Unauthorized mapping creation"
+    },
+    {
+      "code": 6004,
+      "name": "CouldNotDecodeSolver",
+      "msg": "Could not decode solver"
+    },
+    {
+      "code": 6005,
+      "name": "CouldNotDecodeTimestamp",
+      "msg": "Could not decode timestamp"
+    },
+    {
+      "code": 6006,
+      "name": "CouldNotDecodeMandateOutputFieldsTuple",
+      "msg": "Could not decode mandate output fields tuple"
+    },
+    {
+      "code": 6007,
+      "name": "CouldNotDecodeOracle",
+      "msg": "Could not decode oracle"
+    },
+    {
+      "code": 6008,
+      "name": "CouldNotDecodeSettler",
+      "msg": "Could not decode settler"
+    },
+    {
+      "code": 6009,
+      "name": "CouldNotDecodeChainId",
+      "msg": "Could not decode chain id"
+    },
+    {
+      "code": 6010,
+      "name": "CouldNotDecodeToken",
+      "msg": "Could not decode token"
+    },
+    {
+      "code": 6011,
+      "name": "CouldNotDecodeAmount",
+      "msg": "Could not decode amount"
+    },
+    {
+      "code": 6012,
+      "name": "CouldNotDecodeRecipient",
+      "msg": "Could not decode recipient"
+    },
+    {
+      "code": 6013,
+      "name": "CouldNotDecodeCallbackData",
+      "msg": "Could not decode callback data"
+    },
+    {
+      "code": 6014,
+      "name": "CouldNotDecodeContext",
+      "msg": "Could not decode context"
+    },
+    {
+      "code": 6015,
+      "name": "CouldNotDecodeFinalAmount",
+      "msg": "Could not decode final amount"
+    },
+    {
+      "code": 6016,
+      "name": "CouldNotConvertU256ToU64",
+      "msg": "Could not convert u128 to u64"
+    },
+    {
+      "code": 6017,
+      "name": "CouldNotConvertU256ToU128",
+      "msg": "Could not convert u256 to u128"
+    },
+    {
+      "code": 6018,
+      "name": "CouldNotConvertU256ToU32",
+      "msg": "Could not convert u256 to u32"
+    },
+    {
+      "code": 6019,
+      "name": "NoAttestationsProvided",
+      "msg": "No attestations provided"
+    },
+    {
+      "code": 6020,
+      "name": "NotCorrectEncodedTypes",
+      "msg": "Not correct encoded types"
+    },
+    {
+      "code": 6021,
+      "name": "WrongEventSignature",
+      "msg": "Event signature topic does not match OutputFilled or OutputNotFilled"
+    }
+  ],
+  "types": [
+    {
+      "name": "ChainId",
+      "docs": ["Type used to store the chain id of the chain."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ChainMapping",
+      "docs": [
+        "Type used to map a protocol chain identifier to a custom configured chain identifier."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OraclePolymer",
+      "docs": [
+        "Represents the `Polymer` oracle implementation type.",
+        "Implements the `OracleBaseTrait`, `InputOracleBaseTrait` and `OutputOracleBaseTrait` traits.",
+        "`polymer_prover_id` is the program id of the polymer prover program.",
+        "`owner` is the owner of the PolymerOracle. The only address to create mappings."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "polymer_prover_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

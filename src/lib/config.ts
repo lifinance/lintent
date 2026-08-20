@@ -17,11 +17,19 @@ import {
   tron
 } from "viem/chains";
 import {
+  SOLANA_DEVNET_CHAIN_ID,
+  SOLANA_MAINNET_CHAIN_ID,
+  SOLANA_OUTPUT_SETTLER_PDA,
+  SOLANA_POLYMER_ORACLE_PDA,
+  SOLANA_POLYMER_ORACLE_PROGRAM,
   TRON_MAINNET_INPUT_SETTLER,
   TRON_MAINNET_OUTPUT_SETTLER,
   TRON_MAINNET_POLYMER_ORACLE,
+  solanaBase58ToBytes32,
   tronBase58ToHex
 } from "@lifi/intent";
+import type { ChainType } from "$lib/utils/chainType";
+import { getChainType, isSolanaChain } from "$lib/utils/chainType";
 const routemeshApiKey: string | undefined =
   import.meta.env?.PUBLIC_ROUTEMESH_API_KEY?.trim() || undefined;
 
@@ -94,6 +102,14 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [bsc.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [pharos.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [tron.id]: TRON_MAINNET_POLYMER_ORACLE,
+  // Solana: this table answers "what is the input oracle for an order
+  // originating on this chain", so it holds the Polymer oracle *PDA*. The
+  // value a Solana *output* carries in `MandateOutput.oracle` is a different
+  // 32 bytes — the Polymer *program id*, exported below as
+  // SOLANA_POLYMER_OUTPUT_ORACLE. Swapping them yields an order that fills and
+  // can then never be proven. See tests/fixtures/solana/PREFLIGHT.md.
+  [Number(SOLANA_MAINNET_CHAIN_ID)]: SOLANA_POLYMER_ORACLE_PDA,
+  [Number(SOLANA_DEVNET_CHAIN_ID)]: SOLANA_POLYMER_ORACLE_PDA,
   // testnet — matches `main` after SOLV-695 (#62), which superseded the 0xC401b533… bucket.
   [sepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
   [baseSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
@@ -153,7 +169,11 @@ export const chainList = (mainnet: boolean) => {
 };
 
 export const chainIdList = (mainnet: boolean) => {
-  return chainList(mainnet).map((name) => chainMap[name].id);
+  const evm = chainList(mainnet).map((name) => chainMap[name].id);
+  // Solana is not in `chainMap` (see the ChainMeta note below), so it is
+  // appended here. Both clusters run the same deployment, verified on chain:
+  // see the "Verified on chain" table in tests/fixtures/solana/PREFLIGHT.md.
+  return [...evm, Number(mainnet ? SOLANA_MAINNET_CHAIN_ID : SOLANA_DEVNET_CHAIN_ID)];
 };
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
@@ -298,6 +318,35 @@ export const coinList = (mainnet: boolean) => {
         name: "usdc",
         chainId: pharos.id,
         decimals: 6
+      },
+      // Solana mainnet. Mints stored as 32-byte hex, like the devnet entries
+      // below — `Token.address` is the app's internal identity, and `getCoin`
+      // compares Solana addresses whole rather than truncating to 20 bytes.
+      //
+      // Decimals and owning program read from mainnet on 2026-08-13: all three
+      // are legacy SPL Token (not Token-2022).
+      {
+        // EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+        address: solanaBase58ToBytes32("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+        name: "usdc",
+        chainId: Number(SOLANA_MAINNET_CHAIN_ID),
+        decimals: 6
+      },
+      {
+        // Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
+        address: solanaBase58ToBytes32("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"),
+        name: "usdt",
+        chainId: Number(SOLANA_MAINNET_CHAIN_ID),
+        decimals: 6
+      },
+      {
+        // Wrapped SOL. Native SOL is a valid OUTPUT via `native_fill` but never
+        // an input — the escrow's `open` has no native path — so wSOL is what
+        // an order can actually deposit.
+        address: solanaBase58ToBytes32("So11111111111111111111111111111111111111112"),
+        name: "wsol",
+        chainId: Number(SOLANA_MAINNET_CHAIN_ID),
+        decimals: 9
       }
     ] as const;
   else
@@ -379,6 +428,30 @@ export const coinList = (mainnet: boolean) => {
         name: "usdc",
         chainId: arcTestnet.id,
         decimals: 6
+      },
+      // Solana devnet. Mints are stored as 32-byte hex, not base58, because
+      // `Token.address` is the app's internal identity everywhere — `getCoin`
+      // compares Solana addresses whole rather than truncating to 20 bytes.
+      //
+      // Devnet only for now: mainnet Solana is deliberately absent from
+      // `coinList` and `chainIdList` until the live checks in
+      // tests/fixtures/solana/PREFLIGHT.md pass and a small-value canary has
+      // settled end to end.
+      {
+        // 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+        address: solanaBase58ToBytes32("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
+        name: "usdc",
+        chainId: Number(SOLANA_DEVNET_CHAIN_ID),
+        decimals: 6
+      },
+      {
+        // Wrapped SOL. Native SOL (the zero mint) is a valid OUTPUT via
+        // `native_fill`, but never an input: the escrow's `open` has no
+        // native path, so wSOL is what an order can actually deposit.
+        address: solanaBase58ToBytes32("So11111111111111111111111111111111111111112"),
+        name: "wsol",
+        chainId: Number(SOLANA_DEVNET_CHAIN_ID),
+        decimals: 9
       }
     ] as const;
 };
@@ -440,9 +513,12 @@ export function getCoin(
 ) {
   const { name = undefined, address = undefined } = args;
   const chainId = normalizeChainId(args.chainId);
-  // ensure the address is ERC20-sized.
-  const concatedAddress =
-    "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
+  // EVM and Tron token ids are uint256-widened 20-byte addresses, so the low
+  // 20 bytes are the address. Solana mints are genuinely 32 bytes — truncating
+  // one would match the wrong token (or nothing) — so compare them whole.
+  const concatedAddress = isSolanaChain(chainId)
+    ? address
+    : "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
   for (const token of coinList(!isChainIdTestnet(chainId))) {
     // check chain first.
     if (token.chainId === chainId) {
@@ -469,16 +545,16 @@ function normalizeChainId(chainId: number | bigint | string) {
 
 export function isChainIdTestnet(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
-  const chain = chainById[normalized];
-  if (!chain) throw new Error(`Chain is not known: ${normalized}`);
-  return chain.testnet;
+  const meta = chainMetaById[normalized];
+  if (!meta) throw new Error(`Chain is not known: ${normalized}`);
+  return meta.testnet;
 }
 
 export function getChainName(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
-  const name = chainNameById[normalized];
-  if (!name) throw new Error(`Chain is not known: ${normalized}`);
-  return name;
+  const meta = chainMetaById[normalized];
+  if (!meta) throw new Error(`Chain is not known: ${normalized}`);
+  return meta.name;
 }
 
 export function formatTokenDecimals(
@@ -498,18 +574,30 @@ export function getOracle(verifier: Verifier, chainId: number | bigint | string)
   return undefined;
 }
 
+// Deliberately EVM-only: both return viem values that have no non-EVM
+// analogue. Callers handling a Tron or Solana chain must branch on chain type
+// BEFORE reaching these — the error names the chain type so a missing branch
+// is obvious from the message rather than surfacing as "chain not found".
 export function getChain(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
   const chain = chainById[normalized];
-  if (!chain) throw new Error(`Could not find chain for chainId ${normalized}`);
+  if (!chain) throw new Error(`${describeNonEvmChain(normalized)} (getChain)`);
   return chain;
 }
 
 export function getClient(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
   const client = clientsById[normalized];
-  if (!client) throw new Error(`Could not find client for chainId ${normalized}`);
+  if (!client) throw new Error(`${describeNonEvmChain(normalized)} (getClient)`);
   return client;
+}
+
+function describeNonEvmChain(normalized: number) {
+  const type = getChainType(normalized);
+  if (type !== "evm") {
+    return `Chain ${normalized} is a ${type} chain, not an EVM chain — callers must branch on chain type`;
+  }
+  return `Could not find chain for chainId ${normalized}`;
 }
 
 export const clients = {
@@ -639,6 +727,65 @@ export const chainById = Object.fromEntries(chainEntries) as Record<
 >;
 
 export const chainNameById = Object.fromEntries(chainNameEntries) as Record<number, ChainName>;
+
+// Non-EVM chains deliberately stay OUT of `chainMap`. `chainMap` feeds
+// `wagmiChains` in utils/wagmi.ts — a Solana entry there would show up in
+// every wallet's switch-chain menu — and `clientsById`, which would build a
+// viem public client with an EVM JSON-RPC transport pointed at a Solana RPC:
+// a client that type-checks and then fails at runtime. The `pharos` precedent
+// does not apply; Pharos is a real EVM chain with a real JSON-RPC endpoint.
+//
+// Instead, everything that is genuinely chain-agnostic — display name, testnet
+// flag, chain type — lives in this parallel registry, and the viem-only
+// accessors (`getChain`, `getClient`) keep throwing for non-EVM ids so callers
+// are forced to branch.
+/**
+ * The value `MandateOutput.oracle` must hold for a Solana OUTPUT — the Polymer
+ * *program id*, not the oracle PDA in `POLYMER_ORACLE` above.
+ * `oracle_polymer::submit` compares the fill's LocalAttestation consumer
+ * against its own program id.
+ */
+export const SOLANA_POLYMER_OUTPUT_ORACLE = SOLANA_POLYMER_ORACLE_PROGRAM;
+
+/** The value `MandateOutput.settler` must hold for a Solana output. */
+export const SOLANA_OUTPUT_SETTLER = SOLANA_OUTPUT_SETTLER_PDA;
+
+export type ChainMeta = {
+  id: number;
+  name: string;
+  testnet: boolean;
+  type: ChainType;
+};
+
+export const SOLANA_CHAIN_META: readonly ChainMeta[] = [
+  {
+    id: Number(SOLANA_MAINNET_CHAIN_ID),
+    name: "solana",
+    testnet: false,
+    type: "solana"
+  },
+  {
+    id: Number(SOLANA_DEVNET_CHAIN_ID),
+    name: "solanaDevnet",
+    testnet: true,
+    type: "solana"
+  }
+];
+
+export const chainMetaById: Record<number, ChainMeta> = {
+  ...Object.fromEntries(
+    chains.map((name) => [
+      chainMap[name].id,
+      {
+        id: chainMap[name].id,
+        name,
+        testnet: Boolean(chainMap[name].testnet),
+        type: getChainType(chainMap[name].id)
+      } satisfies ChainMeta
+    ])
+  ),
+  ...Object.fromEntries(SOLANA_CHAIN_META.map((meta) => [meta.id, meta]))
+};
 
 export const clientsById = Object.fromEntries(
   chains.map((name) => [chainMap[name].id, clients[name]])

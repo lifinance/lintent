@@ -8,7 +8,7 @@ import {
   invalidateNetworkGuardCache,
   waitForTronTransaction
 } from "../../src/lib/tron/signer";
-import { fillOutputs, finalise, openEscrow } from "../../src/lib/tron/writes";
+import { fillOutputs, finalise, openEscrow, submitReceiveMessage } from "../../src/lib/tron/writes";
 import type { TronTxInfo, TronWebLike } from "../../src/lib/tron/types";
 
 const USDT = "0xa614f803b6fd780986a42c78ec9c7f77e6ded13c" as const;
@@ -268,6 +268,35 @@ describe("fillOutputs", () => {
         }
       )
     ).rejects.toThrow("non-mainnet");
+  });
+});
+
+describe("submitReceiveMessage", () => {
+  const ORACLE = "0x94b0c01e26aff5a6a0fd767afe0e3ca0f8b34e3d" as const;
+
+  it("defaults to receiveMessage for EVM/Tron proofs", async () => {
+    invalidateNetworkGuardCache();
+    const { tw, calls } = makeMock({});
+    await submitReceiveMessage({ reads: tw, signer: tw }, ORACLE, "0xdeadbeef");
+    const receive = calls.find((c) => c.method === "receiveMessage");
+    expect(receive).toBeDefined();
+    expect(receive!.args[0]).toBe("0xdeadbeef");
+    expect(calls.some((c) => c.method === "receiveSolanaMessage")).toBe(false);
+  });
+
+  it("uses receiveSolanaMessage when asked — a Solana proof reverts in receiveMessage", async () => {
+    invalidateNetworkGuardCache();
+    const { tw, calls } = makeMock({});
+    await submitReceiveMessage(
+      { reads: tw, signer: tw },
+      ORACLE,
+      "deadbeef",
+      "receiveSolanaMessage"
+    );
+    const receive = calls.find((c) => c.method === "receiveSolanaMessage");
+    expect(receive).toBeDefined();
+    expect(receive!.args[0]).toBe("0xdeadbeef");
+    expect(calls.some((c) => c.method === "receiveMessage")).toBe(false);
   });
 });
 

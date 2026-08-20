@@ -200,7 +200,7 @@ export async function fillOutputs(
   return txId;
 }
 
-// Use only the single-bytes overload so TronLink's ethers does not pick bytes[].
+// Use only the single-bytes overloads so TronLink's ethers does not pick bytes[].
 const RECEIVE_MESSAGE_SINGLE_ABI = [
   {
     type: "function",
@@ -208,18 +208,33 @@ const RECEIVE_MESSAGE_SINGLE_ABI = [
     inputs: [{ name: "proof", type: "bytes", internalType: "bytes" }],
     outputs: [],
     stateMutability: "nonpayable"
+  },
+  {
+    type: "function",
+    name: "receiveSolanaMessage",
+    inputs: [{ name: "proof", type: "bytes", internalType: "bytes" }],
+    outputs: [],
+    stateMutability: "nonpayable"
   }
 ] as const;
 
+/**
+ * `entryPoint` is chosen by the chain the proof came FROM (the output chain),
+ * exactly like the EVM path's `polymerReceiveFunction`: the oracle decodes a
+ * Solana proof only in `receiveSolanaMessage`, and handing it to
+ * `receiveMessage` reverts with no reason string. See
+ * src/lib/libraries/polymerReceive.ts for the full rationale.
+ */
 export async function submitReceiveMessage(
   deps: TronDeps,
   oracleHex: `0x${string}`,
-  proof: string
+  proof: string,
+  entryPoint: "receiveMessage" | "receiveSolanaMessage" = "receiveMessage"
 ): Promise<string> {
   await assertTronMainnet(deps.signer, deps.reads);
   const contract = await signerContract(deps, RECEIVE_MESSAGE_SINGLE_ABI, oracleHex);
   const proofBytes = `0x${proof.replace(/^0x/, "")}`;
-  const txId = await contract.receiveMessage!(proofBytes).send({ feeLimit: ORACLE_FEE_LIMIT });
+  const txId = await contract[entryPoint]!(proofBytes).send({ feeLimit: ORACLE_FEE_LIMIT });
   await waitForTronTransaction(deps.reads, txId, { mode: "confirmed" });
   return txId;
 }

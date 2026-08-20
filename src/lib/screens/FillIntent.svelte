@@ -1,10 +1,7 @@
 <script lang="ts">
-  import { BYTES32_ZERO, formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
-  import { bytes32ToAddress } from "@lifi/intent";
-  import { getOutputHash } from "@lifi/intent";
+  import { formatTokenAmount, getChainName, getCoin } from "$lib/config";
   import type { MandateOutput, OrderContainer } from "@lifi/intent";
   import { Solver } from "$lib/libraries/solver";
-  import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
   import AwaitButton from "$lib/components/AwaitButton.svelte";
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
@@ -14,7 +11,9 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
   import { hashStruct } from "viem";
-  import { isTronChain, isTronBase58Address } from "$lib/utils/chainType";
+  import { isTronBase58Address } from "$lib/utils/chainType";
+  import { isValidTxRef, normalizeTxRef, txRefError, txRefPlaceholder } from "$lib/utils/txRef";
+  import { isOutputFilled } from "$lib/libraries/fillStatus";
   import { tronBase58ToHex } from "@lifi/intent";
 
   let {
@@ -38,7 +37,9 @@
   let refreshValidation = $state(0);
   let autoScrolledOrderId = $state<`0x${string}` | null>(null);
   let fillRun = 0;
-  let fillStatuses = $state<Record<string, `0x${string}`>>({});
+  // true = filled. Undefined means "not checked yet", which the UI
+  // distinguishes from "checked and not filled".
+  let fillStatuses = $state<Record<string, boolean>>({});
   let manualFillTxInputs = $state<Record<string, string>>({});
   let manualFillTxSaving = $state<Record<string, boolean>>({});
   let manualFillTxSaved = $state<Record<string, boolean>>({});
@@ -69,18 +70,6 @@
     refreshValidation += 1;
   };
 
-  async function isFilled(orderId: `0x${string}`, output: MandateOutput, _?: any) {
-    const outputHash = getOutputHash(output);
-    const outputClient = getClient(output.chainId);
-    const result = await outputClient.readContract({
-      address: bytes32ToAddress(output.settler),
-      abi: COIN_FILLER_ABI,
-      functionName: "getFillRecord",
-      args: [orderId, outputHash]
-    });
-    return result;
-  }
-
   function sortOutputsByChain(orderContainer: OrderContainer) {
     const outputs = orderContainer.order.outputs;
     const positionMap: { [chainId: string]: number } = {};
@@ -104,16 +93,6 @@
       types: compactTypes,
       primaryType: "MandateOutput"
     });
-  const isValidFillTxHash = (value: string, chainId?: bigint): value is `0x${string}` => {
-    if (value.startsWith("0x") && value.length === 66) return true;
-    if (chainId !== undefined && isTronChain(chainId) && /^[0-9a-fA-F]{64}$/.test(value))
-      return true;
-    return false;
-  };
-  const normalizeTxHash = (value: string, chainId?: bigint): `0x${string}` => {
-    if (value.startsWith("0x")) return value as `0x${string}`;
-    return `0x${value}` as `0x${string}`;
-  };
   const getManualFillTxInputValue = (output: MandateOutput) => {
     const key = outputKey(output);
     return manualFillTxInputs[key] ?? store.fillTransactions[key] ?? "";
@@ -121,17 +100,15 @@
   const saveManualFillTransaction = async (output: MandateOutput) => {
     const key = outputKey(output);
     const txHash = getManualFillTxInputValue(output).trim();
-    if (!isValidFillTxHash(txHash, output.chainId)) {
-      manualFillTxErrors[key] = isTronChain(output.chainId)
-        ? "Use a 64-char hex Tron tx ID or 0x-prefixed hash."
-        : "Use a 0x-prefixed 66-char tx hash.";
+    if (!isValidTxRef(txHash, output.chainId)) {
+      manualFillTxErrors[key] = txRefError(output.chainId);
       manualFillTxSaved[key] = false;
       return;
     }
     manualFillTxSaving[key] = true;
     manualFillTxErrors[key] = "";
     try {
-      const normalizedHash = normalizeTxHash(txHash, output.chainId);
+      const normalizedHash = normalizeTxRef(txHash, output.chainId);
       store.fillTransactions[key] = normalizedHash;
       await store.saveFillTransaction(key, normalizedHash);
       manualFillTxSaved[key] = true;
@@ -156,14 +133,16 @@
 
     const currentRun = ++fillRun;
     Promise.all(
-      outputs.map(async (output) => [outputKey(output), await isFilled(orderId, output)] as const)
+      outputs.map(
+        async (output) => [outputKey(output), await isOutputFilled(orderId, output)] as const
+      )
     )
       .then((entries) => {
         if (currentRun !== fillRun) return;
-        const nextStatuses: Record<string, `0x${string}`> = {};
+        const nextStatuses: Record<string, boolean> = {};
         for (const [key, status] of entries) nextStatuses[key] = status;
         fillStatuses = nextStatuses;
-        if (!entries.every(([, result]) => result !== BYTES32_ZERO)) return;
+        if (!entries.every(([, filled]) => filled)) return;
         autoScrolledOrderId = orderId;
         scroll(4)();
       })
@@ -223,12 +202,12 @@
                 getCoin({ address: output.token, chainId: output.chainId }).decimals
               )}
               symbol={getCoin({ address: output.token, chainId: output.chainId }).name}
-              tone={isValidFillTxHash(currentHash ?? "") ? "success" : "warning"}
+              tone={isValidTxRef(currentHash, output.chainId) ? "success" : "warning"}
             />
             <input
               type="text"
               class="h-7 min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-sky-300"
-              placeholder="0x... fill tx hash"
+              placeholder={`${txRefPlaceholder(output.chainId)} fill tx`}
               value={getManualFillTxInputValue(output)}
               oninput={(event) => {
                 const value = (event.currentTarget as HTMLInputElement).value;
@@ -271,8 +250,8 @@
               </button>
             {:else}
               <AwaitButton
-                variant={chainStatuses.every((v) => v == BYTES32_ZERO) ? "default" : "muted"}
-                buttonFunction={chainStatuses.every((v) => v == BYTES32_ZERO)
+                variant={chainStatuses.every((v) => !v) ? "default" : "muted"}
+                buttonFunction={chainStatuses.every((v) => !v)
                   ? fillWrapper(
                       chainIdAndOutputs[1],
                       Solver.fill(
@@ -312,11 +291,7 @@
                   }).decimals
                 )}
                 symbol={getCoin({ address: output.token, chainId: output.chainId }).name}
-                tone={filled === undefined
-                  ? "muted"
-                  : filled === BYTES32_ZERO
-                    ? "neutral"
-                    : "success"}
+                tone={filled === undefined ? "muted" : filled ? "success" : "neutral"}
               />
             {/each}
           {/snippet}

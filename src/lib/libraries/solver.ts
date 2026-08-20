@@ -1,9 +1,10 @@
 import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
-import { encodeFunctionData, hashStruct, maxUint256, parseEventLogs } from "viem";
+import { encodeFunctionData, hashStruct, hexToBytes, maxUint256, parseEventLogs } from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import {
   addressToBytes32,
   bytes32ToAddress,
+  bytes32ToSolanaBase58,
   StandardSolanaIntent,
   TRON_LEGACY_POLYMER_ORACLES
 } from "@lifi/intent";
@@ -16,7 +17,22 @@ import { compactTypes } from "@lifi/intent";
 import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
 import { getFillDetails } from "./fillEvent";
-import { isTronChain } from "$lib/utils/chainType";
+import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import { isValidTxRef, type TxRef } from "$lib/utils/txRef";
+import { polymerReceiveFunction } from "./polymerReceive";
+import { getSolanaReads } from "$lib/solana/client";
+import { createSolanaPrograms } from "$lib/solana/program";
+import { getSolanaSigner } from "$lib/solana/wallet";
+import {
+  fillOutputs as fillSolanaOutputs,
+  finalise as finaliseSolana,
+  receiveProof as receiveSolanaProof,
+  submitFillProof as submitSolanaFillProof
+} from "$lib/solana/writes";
+import { polymerScratchPdas } from "$lib/solana/pda";
+import { POLYMER_PROGRAM_ID } from "$lib/idl";
+import { readPolymerProverId } from "$lib/solana/reads";
+import type { SolanaDeps } from "$lib/solana/types";
 import { getTronReads, getTronSigner } from "$lib/tron/client";
 import {
   fillOutputs as fillTronOutputs,
@@ -31,14 +47,104 @@ async function tronDeps(): Promise<TronDeps> {
 }
 
 /**
+ * Assembles the Solana dependency bundle for a chain.
+ *
+ * The chain id is always taken from the order — never from the UI's network
+ * toggle — so a devnet order cannot be signed against mainnet.
+ */
+async function solanaDeps(chainId: bigint): Promise<SolanaDeps> {
+  const signer = await getSolanaSigner(chainId);
+  const [reads, programs] = await Promise.all([
+    getSolanaReads(chainId),
+    createSolanaPrograms({ chainId, publicKey: signer.publicKey })
+  ]);
+  return { chainId, reads, signer, programs };
+}
+
+/**
  * @notice Class for solving intents. Functions called by solvers.
  */
 export class Solver {
   private static validationInflight = new Map<string, Promise<unknown>>();
   private static polymerRequestIndexByLog = new Map<string, number>();
+  /**
+   * Solana `submit` signatures, keyed by output.
+   *
+   * Proving a Solana output takes two transactions on two chains, and the
+   * proof for the first is rarely ready by the time the user gets impatient.
+   * Without this, every retry re-runs `submit` — which succeeds, costs a
+   * signature and a fee, and gets no closer to a proof.
+   */
+  private static solanaSubmitByOutput = new Map<string, string>();
 
   private static sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /** Serialises Solana proof receives; see the call site for why. */
+  private static solanaReceiveQueue: Promise<unknown> = Promise.resolve();
+
+  private static queueSolanaReceive<T>(run: () => Promise<T>): Promise<T> {
+    // Settle either way before starting the next: one failed receive must not
+    // wedge the queue for every remaining output.
+    const next = Solver.solanaReceiveQueue.then(run, run);
+    Solver.solanaReceiveQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  /**
+   * Asks the `/polymer` route for a proof, retrying while it is still being
+   * generated.
+   *
+   * `polymerIndex` is threaded through and cached because it identifies an
+   * already-placed request: dropping it makes each retry a fresh request
+   * against the org's Polymer quota rather than a poll of the existing one.
+   */
+  private static async pollPolymerProof(
+    cacheKey: string,
+    body: Record<string, unknown>
+  ): Promise<string | undefined> {
+    let polymerIndex: number | undefined = Solver.polymerRequestIndexByLog.get(cacheKey);
+    for (const waitMs of [1000, 2000, 4000, 8000]) {
+      const response = await axios.post(`/polymer`, { ...body, polymerIndex }, { timeout: 15_000 });
+      const dat = response.data as {
+        proof: undefined | string;
+        polymerIndex: number;
+        status?: "initialized" | "complete" | "error";
+      };
+      polymerIndex = dat.polymerIndex;
+      if (polymerIndex !== undefined) {
+        Solver.polymerRequestIndexByLog.set(cacheKey, polymerIndex);
+      }
+      if (dat.proof) return dat.proof;
+      if (dat.status === "error") {
+        // Terminal. Keeping the index cached would make every future attempt
+        // poll the same dead job for the rest of the session, so drop it —
+        // the next attempt then places a fresh request.
+        Solver.polymerRequestIndexByLog.delete(cacheKey);
+        throw new Error(
+          `Polymer could not generate a proof for request ${polymerIndex} (job failed). Retrying will start a new request.`
+        );
+      }
+      await Solver.sleep(waitMs);
+    }
+    return undefined;
+  }
+
+  /**
+   * The oracle addresses a chain's input side will accept a Polymer proof
+   * from, lower-cased.
+   *
+   * Includes known legacy deployments alongside the current one: an order
+   * opened before an address rotation must stay provable, or its inputs are
+   * stranded until the deadline.
+   */
+  private static polymerOraclesFor(chainId: number | bigint): Set<string> {
+    return new Set(
+      [getOracle("polymer", chainId), ...(TRON_LEGACY_POLYMER_ORACLES[chainId.toString()] ?? [])]
+        .filter((oracle): oracle is `0x${string}` => !!oracle)
+        .map((oracle) => oracle.toLowerCase())
+    );
   }
 
   private static extractRevertReason(error: unknown): string {
@@ -95,6 +201,21 @@ export class Solver {
       const orderId = containerToIntent(args.orderContainer).orderId();
 
       const outputChainId = Number(outputs[0].chainId);
+
+      if (isSolanaChain(outputChainId)) {
+        // One instruction per output, but ONE transaction: the caller stores a
+        // single reference for the whole group, and each output's solver and
+        // timestamp are later recovered from that transaction's logs. Separate
+        // transactions would leave outputs 2..N filled but unprovable.
+        const signature = await fillSolanaOutputs(await solanaDeps(BigInt(outputChainId)), {
+          orderId,
+          outputs,
+          fillDeadline: Number(order.fillDeadline),
+          solverBytes32: addressToBytes32(solverAddress)
+        });
+        if (postHook) await postHook();
+        return signature;
+      }
 
       if (isTronChain(outputChainId)) {
         const txId = await fillTronOutputs(await tronDeps(), {
@@ -203,30 +324,103 @@ export class Solver {
       if (existingValidation) return existingValidation;
 
       const validationPromise = (async () => {
-        if (
-          !fillTransactionHash ||
-          !fillTransactionHash.startsWith("0x") ||
-          fillTransactionHash.length !== 66
-        ) {
+        // Validated against the OUTPUT chain: a Solana fill is a base58
+        // signature even when the order's source chain is EVM.
+        if (!isValidTxRef(fillTransactionHash, output.chainId)) {
           throw new Error(`Invalid fill transaction hash: ${fillTransactionHash}`);
         }
 
         const orderId = containerToIntent(args.orderContainer).orderId();
+
+        // A Solana OUTPUT is proven by submitting the fill to Polymer, which
+        // reads the `Prove:` log the submit instruction writes. A same-chain
+        // Solana fill needs nothing at all: `fill` already created the
+        // LocalAttestation that `finalise` reads, so there is no separate
+        // attestation step to mirror Tron's `setAttestation`.
+        const deliverProofToInputChain = (proof: string) =>
+          Solver.deliverProof(proof, {
+            order,
+            orderId,
+            output,
+            fillTransactionHash,
+            sourceChainId,
+            walletClient,
+            account,
+            preHook,
+            postHook
+          });
+
+        if (isSolanaChain(output.chainId)) {
+          const { solver, timestamp } = await getFillDetails(orderId, output, fillTransactionHash);
+          if (output.chainId === BigInt(sourceChainId)) {
+            if (postHook) await postHook();
+            return;
+          }
+
+          // Three steps, not one. `submit` writes the `Prove:` log on Solana;
+          // Polymer then proves THAT transaction (not the fill); the input
+          // chain receives the proof. Stopping after `submit` leaves the
+          // output filled and unprovable, with the button never turning green
+          // and every retry paying for another `submit`.
+          // Before spending a signature and a fee on `submit`, check the input
+          // chain can actually accept the resulting proof. Otherwise the
+          // submit succeeds and the failure only surfaces at delivery.
+          if (!Solver.polymerOraclesFor(sourceChainId).has(order.inputOracle.toLowerCase())) {
+            throw new Error(
+              `Input oracle ${order.inputOracle} on chain ${Number(sourceChainId)} is not a Polymer oracle, so a Solana output cannot be proven to it.`
+            );
+          }
+
+          // The submitted payload commits to the fill's solver and timestamp,
+          // both read from `fillTransactionHash` — so the fill reference is
+          // part of the identity. The manual fill-tx field lets that reference
+          // change for the same output, and without it here a corrected hash
+          // would silently reuse the submit made for the previous one.
+          const submitKey = `${Number(output.chainId)}:${orderId}:${expectedOutputHash}:${fillTransactionHash}`;
+          let submitSignature = Solver.solanaSubmitByOutput.get(submitKey);
+          if (!submitSignature) {
+            submitSignature = await submitSolanaFillProof(await solanaDeps(output.chainId), {
+              orderId,
+              output,
+              solverBytes32: solver,
+              timestamp
+            });
+            Solver.solanaSubmitByOutput.set(submitKey, submitSignature);
+          }
+
+          // Keyed on the submit signature: it is what Polymer is asked to
+          // prove, so reusing the fill's key would poll the wrong request.
+          const proof = await Solver.pollPolymerProof(
+            `${Number(output.chainId)}:${submitSignature}`,
+            {
+              srcChainId: Number(output.chainId),
+              txSignature: submitSignature,
+              // From the IDL, not from provableSolanaLogVerify: that module is
+              // server-only, and importing it here would pull
+              // $env/dynamic/private into the browser bundle. The route
+              // re-checks this value against its own copy anyway.
+              programID: POLYMER_PROGRAM_ID,
+              mainnet
+            }
+          );
+          if (!proof) {
+            throw new Error(
+              `Polymer proof unavailable for the Solana fill proof ${submitSignature}. The submit succeeded — click again once Polymer has indexed it.`
+            );
+          }
+          return deliverProofToInputChain(proof);
+        }
+
+        // A Solana INPUT chain receives the proof instead: the oracle writes
+        // the attestation account that `finalise` looks for. Everything up to
+        // the proof request is the shared EVM path below, so this branch is
+        // handled after the proof has been fetched.
         const sameChainAttestation =
           order.inputOracle.toLowerCase() === bytes32ToAddress(output.settler).toLowerCase() ||
           order.inputOracle === COIN_FILLER;
-        // Accept the current oracle AND known legacy deployments — orders
-        // opened before an address rotation must stay provable.
-        const polymerOracles = new Set(
-          [
-            getOracle("polymer", sourceChainId),
-            ...(TRON_LEGACY_POLYMER_ORACLES[sourceChainId.toString()] ?? [])
-          ]
-            .filter((oracle): oracle is `0x${string}` => !!oracle)
-            .map((oracle) => oracle.toLowerCase())
-        );
         const isPolymerPath =
-          !sameChainAttestation && polymerOracles.has(order.inputOracle.toLowerCase());
+          !sameChainAttestation &&
+          Solver.polymerOraclesFor(sourceChainId).has(order.inputOracle.toLowerCase());
 
         if (sameChainAttestation) {
           // Same-chain fills: the output settler doubles as the oracle, but the
@@ -313,85 +507,20 @@ export class Solver {
         }
         const logIndex = matches[0].logIndex;
 
-        let proof: string | undefined;
         const polymerKey = `${Number(output.chainId)}:${Number(transactionReceipt.blockNumber)}:${Number(logIndex)}`;
-        let polymerIndex: number | undefined = Solver.polymerRequestIndexByLog.get(polymerKey);
-        for (const waitMs of [1000, 2000, 4000, 8000]) {
-          const response = await axios.post(
-            `/polymer`,
-            {
-              srcChainId: Number(output.chainId),
-              srcBlockNumber: Number(transactionReceipt.blockNumber),
-              globalLogIndex: Number(logIndex),
-              polymerIndex,
-              mainnet: mainnet
-            },
-            { timeout: 15_000 }
-          );
-          const dat = response.data as {
-            proof: undefined | string;
-            polymerIndex: number;
-          };
-          polymerIndex = dat.polymerIndex;
-          if (polymerIndex !== undefined) {
-            Solver.polymerRequestIndexByLog.set(polymerKey, polymerIndex);
-          }
-          if (dat.proof) {
-            proof = dat.proof;
-            break;
-          }
-          await Solver.sleep(waitMs);
-        }
+        const proof = await Solver.pollPolymerProof(polymerKey, {
+          srcChainId: Number(output.chainId),
+          srcBlockNumber: Number(transactionReceipt.blockNumber),
+          globalLogIndex: Number(logIndex),
+          mainnet
+        });
         if (!proof) {
           throw new Error(
             `Polymer proof unavailable for output on ${output.chainId.toString()}. Try again after the fill attestation is indexed.`
           );
         }
 
-        if (isTronChain(sourceChainId)) {
-          const txId = await submitTronReceiveMessage(await tronDeps(), order.inputOracle, proof);
-          if (postHook) await postHook();
-          return { transactionHash: `0x${txId.replace("0x", "")}` };
-        }
-
-        if (preHook) await preHook(Number(sourceChainId));
-
-        const proofHex = `0x${proof.replace("0x", "")}` as `0x${string}`;
-        const simCalldata = encodeFunctionData({
-          abi: POLYMER_ORACLE_ABI,
-          functionName: "receiveMessage",
-          args: [proofHex]
-        });
-        try {
-          await getClient(sourceChainId).call({
-            to: order.inputOracle,
-            data: simCalldata,
-            account: account()
-          });
-        } catch (simError) {
-          throw new Error(
-            `receiveMessage simulation failed on chain ${Number(sourceChainId)}: ${Solver.extractRevertReason(simError)}`,
-            { cause: simError as Error }
-          );
-        }
-
-        const transactionHash = await walletClient.writeContract({
-          chain: getChain(sourceChainId),
-          account: account(),
-          address: order.inputOracle,
-          abi: POLYMER_ORACLE_ABI,
-          functionName: "receiveMessage",
-          args: [proofHex]
-        });
-
-        const result = await getClient(sourceChainId).waitForTransactionReceipt({
-          hash: transactionHash,
-          timeout: 120_000,
-          pollingInterval: 2_000
-        });
-        await Solver.persistReceipt(sourceChainId, transactionHash, result);
-        if (postHook) await postHook();
-        return result;
+        return deliverProofToInputChain(proof);
       })();
 
       Solver.validationInflight.set(validationKey, validationPromise);
@@ -401,6 +530,114 @@ export class Solver {
         Solver.validationInflight.delete(validationKey);
       }
     };
+  }
+
+  private static deliverProof(
+    proof: string,
+    ctx: {
+      order: OrderContainer["order"];
+      orderId: `0x${string}`;
+      output: MandateOutput;
+      fillTransactionHash: TxRef;
+      sourceChainId: number | bigint;
+      walletClient: WC;
+      account: () => `0x${string}`;
+      // `unknown` rather than the `any` the public entry points use — the
+      // hooks' results are never read, and this is new code with no callers to
+      // keep compatible.
+      preHook?: (chainId: number) => Promise<unknown>;
+      postHook?: () => Promise<unknown>;
+    }
+  ) {
+    return (async () => {
+      const { order, orderId, output, fillTransactionHash, sourceChainId } = ctx;
+      const { walletClient, account, preHook, postHook } = ctx;
+
+      if (isSolanaChain(sourceChainId)) {
+        // Serialised across ALL outputs, not just retries of one. The Polymer
+        // prover's scratch accounts are derived from the signer alone, and
+        // receiveProof spends them across two transactions (load then attest),
+        // so a second output running concurrently overwrites the first's
+        // loaded proof between its own two steps. The per-output inflight key
+        // does not cover this — the collision is between different outputs.
+        return Solver.queueSolanaReceive(async () => {
+          const deps = await solanaDeps(BigInt(sourceChainId));
+          // The prover program id is pinned but verified against the on-chain
+          // OraclePolymer account here: it is external to this protocol, so a
+          // rotation would otherwise surface as an opaque CPI failure.
+          const proverProgramId = await readPolymerProverId(deps.reads);
+          const { solver, timestamp } = await getFillDetails(orderId, output, fillTransactionHash);
+          const { attestSignature, attestation } = await receiveSolanaProof(deps, {
+            proof: hexToBytes(`0x${proof.replace(/^0x/, "")}`),
+            orderId,
+            output,
+            solverBytes32: solver,
+            timestamp,
+            proverProgramId,
+            proverAccounts: polymerScratchPdas(deps.signer.publicKey, proverProgramId)
+          });
+          if (postHook) await postHook();
+          // No signature means the attestation already existed — re-running is
+          // a no-op, not a failure.
+          return { transactionHash: attestSignature, attestation };
+        });
+      }
+
+      if (isTronChain(sourceChainId)) {
+        // Entry point selected by the chain the proof came FROM, mirroring the
+        // EVM branch below: a Solana fill's proof is only decodable by
+        // receiveSolanaMessage, and receiveMessage reverts on it reasonless.
+        const txId = await submitTronReceiveMessage(
+          await tronDeps(),
+          order.inputOracle,
+          proof,
+          polymerReceiveFunction(output.chainId)
+        );
+        if (postHook) await postHook();
+        return { transactionHash: `0x${txId.replace("0x", "")}` };
+      }
+
+      if (preHook) await preHook(Number(sourceChainId));
+
+      const proofHex = `0x${proof.replace("0x", "")}` as `0x${string}`;
+      // Chosen by the chain the proof came FROM, not the chain we are calling.
+      const receiveFn = polymerReceiveFunction(output.chainId);
+      const simCalldata = encodeFunctionData({
+        abi: POLYMER_ORACLE_ABI,
+        functionName: receiveFn,
+        args: [proofHex]
+      });
+      try {
+        await getClient(sourceChainId).call({
+          to: order.inputOracle,
+          data: simCalldata,
+          account: account()
+        });
+      } catch (simError) {
+        throw new Error(
+          `${receiveFn} simulation failed on chain ${Number(sourceChainId)}: ${Solver.extractRevertReason(simError)}`,
+          { cause: simError as Error }
+        );
+      }
+
+      const transactionHash = await walletClient.writeContract({
+        chain: getChain(sourceChainId),
+        account: account(),
+        address: order.inputOracle,
+        abi: POLYMER_ORACLE_ABI,
+        functionName: receiveFn,
+        args: [proofHex]
+      });
+
+      const result = await getClient(sourceChainId).waitForTransactionReceipt({
+        hash: transactionHash,
+        timeout: 120_000,
+        pollingInterval: 2_000
+      });
+      await Solver.persistReceipt(sourceChainId, transactionHash, result);
+      if (postHook) await postHook();
+      return result;
+    })();
   }
 
   static claim(
@@ -421,8 +658,6 @@ export class Solver {
       const { orderContainer, fillTransactionHashes, sourceChainId } = args;
       const { order, inputSettler } = orderContainer;
       const intent = containerToIntent(orderContainer);
-      if (intent instanceof StandardSolanaIntent)
-        throw new Error("Finalise is not supported for Solana input intents.");
 
       if (fillTransactionHashes.length !== order.outputs.length) {
         throw new Error(
@@ -431,7 +666,10 @@ export class Solver {
       }
       for (let i = 0; i < fillTransactionHashes.length; i++) {
         const hash = fillTransactionHashes[i];
-        if (!hash || !hash.startsWith("0x") || hash.length !== 66) {
+        // Checked against the OUTPUT chain, not sourceChainId: a Solana fill
+        // is a base58 signature even when the order's input chain is EVM, and
+        // the reverse holds for an EVM fill of a Solana-input order.
+        if (!isValidTxRef(hash, order.outputs[i]?.chainId)) {
           throw new Error(`Invalid fill tx hash at index ${i}: ${hash}`);
         }
       }
@@ -444,18 +682,46 @@ export class Solver {
       const solveParams = await Promise.all(
         fillTransactionHashes.map(async (fth, i) => {
           const output = order.outputs[i];
-          const { solver, timestamp } = await getFillDetails(orderId, output, fth as `0x${string}`);
+          const { solver, timestamp } = await getFillDetails(orderId, output, fth);
           return { timestamp, solver };
         })
       );
 
       // The input settler derives the order owner from solveParams[0].solver
-      // and requires msg.sender to be that owner.
-      const owner = bytes32ToAddress(solveParams[0].solver);
-      if (owner.toLowerCase() !== account().toLowerCase()) {
+      // and requires the caller to be that owner.
+      //
+      // Compared as bytes32 on Solana: a Solana solver identity IS 32 bytes, so
+      // truncating it to the low 20 (as the EVM comparison does) would never
+      // match the connected wallet and would reject the rightful solver.
+      const solverBytes32 = solveParams[0].solver;
+      const connected = account();
+      const ownerMatches = isSolanaChain(sourceChainId)
+        ? solverBytes32.toLowerCase() === connected.toLowerCase()
+        : bytes32ToAddress(solverBytes32).toLowerCase() === connected.toLowerCase();
+      if (!ownerMatches) {
+        const owner = isSolanaChain(sourceChainId)
+          ? bytes32ToSolanaBase58(solverBytes32)
+          : bytes32ToAddress(solverBytes32);
+        const connectedDisplay = isSolanaChain(sourceChainId)
+          ? bytes32ToSolanaBase58(connected)
+          : connected;
         throw new Error(
-          `This order was filled for solver ${owner} — connect that wallet to claim (connected: ${account()}).`
+          `This order was filled for solver ${owner} — connect that wallet to claim (connected: ${connectedDisplay}).`
         );
+      }
+
+      if (isSolanaChain(sourceChainId)) {
+        if (!(intent instanceof StandardSolanaIntent)) {
+          throw new Error("A Solana-input order must be a StandardSolanaIntent");
+        }
+        const signature = await finaliseSolana(await solanaDeps(BigInt(sourceChainId)), {
+          order: intent.asOrder(),
+          orderId: intent.orderId(),
+          solveParams,
+          destinationBytes32: addressToBytes32(account())
+        });
+        if (postHook) await postHook();
+        return signature;
       }
 
       if (isTronChain(sourceChainId)) {
@@ -470,6 +736,15 @@ export class Solver {
         });
         if (postHook) await postHook();
         return `0x${txId.replace("0x", "")}`;
+      }
+
+      if (intent instanceof StandardSolanaIntent) {
+        // Reachable only if the order's namespace and its source chain id
+        // disagree, which means the container is malformed rather than that
+        // some path is unimplemented.
+        throw new Error(
+          `Order is a Solana intent but its source chain ${sourceChainId} is not a Solana chain`
+        );
       }
 
       if (preHook) await preHook(Number(sourceChainId));

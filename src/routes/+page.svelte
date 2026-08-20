@@ -13,8 +13,8 @@
   import WalletStatus from "$lib/components/WalletStatus.svelte";
   import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
   import store from "$lib/state.svelte";
-  import { containerToIntent } from "$lib/utils/intent";
-  import { isTronChain } from "$lib/utils/chainType";
+  import { containerToIntent, reviveOrderBigInts } from "$lib/utils/intent";
+  import { getChainType } from "$lib/utils/chainType";
 
   BigInt.prototype.toJSON = function () {
     return this.toString();
@@ -68,7 +68,15 @@
               type: "None",
               payload: "0x"
             } as NoSignature);
-        const orderContainer = { ...order, allocatorSignature, sponsorSignature };
+        // The socket hands over raw parsed JSON (`user:vm-order-submit` skips
+        // the BigInt conversion getAndParseOrders does), so every bigint field
+        // arrives as a decimal string — which broke Solana PDA derivations.
+        const orderContainer = {
+          ...order,
+          order: reviveOrderBigInts(order.order),
+          allocatorSignature,
+          sponsorSignature
+        };
 
         // Deduplicate: only add if not already present
         const orderId = containerToIntent(orderContainer).orderId();
@@ -100,13 +108,22 @@
   // Wallet identity is bound to the chain of the OPERATION, not to the draft
   // issuance form: filling uses the selected order's output chain, proving and
   // finalising use its input chain. The draft form only drives issuance.
-  // An EVM address is never a valid identity on Tron (and vice versa), so a
-  // missing Tron wallet blocks instead of silently falling back.
+  // An address from one namespace is never a valid identity in another, so a
+  // missing wallet blocks instead of silently falling back to the EVM account.
   const accountFor = (chainId: number | bigint | undefined) => {
-    if (chainId !== undefined && isTronChain(chainId)) {
-      const tronAccount = store.accountForChain(chainId);
-      if (!tronAccount) throw new Error("Connect TronLink to act on Tron");
-      return tronAccount;
+    if (chainId !== undefined) {
+      const chainType = getChainType(chainId);
+      if (chainType !== "evm") {
+        const resolved = store.accountForChain(chainId);
+        if (!resolved) {
+          throw new Error(
+            chainType === "tron"
+              ? "Connect TronLink to act on Tron"
+              : "Connect a Solana wallet to act on Solana"
+          );
+        }
+        return resolved;
+      }
     }
     const resolved = chainId !== undefined ? store.accountForChain(chainId) : undefined;
     return resolved ?? store.connectedAccount?.address!;

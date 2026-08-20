@@ -25,7 +25,10 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { hashStruct } from "viem";
   import { compactTypes } from "@lifi/intent";
-  import { isTronChain } from "$lib/utils/chainType";
+  import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+  import { isValidTxRef } from "$lib/utils/txRef";
+  import { getSolanaReads } from "$lib/solana/client";
+  import { readIsOrderFinalised } from "$lib/solana/reads";
   import { getTronReads } from "$lib/tron/client";
   import { readOrderStatus } from "$lib/tron/reads";
   import { getOrFetchRpc } from "$lib/libraries/rpcCache";
@@ -80,8 +83,22 @@
   const fillTransactionHashesFor = (container: OrderContainer) =>
     container.order.outputs.map((output) => store.fillTransactions[outputKey(output)]);
 
-  const isValidFillTxHash = (hash: unknown): hash is `0x${string}` =>
-    typeof hash === "string" && hash.startsWith("0x") && hash.length === 66;
+  // The fill reference belongs to the OUTPUT chain, not the input chain: a
+  // Solana fill of an EVM-input order is base58 even though the source chain is
+  // EVM, so the output's chain id is what validates it.
+  const isValidFillTxHash = (hash: unknown, chainId?: bigint) =>
+    typeof hash === "string" && isValidTxRef(hash, chainId);
+
+  /**
+   * Whether every output has a usable fill reference.
+   *
+   * Each hash is validated against ITS OWN output's chain, not the order's
+   * source chain — a Solana fill of an EVM-input order is base58.
+   */
+  const hasAllFillTransactions = (container: OrderContainer) =>
+    container.order.outputs.every((output) =>
+      isValidFillTxHash(store.fillTransactions[outputKey(output)], output.chainId)
+    );
 
   // Order status enum
   const OrderStatus_None = 0;
@@ -93,6 +110,17 @@
     const { order, inputSettler } = container;
     const intent = containerToIntent(container);
     const orderId = intent.orderId();
+
+    if (isSolanaChain(chainId)) {
+      // No status enum on Solana: finalise and refund both close order_context,
+      // so its absence (with consumed_order still present) is the terminal
+      // signal — the same Claimed-or-Refunded conflation as the branches below.
+      return getOrFetchRpc(
+        `claim:solana:${orderId}`,
+        async () => readIsOrderFinalised(await getSolanaReads(chainId), orderId),
+        { ttlMs: 30_000 }
+      );
+    }
 
     if (isTronChain(chainId)) {
       const orderStatus = await getOrFetchRpc(
@@ -213,7 +241,7 @@
               </button>
             {:else}
               {@const fillTransactionHashes = fillTransactionHashesFor(orderContainer)}
-              {@const canClaim = fillTransactionHashes.every((hash) => isValidFillTxHash(hash))}
+              {@const canClaim = hasAllFillTransactions(orderContainer)}
               {#if !canClaim}
                 <button
                   type="button"

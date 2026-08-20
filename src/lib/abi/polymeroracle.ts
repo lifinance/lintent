@@ -83,6 +83,41 @@ export const POLYMER_ORACLE_ABI = [
     outputs: [],
     stateMutability: "nonpayable"
   },
+  // A Solana proof MUST go here, not to receiveMessage: the two decode
+  // different things. receiveMessage calls ICrossL2ProverV2.validateEvent,
+  // which parses an EVM event log; this one calls validateSolLogs. Feeding a
+  // Solana proof to the EVM entry point reverts with no reason string.
+  //
+  // They also key the attestation differently. The EVM path stores under the
+  // local oracle's own identifier; this one stores under Polymer's
+  // `returnedProgramId` — which is why a Solana output must carry the Polymer
+  // PROGRAM ID in `output.oracle` for isProven to find it.
+  {
+    type: "function",
+    name: "receiveSolanaMessage",
+    inputs: [
+      {
+        name: "proof",
+        type: "bytes",
+        internalType: "bytes"
+      }
+    ],
+    outputs: [],
+    stateMutability: "nonpayable"
+  },
+  {
+    type: "function",
+    name: "receiveSolanaMessage",
+    inputs: [
+      {
+        name: "proofs",
+        type: "bytes[]",
+        internalType: "bytes[]"
+      }
+    ],
+    outputs: [],
+    stateMutability: "nonpayable"
+  },
   {
     type: "event",
     name: "OutputProven",

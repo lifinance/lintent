@@ -17,8 +17,8 @@
   import OutputTokenModal from "$lib/components/OutputTokenModal.svelte";
   import { ResetPeriod } from "@lifi/intent";
   import type { AppCreateIntentOptions } from "$lib/appTypes";
-  import { resolveAddress } from "$lib/utils/address";
-  import { getChainType } from "$lib/utils/chainType";
+  import { resolveAddress, resolveAddressForChainType } from "$lib/utils/address";
+  import { formatAddressForChain, getChainType } from "$lib/utils/chainType";
 
   const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
   const REQUIRED_INPUT_USDC_RAW = 100n;
@@ -40,8 +40,6 @@
 
   const resolveExclusiveFor = (value: string): `0x${string}` | undefined => resolveAddress(value);
 
-  const resolveRecipient = (value: string): `0x${string}` | undefined => resolveAddress(value);
-
   // Cross-namespace orders (e.g. EVM -> Tron) must name their recipient: the
   // default recipient is the source-chain account, which only a plain EOA key
   // can control on the destination namespace (a Safe or exchange address
@@ -54,6 +52,66 @@
     );
   });
 
+  const outputChainTypes = $derived([
+    ...new Set(store.outputTokens.map((o) => getChainType(o.token.chainId)))
+  ]);
+
+  // Resolved against the OUTPUT chain's namespace, never chain-agnostically:
+  // `@lifi/intent` zero-pads a 20-byte EVM address into a Solana pubkey nobody
+  // controls, and the EVM settler truncates a 32-byte Solana key to its low 20
+  // bytes — either way a wrong-namespace recipient silently burns the output.
+  const resolvedRecipient = $derived.by((): `0x${string}` | undefined => {
+    if (store.recipient.trim().length === 0) return undefined;
+    const resolutions = outputChainTypes.map((chainType) =>
+      resolveAddressForChainType(store.recipient, chainType)
+    );
+    if (resolutions.length === 0 || resolutions.some((r) => r === undefined)) return undefined;
+    // Distinct chain types resolve disjoint formats, so all-defined means
+    // every entry is the same value.
+    return resolutions[0];
+  });
+
+  const RECIPIENT_FORMAT_HINT: Record<ReturnType<typeof getChainType>, string> = {
+    solana:
+      "Recipient must be a base58 Solana address — a 0x address would be padded into a Solana key nobody controls.",
+    tron: "Recipient must be a Tron (T...) or 0x address.",
+    evm: "Recipient must be a 0x or Tron (T...) address — a Solana key would be truncated to 20 bytes on payout."
+  };
+
+  const recipientProblem = $derived.by((): string | undefined => {
+    if (store.recipient.trim().length === 0) {
+      return recipientRequired
+        ? "This order pays out on a different chain type than it is opened on — enter a recipient address for the output chain."
+        : undefined;
+    }
+    if (resolvedRecipient !== undefined) return undefined;
+    if (outputChainTypes.length > 1) {
+      return "No single recipient is valid on every output chain type — use outputs from one chain type.";
+    }
+    return RECIPIENT_FORMAT_HINT[outputChainTypes[0] ?? "evm"];
+  });
+
+  // Solana fills batch all of a chain's outputs into ONE transaction — the fill
+  // reference stored per output must contain every output's OutputFilledEvent
+  // (see fillOutputs in src/lib/solana/writes.ts) — and two exclusive outputs
+  // already exceed Solana's 1232-byte transaction cap. Such an order opens,
+  // escrows the inputs, and then can never be filled, so it is blocked here.
+  const solanaOutputOverflow = $derived.by(() => {
+    const perChain = new Map<number, number>();
+    for (const { token } of store.outputTokens) {
+      if (getChainType(token.chainId) !== "solana") continue;
+      perChain.set(token.chainId, (perChain.get(token.chainId) ?? 0) + 1);
+    }
+    return [...perChain.values()].some((count) => count > 1);
+  });
+
+  const issueBlocker = $derived(
+    recipientProblem ??
+      (solanaOutputOverflow
+        ? "Solana orders support a single output: all outputs must be filled in one Solana transaction, and more than one exceeds the 1232-byte transaction size — the order would open but could never be filled."
+        : undefined)
+  );
+
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({
       // In 1:1 demo mode the quote omits exclusiveFor, but the on-chain intent
@@ -64,7 +122,7 @@
       inputTokens: store.inputTokens,
       outputTokens: store.outputTokens,
       verifier: store.verifier,
-      outputRecipient: resolveRecipient(store.recipient),
+      outputRecipient: resolvedRecipient,
       lock:
         store.intentType === "compact"
           ? {
@@ -253,7 +311,8 @@
             useProductionApi={store.useProductionApi}
             inputTokens={store.inputTokens}
             bind:outputTokens={store.outputTokens}
-            {account}
+            accountForChain={(chainId) => store.accountForChain(chainId)}
+            outputRecipient={resolvedRecipient}
           ></GetQuote>
         </div>
       {/snippet}
@@ -327,13 +386,21 @@
             size="sm"
             className="flex-1"
             placeholder="0x... or T... (optional)"
-            state={(store.recipient.length > 0 && !resolveRecipient(store.recipient)) ||
-            (recipientRequired && store.recipient.length === 0)
-              ? "error"
-              : "default"}
+            state={recipientProblem !== undefined ? "error" : "default"}
             bind:value={store.recipient}
           />
         </div>
+        {#if resolvedRecipient !== undefined}
+          <p class="text-[11px] break-all text-gray-500">
+            Pays out to
+            <span class="font-medium text-gray-600">
+              {formatAddressForChain(resolvedRecipient, store.outputTokens[0].token.chainId)}
+            </span>
+            on {getChainName(store.outputTokens[0].token.chainId)}
+          </p>
+        {:else if recipientProblem !== undefined && store.recipient.trim().length > 0}
+          <p class="text-[11px] text-red-600">{recipientProblem}</p>
+        {/if}
         <div class="flex items-center gap-1">
           <span class="text-[11px] font-semibold text-gray-500">Verifier</span>
           {#if sameChain}
@@ -392,7 +459,17 @@
     </SectionCard>
 
     <div class="mt-2 flex justify-center">
-      {#if !allowanceCheck}
+      {#if issueBlocker !== undefined}
+        <!-- Before the allowance branch: an order that can never be issued
+             must not prompt for an approval transaction first. -->
+        <button
+          type="button"
+          class="h-8 rounded border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-700"
+          disabled
+        >
+          Cannot Issue
+        </button>
+      {:else if !allowanceCheck}
         <AwaitButton buttonFunction={approveFunction}>
           {#snippet name()}
             Set allowance
@@ -444,6 +521,11 @@
         </div>
       {/if}
     </div>
+    {#if issueBlocker !== undefined}
+      <p class="mx-auto mt-2 w-4/5 text-center text-xs font-medium text-amber-700">
+        {issueBlocker}
+      </p>
+    {/if}
     {#if numInputChains > 1 && store.intentType !== "compact"}
       <p class="mx-auto mt-2 w-4/5 text-center text-xs text-gray-600">
         You'll need to open the order on {numInputChains} chains. Be prepared and do not interrupt the

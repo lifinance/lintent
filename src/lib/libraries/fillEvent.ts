@@ -3,7 +3,11 @@ import type { MandateOutput } from "@lifi/intent";
 import { bytes32ToAddress } from "@lifi/intent";
 import { getClient } from "$lib/config";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
-import { isTronChain } from "$lib/utils/chainType";
+import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import type { TxRef } from "$lib/utils/txRef";
+import { OUTPUT_SETTLER_SIMPLE_PROGRAM_ID } from "$lib/idl";
+import { getSolanaReads } from "$lib/solana/client";
+import { findOutputFilledLog } from "$lib/solana/events";
 import { getTronReads } from "$lib/tron/client";
 import {
   decodeOutputFilledFromTronLogs,
@@ -32,12 +36,46 @@ const FILL_DETAILS_TTL_MS = 300_000; // immutable once mined — cache generousl
 export async function getFillDetails(
   orderId: `0x${string}`,
   output: MandateOutput,
-  fillTransactionHash: `0x${string}`
+  fillTransactionHash: TxRef
 ): Promise<FillDetails> {
   const cacheKey = `fill-details:${orderId}:${outputStructHash(output)}:${fillTransactionHash}`;
   return getOrFetchRpc(
     cacheKey,
     async () => {
+      if (isSolanaChain(output.chainId)) {
+        const reads = await getSolanaReads(output.chainId);
+        // "confirmed", deliberately: `signAndSend` has already waited for this
+        // commitment and read the transaction back, so by the time we get here
+        // the read costs nothing. Waiting for "finalized" instead added ~13s
+        // (about 32 slots) to every fill before the proof could even be built.
+        //
+        // What that trades away: a confirmed slot can in principle still be
+        // dropped, and the result below is memoised for the session. If that
+        // ever happened the cached timestamp would be stale and every retry
+        // would fail with InvalidLocalAttestationTimestamp until a reload. It
+        // cannot mint a false proof — `validate_payload` compares against the
+        // on-chain LocalAttestation — so the failure is loud, not silent.
+        const tx = await reads.getTransaction(fillTransactionHash, { commitment: "confirmed" });
+        if (!tx?.meta) {
+          // Deliberately does not blame finality. An empty result means "this
+          // RPC does not have the transaction", which is just as often a
+          // pruned history or a load-balanced node that has not caught up as
+          // it is a fill that has not landed.
+          throw new Error(
+            `Solana RPC returned no transaction for ${fillTransactionHash}. It may not have landed yet, or this endpoint may not carry it — retry, and if it persists check the fill signature.`
+          );
+        }
+        if (tx.meta.err) {
+          throw new Error(`Solana fill transaction reverted: ${JSON.stringify(tx.meta.err)}`);
+        }
+        const { solver, timestamp } = findOutputFilledLog(tx.meta.logMessages ?? [], {
+          programId: OUTPUT_SETTLER_SIMPLE_PROGRAM_ID,
+          orderId,
+          output
+        });
+        return { solver, timestamp };
+      }
+
       if (isTronChain(output.chainId)) {
         const reads = await getTronReads();
         // Deliberately the solidity node: this result is cached as immutable,
@@ -54,8 +92,9 @@ export async function getFillDetails(
         return { solver, timestamp };
       }
 
+      // Reached only on the EVM branch, where a TxRef is a 0x hash.
       const receipt = await getClient(output.chainId).getTransactionReceipt({
-        hash: fillTransactionHash
+        hash: fillTransactionHash as `0x${string}`
       });
       if (receipt.status !== "success") {
         throw new Error(`Fill transaction ${fillTransactionHash} reverted`);

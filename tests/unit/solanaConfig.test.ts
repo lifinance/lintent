@@ -6,7 +6,9 @@ import {
   SOLANA_POLYMER_ORACLE_PDA,
   SOLANA_POLYMER_ORACLE_PROGRAM
 } from "@lifi/intent";
+import { base } from "viem/chains";
 import {
+  POLYMER_ORACLE,
   chainIdList,
   coinList,
   SOLANA_OUTPUT_SETTLER,
@@ -62,6 +64,17 @@ describe("config (solana)", () => {
     expect(SOLANA_POLYMER_OUTPUT_ORACLE).toBe(SOLANA_POLYMER_ORACLE_PROGRAM);
     expect(SOLANA_POLYMER_OUTPUT_ORACLE).not.toBe(SOLANA_POLYMER_ORACLE_PDA);
     expect(getOracle("polymer", SOLANA_MAINNET_CHAIN_ID)).not.toBe(SOLANA_POLYMER_OUTPUT_ORACLE);
+  });
+
+  test("a solana-origin order names an EVM output oracle with clean upper bytes", () => {
+    // The input PDA is not a legal MandateOutput.oracle for an EVM output: the
+    // settler's validatedCleanAddress reverts HasDirtyBits() on it. So the
+    // value such an order carries is the OUTPUT chain's oracle, and it must be
+    // a plain 20-byte address.
+    const outputOracle = getOracle("polymer", BigInt(base.id));
+    expect(outputOracle).toBe(POLYMER_ORACLE[base.id]!);
+    expect(outputOracle).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    expect(SOLANA_POLYMER_ORACLE_PDA).not.toMatch(/^0x[0-9a-fA-F]{40}$/);
   });
 
   test("the solana output settler is the settler PDA", () => {

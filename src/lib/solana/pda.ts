@@ -116,9 +116,14 @@ export function outputSettlerSimplePda(
  * The Polymer oracle's singleton state PDA — the value `StandardOrder.inputOracle`
  * must hold when Solana is the INPUT chain.
  *
- * Do NOT use this for `MandateOutput.oracle`: `oracle_polymer::submit` compares
- * the fill's `LocalAttestation.consumer` against its own PROGRAM ID, so a fill
- * whose output oracle is this PDA can never be proven.
+ * Do NOT use this for `MandateOutput.oracle`, on either side of a route:
+ *  - Solana OUTPUT: `oracle_polymer::submit` compares the fill's
+ *    `LocalAttestation.consumer` against its own PROGRAM ID, so a fill whose
+ *    output oracle is this PDA can never be proven.
+ *  - EVM/Tron output on a Solana-ORIGIN order: this PDA has dirty upper bytes,
+ *    and the EVM settler's `validatedCleanAddress` reverts `HasDirtyBits()`, so
+ *    the output can be neither filled nor proven unfilled. Such an order names
+ *    the OUTPUT chain's oracle instead.
  */
 export function polymerOraclePda(programId: string = POLYMER_PROGRAM_ID): PublicKey {
   return derive([SOLANA_PDA_SEEDS.polymerOracle], programId);

@@ -84,6 +84,25 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
       return [SOLANA_POLYMER_OUTPUT_ORACLE];
     }
     const allowed: `0x${string}`[] = [];
+    // A Solana INPUT cannot follow the rule below: its oracle is a 32-byte PDA,
+    // and the EVM output settler reverts HasDirtyBits() on any value with
+    // non-zero upper bytes (OutputSettlerBase.sol:175, emitNotFilled at :322),
+    // so such an order can be neither filled nor proven unfilled. Solana keys
+    // its attestation by output.oracle as declared
+    // (oracle_polymer receive_attest, input_settler_base validate_fill), so the
+    // output chain's own oracle is what @lifi/intent >=0.5.0 emits here.
+    if (isSolanaChain(inputChainId)) {
+      if (outPolymer) allowed.push(outPolymer);
+      // legacy: orders opened before @lifi/intent 0.5.0 carry the input PDA.
+      // They could never have been filled, so this is display-only — it keeps
+      // them renderable and refundable instead of failing validation outright.
+      const inLegacy = POLYMER_ORACLE[Number(inputChainId)];
+      if (inLegacy && inLegacy.toLowerCase() === inputOracle.toLowerCase()) {
+        allowed.push(inLegacy);
+      }
+      if (isNonZeroAddress(outWormhole)) allowed.push(outWormhole);
+      return allowed;
+    }
     // Polymer stores proofs under the INPUT chain's oracle, so output.oracle
     // must be exactly the oracle this order's input chain is configured with
     // (current or known-legacy deployment).

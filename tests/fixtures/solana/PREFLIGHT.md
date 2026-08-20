@@ -17,16 +17,24 @@ derives every PDA under a garbage program id.
 produces an order that fills — moving the solver's tokens — and can then never
 be proven.
 
-| Field                                                    | Must hold              | Value                                                           | Proof                                                                                                                                                    |
-| -------------------------------------------------------- | ---------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MandateOutput.settler` (Solana output)                  | output settler **PDA** | `DHShHmVkTwCzUzAQbCu4GDqJmursuDscNR6o4hTBgeRy` / `0xb68296ce…`  | `programs/outputs/output_settler_base/src/base.rs:122`                                                                                                   |
-| `MandateOutput.oracle` (Solana output, cross-chain)      | polymer **PROGRAM ID** | `LiFiBtfyPT1DnTHTAeZ2rwr5RgMrThwA5kt7KGT5nBV` / `0x050cae5588…` | `programs/oracles/oracle_polymer/src/instructions/submit.rs:71` — compares the LocalAttestation consumer against `ctx.program_id`                        |
-| `StandardSolana.inputOracle` (Solana input, cross-chain) | polymer oracle **PDA** | `49zLKETMq34CUC2E2wL1xvv6uN2AUgyhjVX221mjE3Rw` / `0x2ee088ac…`  | `oracle_polymer/src/instructions/receive_attest.rs:142` + `programs/inputs/input_settler_base/src/base.rs:125`                                           |
-| Same-chain Solana→Solana, both oracle fields             | output settler **PDA** | `0xb68296ce…`                                                   | `input_settler_base/src/base.rs:88-111` — the LocalAttestation branch never reads `input_oracle`; this is canonical encoding, not a contract requirement |
+| Field                                                    | Must hold                                | Value                                                           | Proof                                                                                                                                                                                                               |
+| -------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MandateOutput.settler` (Solana output)                  | output settler **PDA**                   | `DHShHmVkTwCzUzAQbCu4GDqJmursuDscNR6o4hTBgeRy` / `0xb68296ce…`  | `programs/outputs/output_settler_base/src/base.rs:122`                                                                                                                                                              |
+| `MandateOutput.oracle` (Solana output, cross-chain)      | polymer **PROGRAM ID**                   | `LiFiBtfyPT1DnTHTAeZ2rwr5RgMrThwA5kt7KGT5nBV` / `0x050cae5588…` | `programs/oracles/oracle_polymer/src/instructions/submit.rs:71` — compares the LocalAttestation consumer against `ctx.program_id`                                                                                   |
+| `StandardSolana.inputOracle` (Solana input, cross-chain) | polymer oracle **PDA**                   | `49zLKETMq34CUC2E2wL1xvv6uN2AUgyhjVX221mjE3Rw` / `0x2ee088ac…`  | `oracle_polymer/src/instructions/receive_attest.rs:142` + `programs/inputs/input_settler_base/src/base.rs:125`                                                                                                      |
+| Same-chain Solana→Solana, both oracle fields             | output settler **PDA**                   | `0xb68296ce…`                                                   | `input_settler_base/src/base.rs:88-111` — the LocalAttestation branch never reads `input_oracle`; this is canonical encoding, not a contract requirement                                                            |
+| `MandateOutput.oracle` (EVM/Tron output, Solana input)   | the **OUTPUT** chain's EVM PolymerOracle | e.g. `0x008C3800F3Ad9b3B662d002E90Cc00000000eE17`               | `lifi-oif` `OutputSettlerBase.sol:175` reverts `HasDirtyBits()` on the 32-byte input PDA (and `:322` for `emitNotFilled`); safe because `receive_attest.rs:142` keys the attestation by `output.oracle` as declared |
 
 The EVM rule "`output.oracle` = the input chain's oracle" holds only because
 `PolymerOracle` is CREATE2-identical across EVM chains. It does **not** carry
-over to Solana.
+over to Solana, in either direction:
+
+- Solana **output**: the value is pinned to the polymer program id by
+  `submit.rs:71` and by the EVM side's `returnedProgramId` keying.
+- Solana **input**: there is no EVM oracle on the input chain to name, and the
+  input PDA is rejected outright by the EVM settler's clean-address check, so
+  the order names the _output_ chain's oracle. `@lifi/intent` >= 0.5.0 emits
+  this; orders opened before it carry the input PDA and could never be filled.
 
 ---
 

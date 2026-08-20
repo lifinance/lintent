@@ -103,11 +103,17 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [pharos.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [tron.id]: TRON_MAINNET_POLYMER_ORACLE,
   // Solana: this table answers "what is the input oracle for an order
-  // originating on this chain", so it holds the Polymer oracle *PDA*. The
-  // value a Solana *output* carries in `MandateOutput.oracle` is a different
-  // 32 bytes — the Polymer *program id*, exported below as
-  // SOLANA_POLYMER_OUTPUT_ORACLE. Swapping them yields an order that fills and
-  // can then never be proven. See tests/fixtures/solana/PREFLIGHT.md.
+  // originating on this chain", so it holds the Polymer oracle *PDA*. No order
+  // built today puts this value in `MandateOutput.oracle` on either side:
+  //   - a Solana OUTPUT carries the Polymer *program id* (below, as
+  //     SOLANA_POLYMER_OUTPUT_ORACLE) — swapping them yields an order that
+  //     fills and can then never be proven;
+  //   - an EVM/Tron output on a Solana-ORIGIN order carries the *output*
+  //     chain's oracle from this table, because the PDA's dirty upper bytes
+  //     make the EVM settler revert HasDirtyBits().
+  // Orders opened before @lifi/intent 0.5.0 did carry the PDA on an EVM/Tron
+  // output; `allowedOutputOracles` still accepts those so they stay renderable
+  // and refundable. See tests/fixtures/solana/PREFLIGHT.md.
   [Number(SOLANA_MAINNET_CHAIN_ID)]: SOLANA_POLYMER_ORACLE_PDA,
   [Number(SOLANA_DEVNET_CHAIN_ID)]: SOLANA_POLYMER_ORACLE_PDA,
   // testnet — matches `main` after SOLV-695 (#62), which superseded the 0xC401b533… bucket.
@@ -743,7 +749,11 @@ export const chainNameById = Object.fromEntries(chainNameEntries) as Record<numb
  * The value `MandateOutput.oracle` must hold for a Solana OUTPUT — the Polymer
  * *program id*, not the oracle PDA in `POLYMER_ORACLE` above.
  * `oracle_polymer::submit` compares the fill's LocalAttestation consumer
- * against its own program id.
+ * against its own program id, and the EVM `PolymerOracle` keys `_attestations`
+ * under the same value as Polymer's `returnedProgramId`.
+ *
+ * Applies to the OUTPUT chain only. An order whose *input* is Solana names the
+ * output chain's own oracle (`POLYMER_ORACLE[outputChainId]`), never this.
  */
 export const SOLANA_POLYMER_OUTPUT_ORACLE = SOLANA_POLYMER_ORACLE_PROGRAM;
 

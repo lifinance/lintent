@@ -584,7 +584,15 @@ export class Solver {
       }
 
       if (isTronChain(sourceChainId)) {
-        const txId = await submitTronReceiveMessage(await tronDeps(), order.inputOracle, proof);
+        // Entry point selected by the chain the proof came FROM, mirroring the
+        // EVM branch below: a Solana fill's proof is only decodable by
+        // receiveSolanaMessage, and receiveMessage reverts on it reasonless.
+        const txId = await submitTronReceiveMessage(
+          await tronDeps(),
+          order.inputOracle,
+          proof,
+          polymerReceiveFunction(output.chainId)
+        );
         if (postHook) await postHook();
         return { transactionHash: `0x${txId.replace("0x", "")}` };
       }

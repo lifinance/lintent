@@ -45,6 +45,12 @@ class BorshReader {
   constructor(private readonly data: Uint8Array) {}
 
   private take(length: number): Uint8Array {
+    // A negative length would pass the upper-bound check below, return an
+    // empty slice, and move the offset BACKWARDS — re-reading earlier bytes
+    // instead of failing. Only a malformed payload can produce one.
+    if (!Number.isInteger(length) || length < 0) {
+      throw new Error(`Invalid read length ${length} at offset ${this.offset}`);
+    }
     if (this.offset + length > this.data.length) {
       throw new Error(
         `Truncated event payload: wanted ${length} bytes at offset ${this.offset}, have ${this.data.length}`
@@ -61,7 +67,10 @@ class BorshReader {
 
   u32(): number {
     const b = this.take(4);
-    return b[0]! | (b[1]! << 8) | (b[2]! << 16) | ((b[3]! << 24) >>> 0);
+    // The unsigned coercion must wrap the WHOLE expression: `|` re-coerces its
+    // operands to signed int32, so an inner `>>> 0` on the high byte alone is
+    // defeated and bit 31 would come back as a negative number.
+    return (b[0]! | (b[1]! << 8) | (b[2]! << 16) | (b[3]! << 24)) >>> 0;
   }
 
   u64(): bigint {

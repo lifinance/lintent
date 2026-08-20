@@ -128,6 +128,29 @@ describe("decodeOutputFilledEvent", () => {
     expect(decoded.finalAmount).toBe(1_000_000n);
   });
 
+  test("decodes a timestamp with bit 31 set as unsigned (post-2038)", () => {
+    // `|` re-coerces to signed int32; a decoder that lets that through hands
+    // back a negative timestamp and the fill becomes unprovable.
+    const decoded = decodeOutputFilledEvent(
+      toBytes(
+        `0x${Buffer.from(encodeOutputFilledEvent({ timestamp: 0x80000000 }), "base64").toString("hex")}`
+      )
+    );
+    expect(decoded.timestamp).toBe(2_147_483_648);
+  });
+
+  test("rejects a high-bit vec length instead of reading backwards", () => {
+    const base = new Uint8Array(Buffer.from(encodeOutputFilledEvent({}), "base64"));
+    // callbackData's u32 length sits after discriminator (8) + settler/orderId/
+    // solver (3*32) + timestamp (4) + the six 32-byte output fields.
+    const lengthOffset = 8 + 3 * 32 + 4 + 6 * 32;
+    base.set([0xff, 0xff, 0xff, 0xff], lengthOffset);
+    // A signed decode would make this length -1: take(-1) passes the
+    // upper-bound check, returns an empty slice, and moves the offset
+    // BACKWARDS. It must fail as an out-of-bounds read instead.
+    expect(() => decodeOutputFilledEvent(base)).toThrow("Truncated");
+  });
+
   test("rejects a payload with trailing bytes", () => {
     // A prefix parse that "works" is how a layout drift goes unnoticed.
     const base = Buffer.from(encodeOutputFilledEvent({}), "base64");

@@ -2,7 +2,7 @@
   import { IntentApi } from "@lifi/intent";
   import type { AppTokenContext } from "$lib/appTypes";
   import { resolveDemoQuoteParams } from "$lib/libraries/demoQuote";
-  import { namespaceForChain } from "$lib/utils/chainType";
+  import { getChainType, namespaceForChain } from "$lib/utils/chainType";
   import { interval } from "rxjs";
 
   let {
@@ -69,7 +69,8 @@
           use11Demo,
           integratorKey,
           useExclusiveForQuoteRequest,
-          exclusiveFor
+          exclusiveFor,
+          inputChainType: getChainType(inputTokens[0].token.chainId)
         });
 
       const userChainId = inputTokens[0].token.chainId;
@@ -156,11 +157,22 @@
    *
    * The output amount is deliberately absent: this component writes it back
    * from the response, so including it would re-trigger on its own result.
+   *
+   * The exclusivity toggles belong here: issuance encodes whichever solver the
+   * last response wrote back into `exclusiveFor`, so a quote fetched under
+   * different exclusivity settings is a stale quote — flipping "1:1 demo" or
+   * "Lock Exclusive" has to fetch a new one. The solver text itself stays out
+   * for the same reason the output amount does: this component writes it back
+   * from the response, and a response that clears it would otherwise start a
+   * request whose own response sets it again.
    */
   const quoteInputs = $derived(
     JSON.stringify({
       mainnet,
       useProductionApi,
+      use11Demo,
+      integratorKey,
+      useExclusiveForQuoteRequest,
       outputRecipient: outputRecipient ?? null,
       inputs: inputTokens.map(({ token, amount }) => [
         String(token.chainId),

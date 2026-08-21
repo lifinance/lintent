@@ -17,8 +17,15 @@ import type {
   Signature,
   StandardOrder
 } from "@lifi/intent";
-import { Intent, IntentApi, StandardSolanaIntent } from "@lifi/intent";
-import { isSolanaChain, isTronChain, namespaceForChain } from "$lib/utils/chainType";
+import { Intent, IntentApi, StandardSolanaIntent, addressToBytes32 } from "@lifi/intent";
+import {
+  getChainType,
+  isSolanaChain,
+  isTronChain,
+  namespaceForChain,
+  type ChainType
+} from "$lib/utils/chainType";
+import { isBytes32ForChainType } from "$lib/utils/address";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { store } from "$lib/state.svelte";
@@ -52,22 +59,38 @@ function applyIntentTimings(intent: Intent): void {
   mutable.expiry = SAME_CHAIN_DURATION_SECONDS;
 }
 
+// TODO: delete this function once the app depends on a `@lifi/intent` release
+// that takes the exclusivity window as an option (`exclusivity`) — the library
+// then encodes the context itself and this override, along with the shape check
+// it has to repeat, goes away.
 function applyExclusivityOverride(
   orderIntent: ReturnType<Intent["order"]>,
-  exclusiveFor: string | undefined,
-  isSameChain: boolean
+  exclusiveFor: `0x${string}` | undefined,
+  isSameChain: boolean,
+  inputChainType: ChainType
 ): void {
   if (!exclusiveFor) return;
+  // The exclusive solver is paid out by the INPUT settler, so its identity must
+  // live in the input chain's address space: a Solana escrow finalises only for
+  // the signer named in the fill (`solve_params[0].solver == solver.key()`), and
+  // a zero-padded EVM address is a key nobody can sign with — the order opens,
+  // gets filled, and can then never be settled. Caller resolves the value
+  // against the input chain (see `resolveAddressForChainType`); this is the
+  // last line of defence, and it must never pad.
+  const exclusiveForBytes32 = addressToBytes32(exclusiveFor);
+  if (!isBytes32ForChainType(exclusiveForBytes32, inputChainType)) {
+    throw new Error(
+      `Exclusive solver ${exclusiveFor} is not a ${inputChainType} address: the exclusive solver must be named in the input chain's address space, or the order can be filled but never finalised.`
+    );
+  }
   const order = orderIntent.asOrder() as StandardOrder | MultichainOrder;
   const currentTime = Math.floor(Date.now() / 1000);
-  const paddedExclusiveFor =
-    `0x${exclusiveFor.replace("0x", "").padStart(64, "0")}` as `0x${string}`;
   const exclusivitySeconds = isSameChain
     ? SAME_CHAIN_EXCLUSIVITY_SECONDS
     : CROSS_CHAIN_EXCLUSIVITY_SECONDS;
   const newContext = encodePacked(
     ["bytes1", "bytes32", "uint32"],
-    ["0xe0", paddedExclusiveFor, currentTime + exclusivitySeconds]
+    ["0xe0", exclusiveForBytes32, currentTime + exclusivitySeconds]
   );
   for (const output of order.outputs) {
     if (output.context !== "0x") {
@@ -194,7 +217,7 @@ export class IntentFactory {
       const intent = intentInstance.order();
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Compact signing is not supported for Solana intents.");
-      applyExclusivityOverride(intent, opts.exclusiveFor, sameChain);
+      applyExclusivityOverride(intent, opts.exclusiveFor, sameChain, getChainType(inputChain));
 
       const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
 
@@ -243,7 +266,12 @@ export class IntentFactory {
       const intent = intentInstance2.singlechain();
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Compact deposit and register is not supported for Solana intents.");
-      applyExclusivityOverride(intent, opts.exclusiveFor, sameChain2);
+      applyExclusivityOverride(
+        intent,
+        opts.exclusiveFor,
+        sameChain2,
+        getChainType(inputTokens[0].token.chainId)
+      );
 
       if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
@@ -282,7 +310,12 @@ export class IntentFactory {
       applyIntentTimings(intentInstance3);
       const sameChain3 = intentInstance3.isSameChain();
       const intent = intentInstance3.order();
-      applyExclusivityOverride(intent, opts.exclusiveFor, sameChain3);
+      applyExclusivityOverride(
+        intent,
+        opts.exclusiveFor,
+        sameChain3,
+        getChainType(inputTokens[0].token.chainId)
+      );
 
       const inputChain = inputTokens[0].token.chainId;
       if (this.preHook) await this.preHook(inputChain);

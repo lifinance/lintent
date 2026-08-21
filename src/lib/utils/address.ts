@@ -62,3 +62,22 @@ export function resolveAddressForChainType(
       return isAddress(trimmed, { strict: false }) ? trimmed : undefined;
   }
 }
+
+/**
+ * Does this bytes32 hold an address of `chainType`'s shape?
+ *
+ * The inverse question to `resolveAddressForChainType`: that one validates
+ * user text before conversion, this one validates an already-converted value
+ * on its way into a protocol field. Used for the exclusive-solver identity,
+ * which lives in the INPUT chain's address space — the input settler is what
+ * pays the solver out, so it is the one that must recognise the identity.
+ *
+ * EVM and Tron addresses occupy the low 20 bytes with 12 leading zero bytes;
+ * Solana keys are 32 random bytes, so requiring those 12 bytes to be non-zero
+ * catches a padded EVM address at a false-rejection rate of 2^-96.
+ */
+export function isBytes32ForChainType(value: `0x${string}`, chainType: ChainType): boolean {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) return false;
+  const isEvmPadded = value.slice(2, 26) === "0".repeat(24);
+  return chainType === "solana" ? !isEvmPadded : isEvmPadded;
+}

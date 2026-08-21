@@ -4,12 +4,7 @@
   import FormControl from "$lib/components/ui/FormControl.svelte";
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
-  import {
-    DEMO_EXCLUSIVE_SOLVER,
-    POLYMER_ALLOCATOR,
-    formatTokenAmount,
-    getChainName
-  } from "$lib/config";
+  import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
   import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
   import { CompactLib } from "$lib/libraries/compactLib";
   import store from "$lib/state.svelte";
@@ -17,7 +12,7 @@
   import OutputTokenModal from "$lib/components/OutputTokenModal.svelte";
   import { ResetPeriod } from "@lifi/intent";
   import type { AppCreateIntentOptions } from "$lib/appTypes";
-  import { resolveAddress, resolveAddressForChainType } from "$lib/utils/address";
+  import { resolveAddressForChainType } from "$lib/utils/address";
   import { formatAddressForChain, getChainType } from "$lib/utils/chainType";
 
   const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
@@ -38,7 +33,35 @@
   let inputTokenSelectorActive = $state<boolean>(false);
   let outputTokenSelectorActive = $state<boolean>(false);
 
-  const resolveExclusiveFor = (value: string): `0x${string}` | undefined => resolveAddress(value);
+  // The exclusive solver is resolved against the INPUT chain's namespace, never
+  // chain-agnostically: it is the input settler that pays the solver out, so it
+  // is the input chain that has to recognise the identity. A 0x address padded
+  // into a Solana-origin order names a key nobody can sign `finalise` with — the
+  // order opens, escrows the input, gets filled, and can then never be settled.
+  const inputChainType = $derived.by((): ReturnType<typeof getChainType> | undefined => {
+    const inputChain = store.inputTokens[0]?.token.chainId;
+    // A multichain order opens every component through the EVM wallet client,
+    // so its inputs are all EVM and the first one speaks for the rest.
+    return inputChain === undefined ? undefined : getChainType(inputChain);
+  });
+
+  const resolvedExclusiveFor = $derived.by((): `0x${string}` | undefined => {
+    if (store.exclusiveFor.trim().length === 0 || inputChainType === undefined) return undefined;
+    return resolveAddressForChainType(store.exclusiveFor, inputChainType);
+  });
+
+  const EXCLUSIVE_FOR_FORMAT_HINT: Record<ReturnType<typeof getChainType>, string> = {
+    solana:
+      "Exclusive solver must be a base58 Solana address — a 0x address would be padded into a key that cannot sign finalise, so the order could be filled but never settled.",
+    tron: "Exclusive solver must be a Tron (T...) or 0x address.",
+    evm: "Exclusive solver must be a 0x or Tron (T...) address — a Solana key is not an identity the input settler can pay out to."
+  };
+
+  const exclusiveForProblem = $derived.by((): string | undefined => {
+    if (store.exclusiveFor.trim().length === 0) return undefined;
+    if (resolvedExclusiveFor !== undefined) return undefined;
+    return EXCLUSIVE_FOR_FORMAT_HINT[inputChainType ?? "evm"];
+  });
 
   // Cross-namespace orders (e.g. EVM -> Tron) must name their recipient: the
   // default recipient is the source-chain account, which only a plain EOA key
@@ -107,6 +130,7 @@
 
   const issueBlocker = $derived(
     recipientProblem ??
+      exclusiveForProblem ??
       (solanaOutputOverflow
         ? "Solana orders support a single output: all outputs must be filled in one Solana transaction, and more than one exceeds the 1232-byte transaction size — the order would open but could never be filled."
         : undefined)
@@ -114,11 +138,11 @@
 
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({
-      // In 1:1 demo mode the quote omits exclusiveFor, but the on-chain intent
-      // must still be exclusive to the demo solver so it fills 1:1.
-      exclusiveFor: store.use11Demo
-        ? DEMO_EXCLUSIVE_SOLVER
-        : resolveExclusiveFor(store.exclusiveFor),
+      // Whatever the quote named as its exclusive solver, in every mode. The
+      // 1:1 demo used to substitute a hardcoded EVM solver here, which is not
+      // an identity a Solana-origin order can ever settle to; the integrator
+      // key is what drives the 1:1 quote, and the solver comes back on it.
+      exclusiveFor: resolvedExclusiveFor,
       inputTokens: store.inputTokens,
       outputTokens: store.outputTokens,
       verifier: store.verifier,
@@ -420,7 +444,7 @@
             type="text"
             size="sm"
             className="flex-1"
-            placeholder="0x... (optional)"
+            placeholder="0x / base58 (optional)"
             bind:value={store.exclusiveFor}
           />
           <label

@@ -68,7 +68,7 @@
     "@wagmi/connectors": "^7.2.1",
     "@wagmi/core": "^3.4.0",
     "@walletconnect/ethereum-provider": "^2.21.1",
-    "axios": "^1.13.6",
+    "axios": "^1.18.0",
     "base64-js": "^1.5.1",
     "drizzle-orm": "^0.45.1",
     "porto": "~0.2.35",

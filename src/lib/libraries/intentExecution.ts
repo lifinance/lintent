@@ -145,6 +145,13 @@ export async function openEscrowIntent(
   if (tronComponent) {
     throw new Error("Multichain orders with Tron inputs are not supported");
   }
+  // The multichain settler's open is nonpayable, so native inputs cannot be escrowed.
+  const nativeComponent = components.find(
+    ({ orderComponent }) => nativeValueOfInputs(orderComponent.inputs) > 0n
+  );
+  if (nativeComponent) {
+    throw new Error("Multichain orders with native inputs are not supported");
+  }
   const results: `0x${string}`[] = [];
   for (const { chainId, orderComponent } of components) {
     const chain = getChain(chainId);

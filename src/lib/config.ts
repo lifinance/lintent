@@ -399,7 +399,7 @@ export const coinList = (mainnet: boolean) => {
         address: ADDRESS_ZERO,
         name: "eth",
         chainId: arbitrumSepolia.id,
-        decimals: 6
+        decimals: 18
       },
       {
         address: `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14`,

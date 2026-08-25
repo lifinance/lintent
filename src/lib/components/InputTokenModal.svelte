@@ -74,9 +74,7 @@
     active = false;
   }
 
-  const uniqueInputTokens = $derived([
-    ...new Set(store.availableTokens.map((v) => v.name).filter((v) => v !== "eth"))
-  ]);
+  const uniqueInputTokens = $derived([...new Set(store.availableTokens.map((v) => v.name))]);
 
   // svelte-ignore state_referenced_locally
   let selectedTokenName = $state<string>(currentInputTokens[0].token.name);

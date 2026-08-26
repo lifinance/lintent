@@ -24,6 +24,7 @@ import { isTronChain } from "$lib/utils/chainType";
 import type { TxRef } from "$lib/utils/txRef";
 import { getTronReads, getTronSigner } from "$lib/tron/client";
 import { openEscrow as openTronEscrow } from "$lib/tron/writes";
+import { nativeValueOfInputs } from "$lib/tron/encode";
 import { getSolanaReads } from "$lib/solana/client";
 import { createSolanaPrograms } from "$lib/solana/program";
 import { getSolanaSigner } from "$lib/solana/wallet";
@@ -122,6 +123,7 @@ export async function openEscrowIntent(
     }
     await switchWalletChain(walletClient, Number(order.originChainId));
     const chain = getChain(order.originChainId);
+    const nativeValue = nativeValueOfInputs(order.inputs);
     return [
       await walletClient.writeContract({
         chain,
@@ -129,7 +131,8 @@ export async function openEscrowIntent(
         address: INPUT_SETTLER_ESCROW_LIFI,
         abi: SETTLER_ESCROW_ABI,
         functionName: "open",
-        args: [order]
+        args: [order],
+        ...(nativeValue > 0n ? { value: nativeValue } : {})
       })
     ];
   }
@@ -141,6 +144,13 @@ export async function openEscrowIntent(
   const tronComponent = components.find(({ chainId }) => isTronChain(chainId));
   if (tronComponent) {
     throw new Error("Multichain orders with Tron inputs are not supported");
+  }
+  // The multichain settler's open is nonpayable, so native inputs cannot be escrowed.
+  const nativeComponent = components.find(
+    ({ orderComponent }) => nativeValueOfInputs(orderComponent.inputs) > 0n
+  );
+  if (nativeComponent) {
+    throw new Error("Multichain orders with native inputs are not supported");
   }
   const results: `0x${string}`[] = [];
   for (const { chainId, orderComponent } of components) {

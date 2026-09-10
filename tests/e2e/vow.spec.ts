@@ -25,7 +25,23 @@ async function prepareForm(page: Page) {
     async ({ user }) => {
       const { default: store } = await import("/src/lib/state.svelte.ts");
       const { clients, coinList } = await import("/src/lib/config.ts");
+      const { wagmiConfig } = await import("/src/lib/utils/wagmi.ts");
       await store.dbReady;
+      // Let startup reconnection finish before installing the mock wallet.
+      // Otherwise its completion can replace the mock with a disconnected wallet.
+      if (wagmiConfig.state.status === "reconnecting") {
+        await new Promise<void>((resolve) => {
+          const unsubscribe = wagmiConfig.subscribe(
+            (state) => state.status,
+            (status) => {
+              if (status !== "reconnecting") {
+                unsubscribe();
+                resolve();
+              }
+            }
+          );
+        });
+      }
       for (const client of Object.values(clients)) {
         client.readContract = async () => 100000000n;
         client.getBalance = async () => 100000000n;

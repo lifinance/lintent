@@ -3,10 +3,13 @@ import {
   INPUT_SETTLER_COMPACT_LIFI,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   POLYMER_ORACLE,
+  LEGACY_POLYMER_ORACLES,
   SOLANA_OUTPUT_SETTLER,
   SOLANA_POLYMER_OUTPUT_ORACLE,
   TRON_MAINNET_OUTPUT_SETTLER,
-  WORMHOLE_ORACLE
+  WORMHOLE_ORACLE,
+  VOW_ORACLE,
+  VOW_ADAPTER
 } from "$lib/config";
 import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
@@ -20,6 +23,7 @@ export const intentDeps: IntentDeps = {
   getOracle(verifier, chainId) {
     const key = Number(chainId);
     if (!Number.isFinite(key)) return undefined;
+    if (verifier === "vow") return VOW_ORACLE[key];
     if (verifier === "polymer") return POLYMER_ORACLE[key];
     if (verifier === "wormhole") {
       return WORMHOLE_ORACLE[key];
@@ -36,10 +40,12 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     const polymer = POLYMER_ORACLE[key];
     const wormhole = WORMHOLE_ORACLE[key];
     const allowed: `0x${string}`[] = [];
+    if (VOW_ORACLE[key]) allowed.push(VOW_ORACLE[key]);
     if (polymer) allowed.push(polymer);
     if (isNonZeroAddress(wormhole)) allowed.push(wormhole);
     // Orders opened before an oracle rotation must stay displayable/provable.
     allowed.push(...(TRON_LEGACY_POLYMER_ORACLES[chainId.toString()] ?? []));
+    allowed.push(...(LEGACY_POLYMER_ORACLES[key] ?? []));
     if (allowed.length === 0) return undefined;
     // Same-chain fills use the output settler as the input oracle: the
     // global COIN_FILLER on EVM, the per-chain settler (current or legacy)
@@ -63,7 +69,12 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     if (!Number.isFinite(outKey)) return undefined;
     const outPolymer = POLYMER_ORACLE[outKey];
     const outWormhole = WORMHOLE_ORACLE[outKey];
-    if (!outPolymer && !isNonZeroAddress(outWormhole)) return undefined;
+    if (inputOracle.toLowerCase() === VOW_ADAPTER.toLowerCase()) {
+      const inputVow = VOW_ORACLE[Number(inputChainId)];
+      const outputVow = VOW_ORACLE[outKey];
+      return !sameChainFill && inputVow && outputVow ? [outputVow] : [];
+    }
+    if (!outPolymer && !isNonZeroAddress(outWormhole) && !VOW_ORACLE[outKey]) return undefined;
     if (sameChainFill) {
       // output.oracle is the output settler; the library no longer accepts
       // COIN_FILLER implicitly, so the EVM case must return it explicitly.
@@ -110,7 +121,10 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     if (inPolymer && inPolymer.toLowerCase() === inputOracle.toLowerCase()) {
       allowed.push(inPolymer);
     }
-    const legacyOracles = TRON_LEGACY_POLYMER_ORACLES[inputChainId.toString()] ?? [];
+    const legacyOracles = [
+      ...(TRON_LEGACY_POLYMER_ORACLES[inputChainId.toString()] ?? []),
+      ...(LEGACY_POLYMER_ORACLES[Number(inputChainId)] ?? [])
+    ];
     for (const legacy of legacyOracles) {
       if (legacy.toLowerCase() === inputOracle.toLowerCase()) allowed.push(legacy);
     }

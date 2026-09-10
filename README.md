@@ -88,9 +88,29 @@ The app exposes six sequential screens, each representing one step in the OIF fl
 
 ## Supported Chains
 
-**Mainnet** Ethereum, Base, Arbitrum, Polygon, BSC, MegaETH, Katana
+**Mainnet selector** Ethereum, Base, Arbitrum, Polygon, BSC, Katana, Pharos, Robinhood, Arc, Tron, Solana
 
-**Testnet** Sepolia, Base Sepolia, Arbitrum Sepolia, Optimism Sepolia
+**Testnet selector** Sepolia, Base Sepolia, Arbitrum Sepolia, Optimism Sepolia, Arc testnet, Solana devnet
+
+### Polymer availability
+
+For chains already defined in lintent, Polymer is configured on Ethereum, Optimism,
+Base, Arbitrum, Polygon, BSC, Katana, Pharos and Robinhood mainnets, plus Ethereum,
+Optimism, Base and Arbitrum Sepolia and Arc testnet. Existing Tron/Solana support is
+unchanged. Oracle configuration does not itself add a chain to the token selectors.
+
+This follows [Polymer's supported networks](https://docs.polymerlabs.org/docs/build/start/)
+and LI.FI adapter deployments. Polymer lists Robinhood mainnet but only Arc testnet;
+Arc mainnet remains Vow-only. MegaETH is listed by Polymer, but its LI.FI deployment
+was retired, so lintent does not enable it. Other chains in Polymer's list need LI.FI
+settler/oracle deployments and token configuration before they can be added here.
+
+On 2026-09-10, read-only RPC checks verified the mapped Polymer adapter and prover
+on Robinhood, Optimism and Base, including mappings to Ethereum, Optimism, Base,
+Arbitrum and Robinhood. Arc testnet's current adapter and mappings to the four
+Sepolia chains were also verified. Older Arc testnet orders remain accepted by
+validation after the adapter update. These checks do not establish solver inventory
+or prove every directional route can execute.
 
 ## Smart Contracts
 
@@ -141,6 +161,18 @@ tests/
 - `bun run test:unit` runs library and unit tests with coverage
 - `bun run test:e2e` runs Playwright browser tests (requires `bunx playwright install chromium`)
 - `bun run test:all` runs both suites
+
+## Vow EVM testing
+
+Choose **Vow** in the issuance verifier selector for Ethereum, Arbitrum, BSC, Base, Robinhood (4663), or Arc mainnet (5042). Both sides of a cross-chain route must have a Vow deployment. Same-chain orders use Settler; Solana, Tron and Arc testnet do not support Vow.
+
+Quotes send the selected Vow contracts explicitly in `intent.metadata.oracle` through `@lifi/intent` 0.7.0. Switching verifier or route invalidates the prior quote and clears unchanged amounts filled by that quote; manually entered amounts remain usable when no solver quote is available. The app never retries a Vow quote without its oracle filter.
+
+The manual Prove step fetches the fill's witness through `/vow`, validates it against the receipt, checks the input-chain signer directory, simulates `receiveMessage(bytes)`, and submits it through the wallet. Orders already proven by LiFi can proceed directly to finalisation.
+
+Configure `PRIVATE_VOW_WITNESS_ENDPOINT` (default `https://witness.vav.me`), optional `PRIVATE_VOW_WITNESS_API_KEY`, and `PRIVATE_VOW_WITNESS_SIGNER_INDEX` (default `1`). The API key stays server-side. Arc mainnet requires `PUBLIC_ARC_RPC_URL` or `PUBLIC_ROUTEMESH_API_KEY`; its ERC-20 USDC uses six decimals, while the native USDC balance is for gas only. Robinhood exposes the solver-configured USDG token.
+
+See [Vow preflight](tests/fixtures/vow/PREFLIGHT.md) for observed deployment readiness and the live canary procedure. Run `bun run test:e2e tests/e2e/vow.spec.ts` for the mocked Vow browser suite.
 
 ## Deployment
 

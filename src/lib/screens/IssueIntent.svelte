@@ -6,6 +6,7 @@
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
   import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
   import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
+  import { oracleSelectionProblem } from "$lib/libraries/oracleSelection";
   import { CompactLib } from "$lib/libraries/compactLib";
   import store from "$lib/state.svelte";
   import InputTokenModal from "../components/InputTokenModal.svelte";
@@ -128,8 +129,32 @@
     return [...perChain.values()].some((count) => count > 1);
   });
 
+  const numInputChains = $derived.by(() => {
+    const tokenChains = store.inputTokens.map(({ token }) => token.chainId);
+    const uniqueChains = [...new Set(tokenChains)];
+    return uniqueChains.length;
+  });
+
+  const sameChain = $derived.by(() => {
+    if (numInputChains > 1) return false;
+    const inputChain = store.inputTokens[0].token.chainId;
+    const outputChains = store.outputTokens.map((o) => o.token.chainId);
+    const numOutputChains = [...new Set(outputChains)].length;
+    if (numOutputChains > 1) return false;
+    const outputChain = outputChains[0];
+    return inputChain === outputChain;
+  });
+
+  const oracleProblem = $derived(
+    oracleSelectionProblem(
+      store.verifier,
+      store.inputTokens.map(({ token }) => token.chainId),
+      store.outputTokens.map(({ token }) => token.chainId)
+    )
+  );
   const issueBlocker = $derived(
-    recipientProblem ??
+    oracleProblem ??
+      recipientProblem ??
       exclusiveForProblem ??
       (solanaOutputOverflow
         ? "Solana orders support a single output: all outputs must be filled in one Solana transaction, and more than one exceeds the 1232-byte transaction size — the order would open but could never be filled."
@@ -278,22 +303,6 @@
     return inputs;
   });
 
-  const numInputChains = $derived.by(() => {
-    const tokenChains = store.inputTokens.map(({ token }) => token.chainId);
-    const uniqueChains = [...new Set(tokenChains)];
-    return uniqueChains.length;
-  });
-
-  const sameChain = $derived.by(() => {
-    if (numInputChains > 1) return false;
-    const inputChain = store.inputTokens[0].token.chainId;
-    const outputChains = store.outputTokens.map((o) => o.token.chainId);
-    const numOutputChains = [...new Set(outputChains)].length;
-    if (numOutputChains > 1) return false;
-    const outputChain = outputChains[0];
-    return inputChain === outputChain;
-  });
-
   // const inputSecurityCheck = $derived.by(() => {
   // 	if (store.inputTokens.length === 0) return false;
   // 	const usdcOnly = store.inputTokens.every(({ token }) => token.name.toLowerCase() === "usdc");
@@ -327,6 +336,7 @@
       {#snippet headerRight()}
         <div class="w-20">
           <GetQuote
+            verifier={store.verifier}
             bind:exclusiveFor={store.exclusiveFor}
             useExclusiveForQuoteRequest={store.useExclusiveForQuoteRequest}
             use11Demo={store.use11Demo}
@@ -432,8 +442,9 @@
               <option selected disabled>Settler</option>
             </FormControl>
           {:else}
-            <FormControl as="select" id="verified-by" size="sm">
-              <option value="polymer" selected>Polymer</option>
+            <FormControl as="select" id="verified-by" size="sm" bind:value={store.verifier}>
+              <option value="polymer">Polymer</option>
+              <option value="vow">Vow</option>
               <option value="wormhole" disabled>Wormhole</option>
             </FormControl>
           {/if}

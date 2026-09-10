@@ -27,7 +27,11 @@ export function resolveConnectorIds(projectId?: string) {
   return ["injected", ...(projectId ? ["walletConnect"] : []), "metaMask"];
 }
 
-const wagmiChains = Object.values(chainMap) as Chain[];
+// Connectors inspect every chain's transport during setup. Optional chains such
+// as Arc must not create an HTTP transport until their RPC URL is configured.
+const wagmiChains = (Object.values(chainMap) as Chain[]).filter(
+  (chain) => !!chain.rpcUrls.default.http[0]?.trim()
+);
 
 const connectors = [
   injected(),
@@ -43,7 +47,9 @@ const connectors = [
   metaMask({ dappMetadata: APP_METADATA })
 ];
 
-const transports = Object.fromEntries(wagmiChains.map((chain) => [chain.id, http()]));
+const transports = Object.fromEntries(
+  wagmiChains.map((chain) => [chain.id, http(chain.rpcUrls.default.http[0])])
+);
 
 export const wagmiConfig = createConfig({
   ssr: true,

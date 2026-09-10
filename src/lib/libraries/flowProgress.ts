@@ -8,6 +8,8 @@ import {
   getClient
 } from "$lib/config";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
+import { VOW_ADAPTER } from "$lib/config";
+import { VOW_ORACLE_ABI } from "$lib/abi/voworacle";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COMPACT_ABI } from "$lib/abi/compact";
@@ -152,7 +154,10 @@ async function isOutputValidatedOnChain(
       const sourceChainClient = getClient(inputChain);
       return sourceChainClient.readContract({
         address: orderContainer.order.inputOracle,
-        abi: POLYMER_ORACLE_ABI,
+        abi:
+          orderContainer.order.inputOracle.toLowerCase() === VOW_ADAPTER.toLowerCase()
+            ? VOW_ORACLE_ABI
+            : POLYMER_ORACLE_ABI,
         functionName: "isProven",
         args: [output.chainId, output.oracle, output.settler, outputHash]
       });

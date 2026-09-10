@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+  import type { Verifier } from "$lib/config";
+  import { quoteOracleSelection } from "$lib/libraries/oracleSelection";
   import { IntentApi } from "@lifi/intent";
   import type { AppTokenContext } from "$lib/appTypes";
   import { resolveDemoQuoteParams } from "$lib/libraries/demoQuote";
@@ -6,6 +9,7 @@
   import { interval } from "rxjs";
 
   let {
+    verifier = "polymer",
     exclusiveFor = $bindable(),
     useExclusiveForQuoteRequest = false,
     use11Demo = false,
@@ -17,6 +21,7 @@
     mainnet,
     useProductionApi
   }: {
+    verifier?: Verifier;
     exclusiveFor: string;
     useExclusiveForQuoteRequest?: boolean;
     use11Demo?: boolean;
@@ -60,6 +65,9 @@
   // without this the slower response wins and the displayed output amount stops
   // matching what issuance would encode.
   let requestSeq = 0;
+  let lastQuotedOutput:
+    | { chainId: number; address: string; amount: bigint; solver: string }
+    | undefined;
 
   async function getQuoteAndSet() {
     const seq = ++requestSeq;
@@ -74,12 +82,18 @@
         });
 
       const userChainId = inputTokens[0].token.chainId;
+      const oracle = quoteOracleSelection(
+        verifier,
+        inputTokens.map(({ token }) => token.chainId),
+        outputTokens.map(({ token }) => token.chainId)
+      );
 
       // Every chain, address and asset is declared in its own CAIP-2 namespace.
       // `@lifi/intent` re-encodes the address fields to match the namespace it
       // is given, so the internal hex form is passed through unchanged here and
       // a Solana mint reaches the API as base58.
       const response = await intentApi.getQuotes({
+        oracle,
         user: requireAccount(userChainId),
         userChainId,
         userNamespace: namespaceForChain(userChainId),
@@ -115,6 +129,12 @@
         exclusiveFor = Array.isArray(quote.metadata.exclusiveFor)
           ? (quote.metadata.exclusiveFor[0] ?? "")
           : (quote.metadata.exclusiveFor ?? "");
+        lastQuotedOutput = {
+          chainId: outputTokens[0].token.chainId,
+          address: outputTokens[0].token.address,
+          amount: outputTokens[0].amount,
+          solver: exclusiveFor
+        };
         updater();
       } else {
         quoteExpires = 0;
@@ -168,6 +188,7 @@
    */
   const quoteInputs = $derived(
     JSON.stringify({
+      verifier,
       mainnet,
       useProductionApi,
       use11Demo,
@@ -190,6 +211,24 @@
 
   $effect(() => {
     quoteInputs;
+    requestSeq += 1;
+    quoteExpires = 0;
+    untrack(() => {
+      if (lastQuotedOutput) {
+        for (const output of outputTokens) {
+          if (
+            output.token.chainId === lastQuotedOutput.chainId &&
+            output.token.address === lastQuotedOutput.address &&
+            output.amount === lastQuotedOutput.amount
+          ) {
+            output.amount = 0n;
+          }
+        }
+        if (!useExclusiveForQuoteRequest && exclusiveFor === lastQuotedOutput.solver)
+          exclusiveFor = "";
+        lastQuotedOutput = undefined;
+      }
+    });
     // Debounced, and cancelled on change, so typing an amount or a recipient
     // sends one request rather than one per keystroke.
     const handle = setTimeout(() => updateQuote(), 1000);

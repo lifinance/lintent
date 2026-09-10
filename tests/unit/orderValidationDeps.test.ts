@@ -137,3 +137,50 @@ describe("allowedOutputOracles on a solana-origin order", () => {
     expect(right.passed).toBe(true);
   });
 });
+
+describe("Polymer deployment updates", () => {
+  it("accepts Robinhood and Optimism Polymer orders in both directions", () => {
+    for (const [origin, destination] of [
+      [4663n, 8453n],
+      [8453n, 4663n],
+      [10n, 8453n],
+      [8453n, 10n]
+    ]) {
+      const inputOracle = POLYMER_ORACLE[Number(origin)]!;
+      expect(inputOracle).toBeDefined();
+      const result = validateOrderWithReason({
+        order: makeStandardOrder({
+          originChainId: origin,
+          inputOracle,
+          outputs: [makeMandateOutput(destination, 1n, { oracle: addressToBytes32(inputOracle) })]
+        }),
+        deps: orderValidationDeps
+      });
+      expect(result.passed).toBe(true);
+    }
+  });
+
+  it("accepts both current and previously issued Arc testnet Polymer orders", () => {
+    expect(POLYMER_ORACLE[5042002]).toBe("0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72");
+    for (const inputOracle of [
+      POLYMER_ORACLE[5042002]!,
+      "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
+    ] as const) {
+      expect(
+        validateOrderWithReason({
+          order: makeStandardOrder({
+            originChainId: 5042002n,
+            inputOracle,
+            outputs: [makeMandateOutput(84532n, 1n, { oracle: addressToBytes32(inputOracle) })]
+          }),
+          deps: orderValidationDeps
+        }).passed
+      ).toBe(true);
+    }
+  });
+
+  it("does not advertise Arc mainnet or the retired MegaETH deployment", () => {
+    expect(POLYMER_ORACLE[5042]).toBeUndefined();
+    expect(POLYMER_ORACLE[4326]).toBeUndefined();
+  });
+});

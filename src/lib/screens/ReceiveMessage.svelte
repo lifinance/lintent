@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
+  import { VOW_ADAPTER, formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
   import { addressToBytes32 } from "@lifi/intent";
   import { encodeMandateOutput } from "@lifi/intent";
   import { hashStruct, keccak256 } from "viem";
   import type { MandateOutput, OrderContainer } from "@lifi/intent";
+  import { VOW_ORACLE_ABI } from "$lib/abi/voworacle";
   import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
   import { Solver } from "$lib/libraries/solver";
   import AwaitButton from "$lib/components/AwaitButton.svelte";
@@ -108,7 +109,10 @@
     const sourceChainClient = getClient(chainId);
     return await sourceChainClient.readContract({
       address: order.inputOracle,
-      abi: POLYMER_ORACLE_ABI,
+      abi:
+        order.inputOracle.toLowerCase() === VOW_ADAPTER.toLowerCase()
+          ? VOW_ORACLE_ABI
+          : POLYMER_ORACLE_ABI,
       functionName: "isProven",
       args: [output.chainId, output.oracle, output.settler, outputHash]
     });

@@ -407,3 +407,30 @@ for (const scenario of ["success", "ambiguous", "simulation failure", "already p
     }
   });
 }
+
+test("wallet startup can initialize every transport without an Arc RPC", async ({ page }) => {
+  const transportErrors: string[] = [];
+  page.on("pageerror", (error) => {
+    if (/UrlRequiredError|No URL was provided/.test(String(error)))
+      transportErrors.push(String(error));
+  });
+  await page.goto("/");
+  await page.waitForLoadState("networkidle");
+  const result = await page.evaluate(async () => {
+    const { wagmiConfig } = await import("/src/lib/utils/wagmi.ts");
+    const { arc } = await import("/src/lib/config.ts");
+    // Construct the real transports, as connector RPC discovery does on load.
+    const urls = wagmiConfig.chains.map(
+      (chain) => wagmiConfig.getClient({ chainId: chain.id }).transport.url
+    );
+    return {
+      urls,
+      arcConfigured: !!arc.rpcUrls.default.http[0],
+      arcInWallet: wagmiConfig.chains.some((chain) => chain.id === arc.id)
+    };
+  });
+  expect(result.urls.length).toBeGreaterThan(0);
+  for (const url of result.urls) expect(url).toMatch(/^https?:\/\//);
+  expect(result.arcInWallet).toBe(result.arcConfigured);
+  expect(transportErrors).toEqual([]);
+});

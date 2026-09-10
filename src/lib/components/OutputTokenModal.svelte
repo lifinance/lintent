@@ -52,7 +52,7 @@
     if (outputs.length == 3) return;
     outputs.push({
       chainId: outputs[outputs.length - 1].chainId,
-      name: "usdc",
+      name: outputs[outputs.length - 1].name,
       amount: 0
     });
   }
@@ -96,7 +96,16 @@
         <div>
           {#each outputs as output, rowIndex}
             <FieldRow columns={rowColumns} striped index={rowIndex}>
-              <FormControl as="select" size="sm" bind:value={output.chainId}>
+              <FormControl
+                as="select"
+                size="sm"
+                bind:value={output.chainId}
+                onchange={() => {
+                  const tokens = getTokensForChain(output.chainId);
+                  if (!tokens.some((token) => token.name === output.name))
+                    output.name = tokens[0]?.name ?? "";
+                }}
+              >
                 {#each chainIdList(store.mainnet) as chainId}
                   <option value={chainId}>{getChainName(chainId)}</option>
                 {/each}

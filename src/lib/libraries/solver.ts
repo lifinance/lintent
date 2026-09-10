@@ -1,7 +1,23 @@
-import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
-import { encodeFunctionData, hashStruct, hexToBytes, maxUint256, parseEventLogs } from "viem";
+import {
+  VOW_ADAPTER,
+  BYTES32_ZERO,
+  COIN_FILLER,
+  getChain,
+  getClient,
+  getOracle,
+  type WC
+} from "$lib/config";
+import {
+  keccak256,
+  encodeFunctionData,
+  hashStruct,
+  hexToBytes,
+  maxUint256,
+  parseEventLogs
+} from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import {
+  encodeMandateOutput,
   addressToBytes32,
   bytes32ToAddress,
   bytes32ToSolanaBase58,
@@ -9,6 +25,8 @@ import {
   TRON_LEGACY_POLYMER_ORACLES
 } from "@lifi/intent";
 import axios from "axios";
+import { VOW_ORACLE_ABI, WITNESS_DIRECTORY_ABI } from "$lib/abi/voworacle";
+import { pollVowWitness, validateAndEncodeVow } from "./vow";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { ERC20_ABI } from "$lib/abi/erc20";
@@ -331,6 +349,15 @@ export class Solver {
         }
 
         const orderId = containerToIntent(args.orderContainer).orderId();
+        const isVowPath = order.inputOracle.toLowerCase() === VOW_ADAPTER.toLowerCase();
+        if (
+          isVowPath &&
+          (!getOracle("vow", sourceChainId) ||
+            !getOracle("vow", output.chainId) ||
+            output.oracle.toLowerCase() !== addressToBytes32(VOW_ADAPTER).toLowerCase())
+        ) {
+          throw new Error("Vow requires a supported EVM oracle pair on both chains");
+        }
 
         // A Solana OUTPUT is proven by submitting the fill to Polymer, which
         // reads the `Prove:` log the submit instruction writes. A same-chain
@@ -463,13 +490,13 @@ export class Solver {
           return result;
         }
 
-        if (!isPolymerPath) {
+        if (!isPolymerPath && !isVowPath) {
           throw new Error(
             `Unsupported input oracle ${order.inputOracle} for source chain ${Number(sourceChainId)}.`
           );
         }
 
-        // Cross-chain Polymer path. Always fetch a fresh receipt from RPC —
+        // Always fetch a fresh receipt from RPC —
         // cached receipts may carry transaction-local logIndex values instead
         // of the block-global ones Polymer proof requests need.
         const transactionReceipt = await getClient(output.chainId).getTransactionReceipt({
@@ -506,6 +533,106 @@ export class Solver {
           );
         }
         const logIndex = matches[0].logIndex;
+        if (logIndex === null || !Number.isSafeInteger(logIndex))
+          throw new Error("Missing global fill log index");
+
+        if (isVowPath) {
+          const client = getClient(sourceChainId);
+          const fill = matches[0];
+          const payloadHash = keccak256(
+            encodeMandateOutput({
+              orderId,
+              output,
+              solver: fill.args.solver,
+              timestamp: fill.args.timestamp
+            })
+          );
+          const provenArgs = [
+            BigInt(output.chainId),
+            output.oracle,
+            output.settler,
+            payloadHash
+          ] as const;
+          const alreadyProven = await client.readContract({
+            address: order.inputOracle,
+            abi: VOW_ORACLE_ABI,
+            functionName: "isProven",
+            args: provenArgs
+          });
+          if (alreadyProven) {
+            if (postHook) await postHook();
+            return { alreadyProven: true };
+          }
+          const { witness, signerIndex } = await pollVowWitness({
+            chainId: output.chainId,
+            blockNumber: transactionReceipt.blockNumber,
+            logIndex
+          });
+          const proof = await validateAndEncodeVow(
+            witness,
+            {
+              chainId: output.chainId,
+              blockNumber: transactionReceipt.blockNumber,
+              blockHash: transactionReceipt.blockHash,
+              logIndex,
+              emitter: fill.address,
+              topics: fill.topics,
+              data: fill.data
+            },
+            signerIndex
+          );
+          const directory = await client.readContract({
+            address: order.inputOracle,
+            abi: VOW_ORACLE_ABI,
+            functionName: "directory"
+          });
+          const signer = await client.readContract({
+            address: directory,
+            abi: WITNESS_DIRECTORY_ABI,
+            functionName: "getSigner",
+            args: [BigInt(signerIndex)]
+          });
+          if (signer.toLowerCase() !== witness.signer.toLowerCase()) {
+            throw new Error("Vow witness signer does not match the input-chain directory");
+          }
+          if (preHook) await preHook(Number(sourceChainId));
+          // The external solver may have relayed while we waited for the witness.
+          if (
+            await client.readContract({
+              address: order.inputOracle,
+              abi: VOW_ORACLE_ABI,
+              functionName: "isProven",
+              args: provenArgs
+            })
+          ) {
+            if (postHook) await postHook();
+            return { alreadyProven: true };
+          }
+          const data = encodeFunctionData({
+            abi: VOW_ORACLE_ABI,
+            functionName: "receiveMessage",
+            args: [proof]
+          });
+          await client.call({ account: account(), to: order.inputOracle, data });
+          const transactionHash = await walletClient.writeContract({
+            account: account(),
+            address: order.inputOracle,
+            abi: VOW_ORACLE_ABI,
+            functionName: "receiveMessage",
+            args: [proof],
+            chain: getChain(sourceChainId)
+          });
+          const result = await client.waitForTransactionReceipt({
+            hash: transactionHash,
+            timeout: 120_000,
+            pollingInterval: 2000
+          });
+          await Solver.persistReceipt(sourceChainId, transactionHash, result);
+          if (result.status !== "success")
+            throw new Error(`Vow receive transaction ${transactionHash} reverted`);
+          if (postHook) await postHook();
+          return result;
+        }
 
         const polymerKey = `${Number(output.chainId)}:${Number(transactionReceipt.blockNumber)}:${Number(logIndex)}`;
         const proof = await Solver.pollPolymerProof(polymerKey, {

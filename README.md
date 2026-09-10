@@ -142,6 +142,18 @@ tests/
 - `bun run test:e2e` runs Playwright browser tests (requires `bunx playwright install chromium`)
 - `bun run test:all` runs both suites
 
+## Vow EVM testing
+
+Choose **Vow** in the issuance verifier selector for Ethereum, Arbitrum, BSC, Base, Robinhood (4663), or Arc mainnet (5042). Both sides of a cross-chain route must have a Vow deployment. Same-chain orders use Settler; Solana, Tron and Arc testnet do not support Vow.
+
+Quotes send the selected Vow contracts explicitly in `intent.metadata.oracle` through `@lifi/intent` 0.7.0. Switching verifier or route invalidates the prior quote and clears unchanged amounts filled by that quote; manually entered amounts remain usable when no solver quote is available. The app never retries a Vow quote without its oracle filter.
+
+The manual Prove step fetches the fill's witness through `/vow`, validates it against the receipt, checks the input-chain signer directory, simulates `receiveMessage(bytes)`, and submits it through the wallet. Orders already proven by LiFi can proceed directly to finalisation.
+
+Configure `PRIVATE_VOW_WITNESS_ENDPOINT` (default `https://witness.vav.me`), optional `PRIVATE_VOW_WITNESS_API_KEY`, and `PRIVATE_VOW_WITNESS_SIGNER_INDEX` (default `1`). The API key stays server-side. Arc mainnet requires `PUBLIC_ARC_RPC_URL` or `PUBLIC_ROUTEMESH_API_KEY`; its ERC-20 USDC uses six decimals, while the native USDC balance is for gas only. Robinhood exposes the solver-configured USDG token.
+
+See [Vow preflight](tests/fixtures/vow/PREFLIGHT.md) for observed deployment readiness and the live canary procedure. Run `bun run test:e2e tests/e2e/vow.spec.ts` for the mocked Vow browser suite.
+
 ## Deployment
 
 Production deploys happen on push to `main` via GitHub Actions. The workflow builds with Bun and deploys to the `lintent-worker` Cloudflare Worker. PR preview environments are created and cleaned up automatically.

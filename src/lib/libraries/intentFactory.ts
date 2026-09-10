@@ -35,6 +35,7 @@ import { getTronReads, getTronSigner } from "$lib/tron/client";
 import { getTrc20Allowance } from "$lib/tron/reads";
 import { approveToken } from "$lib/tron/writes";
 import { intentDeps } from "./coreDeps";
+import { oracleSelectionProblem } from "./oracleSelection";
 
 const FILL_DEADLINE_SECONDS = 10 * 60; // 10 minutes
 // Must stay strictly greater than FILL_DEADLINE_SECONDS: the Solana input
@@ -114,6 +115,12 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
 }
 
 function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOptions {
+  const problem = oracleSelectionProblem(
+    opts.verifier,
+    opts.inputTokens.map(({ token }) => token.chainId),
+    opts.outputTokens.map(({ token }) => token.chainId)
+  );
+  if (problem) throw new Error(problem);
   const account = opts.account();
   if (opts.lock.type === "compact") {
     return {

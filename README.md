@@ -88,9 +88,29 @@ The app exposes six sequential screens, each representing one step in the OIF fl
 
 ## Supported Chains
 
-**Mainnet** Ethereum, Base, Arbitrum, Polygon, BSC, MegaETH, Katana
+**Mainnet selector** Ethereum, Base, Arbitrum, Polygon, BSC, Katana, Pharos, Robinhood, Arc, Tron, Solana
 
-**Testnet** Sepolia, Base Sepolia, Arbitrum Sepolia, Optimism Sepolia
+**Testnet selector** Sepolia, Base Sepolia, Arbitrum Sepolia, Optimism Sepolia, Arc testnet, Solana devnet
+
+### Polymer availability
+
+For chains already defined in lintent, Polymer is configured on Ethereum, Optimism,
+Base, Arbitrum, Polygon, BSC, Katana, Pharos and Robinhood mainnets, plus Ethereum,
+Optimism, Base and Arbitrum Sepolia and Arc testnet. Existing Tron/Solana support is
+unchanged. Oracle configuration does not itself add a chain to the token selectors.
+
+This follows [Polymer's supported networks](https://docs.polymerlabs.org/docs/build/start/)
+and LI.FI adapter deployments. Polymer lists Robinhood mainnet but only Arc testnet;
+Arc mainnet remains Vow-only. MegaETH is listed by Polymer, but its LI.FI deployment
+was retired, so lintent does not enable it. Other chains in Polymer's list need LI.FI
+settler/oracle deployments and token configuration before they can be added here.
+
+On 2026-09-10, read-only RPC checks verified the mapped Polymer adapter and prover
+on Robinhood, Optimism and Base, including mappings to Ethereum, Optimism, Base,
+Arbitrum and Robinhood. Arc testnet's current adapter and mappings to the four
+Sepolia chains were also verified. Older Arc testnet orders remain accepted by
+validation after the adapter update. These checks do not establish solver inventory
+or prove every directional route can execute.
 
 ## Smart Contracts
 

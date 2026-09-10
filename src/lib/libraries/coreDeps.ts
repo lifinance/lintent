@@ -3,6 +3,7 @@ import {
   INPUT_SETTLER_COMPACT_LIFI,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   POLYMER_ORACLE,
+  LEGACY_POLYMER_ORACLES,
   SOLANA_OUTPUT_SETTLER,
   SOLANA_POLYMER_OUTPUT_ORACLE,
   TRON_MAINNET_OUTPUT_SETTLER,
@@ -44,6 +45,7 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     if (isNonZeroAddress(wormhole)) allowed.push(wormhole);
     // Orders opened before an oracle rotation must stay displayable/provable.
     allowed.push(...(TRON_LEGACY_POLYMER_ORACLES[chainId.toString()] ?? []));
+    allowed.push(...(LEGACY_POLYMER_ORACLES[key] ?? []));
     if (allowed.length === 0) return undefined;
     // Same-chain fills use the output settler as the input oracle: the
     // global COIN_FILLER on EVM, the per-chain settler (current or legacy)
@@ -119,7 +121,10 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     if (inPolymer && inPolymer.toLowerCase() === inputOracle.toLowerCase()) {
       allowed.push(inPolymer);
     }
-    const legacyOracles = TRON_LEGACY_POLYMER_ORACLES[inputChainId.toString()] ?? [];
+    const legacyOracles = [
+      ...(TRON_LEGACY_POLYMER_ORACLES[inputChainId.toString()] ?? []),
+      ...(LEGACY_POLYMER_ORACLES[Number(inputChainId)] ?? [])
+    ];
     for (const legacy of legacyOracles) {
       if (legacy.toLowerCase() === inputOracle.toLowerCase()) allowed.push(legacy);
     }

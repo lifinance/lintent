@@ -100,27 +100,18 @@ export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
 // only works if the *input* chain's oracle has the *output* chain mapped. `setChainMap` is
 // `onlyOwner` (0x712E90032d8f44bE276A903E1769d64dD1C7F45a) and write-once per chain.
 //
-// The maps are being populated chain by chain and were incomplete when last measured
-// (2026-07-31 ~09:40 UTC, mappings are identity: protocolId == chainId):
-//   ethereum, arbitrum, bsc  all of the chains below mapped
-//   katana                   only ethereum, polygon, pharos
-//   base                     only ethereum
-//   polygon, pharos          nothing mapped
-// Same-chain swaps are unaffected: `intent.ts` uses COIN_FILLER as `inputOracle` when
-// `isSameChain()`, bypassing the oracle entirely.
-//
-// Re-measure before widening `coinList`/`chainList` — see the note above `chainList`.
-// Addresses track `main` after SOLV-695 (#62), ported into this branch's chain-id-keyed
-// shape. `main` keys this map by chain name; re-keying is why the values could not
-// auto-merge — keep the two in sync by value, not by diff.
+// Polymer network support: https://docs.polymerlabs.org/docs/build/start/ (2026-09-10).
+// LI.FI adapter deployments are separate from Polymer CrossL2ProverV2 addresses.
+// Robinhood, Optimism and Base adapter/prover code and mappings to Ethereum,
+// Optimism, Base, Arbitrum and Robinhood were verified on 2026-09-10.
+// Support in Polymer's list alone does not establish a LI.FI deployment.
 export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [ethereum.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [arbitrum.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [base.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
-  // MegaETH (4326) is not part of the mainnet deployment set: there is no code at the settler,
-  // filler or oracle addresses there. Kept only to satisfy the `chain` key type; the chain is
-  // disabled in `chainList`/`coinList` below, so this value is never read.
-  [megaeth.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+  [optimism.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [robinhood.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  // MegaETH's LI.FI deployment was retired; do not advertise its old oracle.
   [katana.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [polygon.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [bsc.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
@@ -145,8 +136,12 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [baseSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
   [arbitrumSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
   [optimismSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
-  // Not covered by the new deployment set; left on the superseded oracle.
-  [arcTestnet.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
+  [arcTestnet.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72"
+};
+
+// Preserve validation of orders created before the Arc testnet oracle rotation.
+export const LEGACY_POLYMER_ORACLES: Partial<Record<number, readonly `0x${string}`[]>> = {
+  [arcTestnet.id]: ["0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"]
 };
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
@@ -175,9 +170,8 @@ export const chainMap = {
 } as const;
 type ChainName = keyof typeof chainMap;
 export const chains = Object.keys(chainMap) as ChainName[];
-// Output-chain selector. MegaETH is omitted because `OutputSettlerSimple` is not deployed there,
-// so it cannot settle a fill. Every other chain here is a valid destination from the origin chains
-// `coinList` offers — see the chain-map notes above `POLYMER_ORACLE`.
+// Output-chain selector. MegaETH is omitted because its LI.FI deployment was retired.
+// Oracle availability and directional mappings must also support the selected route.
 export const chainList = (mainnet: boolean) => {
   if (mainnet == true) {
     return [
@@ -537,7 +531,7 @@ export const polymerChainIds = {
   baseSepolia: baseSepolia.id,
   optimismSepolia: optimismSepolia.id,
   optimism: optimism.id,
-  megaeth: megaeth.id,
+  robinhood: robinhood.id,
   katana: katana.id,
   bsc: bsc.id,
   polygon: polygon.id,

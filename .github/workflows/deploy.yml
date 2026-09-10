@@ -32,6 +32,8 @@ jobs:
 
       - name: Build application
         env:
+          PUBLIC_ARC_RPC_URL: ${{ secrets.PUBLIC_ARC_RPC_URL }}
+          PUBLIC_ROUTEMESH_API_KEY: ${{ secrets.PUBLIC_ROUTEMESH_API_KEY }}
           PRIVATE_POLYMER_MAINNET_ZONE_API_KEY: ${{ secrets.PRIVATE_POLYMER_MAINNET_ZONE_API_KEY }}
           PRIVATE_POLYMER_TESTNET_ZONE_API_KEY: ${{ secrets.PRIVATE_POLYMER_TESTNET_ZONE_API_KEY }}
           PRIVATE_ROUTEMESH_API_KEY: ${{ secrets.PRIVATE_ROUTEMESH_API_KEY }}
@@ -80,6 +82,8 @@ jobs:
 
       - name: Build application
         env:
+          PUBLIC_ARC_RPC_URL: ${{ secrets.PUBLIC_ARC_RPC_URL }}
+          PUBLIC_ROUTEMESH_API_KEY: ${{ secrets.PUBLIC_ROUTEMESH_API_KEY }}
           PRIVATE_POLYMER_MAINNET_ZONE_API_KEY: ${{ secrets.PRIVATE_POLYMER_MAINNET_ZONE_API_KEY }}
           PRIVATE_POLYMER_TESTNET_ZONE_API_KEY: ${{ secrets.PRIVATE_POLYMER_TESTNET_ZONE_API_KEY }}
           PRIVATE_ROUTEMESH_API_KEY: ${{ secrets.PRIVATE_ROUTEMESH_API_KEY }}

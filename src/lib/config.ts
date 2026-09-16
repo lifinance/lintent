@@ -15,6 +15,7 @@ import {
   optimism,
   arcTestnet,
   hyperEvm,
+  monad,
   tron
 } from "viem/chains";
 import {
@@ -99,6 +100,7 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [bsc.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [pharos.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [hyperEvm.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [monad.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [tron.id]: TRON_MAINNET_POLYMER_ORACLE,
   // Solana: this table answers "what is the input oracle for an order
   // originating on this chain", so it holds the Polymer oracle *PDA*. No order
@@ -143,6 +145,7 @@ export const chainMap = {
   polygon,
   pharos,
   hyperEvm,
+  monad,
   arcTestnet,
   tron
 } as const;
@@ -162,6 +165,7 @@ export const chainList = (mainnet: boolean) => {
       "bsc",
       "pharos",
       "hyperEvm",
+      "monad",
       "tron"
     ] as ChainName[];
   } else
@@ -335,6 +339,18 @@ export const coinList = (mainnet: boolean) => {
         address: `0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb`,
         name: "usdt0",
         chainId: hyperEvm.id,
+        decimals: 6
+      },
+      {
+        address: `0x754704Bc059F8C67012fEd69BC8A327a5aafb603`,
+        name: "usdc",
+        chainId: monad.id,
+        decimals: 6
+      },
+      {
+        address: `0xe7cd86e13AC4309349F30B3435a9d337750fC82D`,
+        name: "usdt0",
+        chainId: monad.id,
         decimals: 6
       },
       // Solana mainnet. Mints stored as 32-byte hex, like the devnet entries
@@ -515,6 +531,7 @@ export const polymerChainIds = {
   polygon: polygon.id,
   pharos: pharos.id,
   hyperEvm: hyperEvm.id,
+  monad: monad.id,
   arcTestnet: arcTestnet.id,
   tron: tron.id
 } as const;
@@ -695,6 +712,13 @@ export const clients = {
     transport: fallback([
       ...routemeshRpc(hyperEvm.id),
       ...hyperEvm.rpcUrls.default.http.map((v) => http(v))
+    ])
+  }),
+  monad: createPublicClient({
+    chain: monad,
+    transport: fallback([
+      ...routemeshRpc(monad.id),
+      ...monad.rpcUrls.default.http.map((v) => http(v))
     ])
   }),
   // Testnet

@@ -14,6 +14,7 @@ import {
   megaeth,
   optimism,
   arcTestnet,
+  hyperEvm,
   tron
 } from "viem/chains";
 import {
@@ -97,6 +98,7 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [polygon.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [bsc.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [pharos.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [hyperEvm.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [tron.id]: TRON_MAINNET_POLYMER_ORACLE,
   // Solana: this table answers "what is the input oracle for an order
   // originating on this chain", so it holds the Polymer oracle *PDA*. No order
@@ -140,6 +142,7 @@ export const chainMap = {
   bsc,
   polygon,
   pharos,
+  hyperEvm,
   arcTestnet,
   tron
 } as const;
@@ -158,6 +161,7 @@ export const chainList = (mainnet: boolean) => {
       "polygon",
       "bsc",
       "pharos",
+      "hyperEvm",
       "tron"
     ] as ChainName[];
   } else
@@ -319,6 +323,18 @@ export const coinList = (mainnet: boolean) => {
         address: `0xc879c018db60520f4355c26ed1a6d572cdac1815`,
         name: "usdc",
         chainId: pharos.id,
+        decimals: 6
+      },
+      {
+        address: `0xb88339CB7199b77E23DB6E890353E22632Ba630f`,
+        name: "usdc",
+        chainId: hyperEvm.id,
+        decimals: 6
+      },
+      {
+        address: `0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb`,
+        name: "usdt0",
+        chainId: hyperEvm.id,
         decimals: 6
       },
       // Solana mainnet. Mints stored as 32-byte hex, like the devnet entries
@@ -498,6 +514,7 @@ export const polymerChainIds = {
   bsc: bsc.id,
   polygon: polygon.id,
   pharos: pharos.id,
+  hyperEvm: hyperEvm.id,
   arcTestnet: arcTestnet.id,
   tron: tron.id
 } as const;
@@ -672,6 +689,13 @@ export const clients = {
   pharos: createPublicClient({
     chain: pharos,
     transport: fallback([...pharos.rpcUrls.default.http.map((v) => http(v))])
+  }),
+  hyperEvm: createPublicClient({
+    chain: hyperEvm,
+    transport: fallback([
+      ...routemeshRpc(hyperEvm.id),
+      ...hyperEvm.rpcUrls.default.http.map((v) => http(v))
+    ])
   }),
   // Testnet
   sepolia: createPublicClient({

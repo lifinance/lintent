@@ -16,6 +16,7 @@ import {
   arcTestnet,
   hyperEvm,
   monad,
+  avalanche,
   tron
 } from "viem/chains";
 import {
@@ -101,6 +102,7 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [pharos.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [hyperEvm.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [monad.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [avalanche.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [tron.id]: TRON_MAINNET_POLYMER_ORACLE,
   // Solana: this table answers "what is the input oracle for an order
   // originating on this chain", so it holds the Polymer oracle *PDA*. No order
@@ -146,6 +148,7 @@ export const chainMap = {
   pharos,
   hyperEvm,
   monad,
+  avalanche,
   arcTestnet,
   tron
 } as const;
@@ -166,6 +169,7 @@ export const chainList = (mainnet: boolean) => {
       "pharos",
       "hyperEvm",
       "monad",
+      "avalanche",
       "tron"
     ] as ChainName[];
   } else
@@ -353,6 +357,18 @@ export const coinList = (mainnet: boolean) => {
         chainId: monad.id,
         decimals: 6
       },
+      {
+        address: `0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E`,
+        name: "usdc",
+        chainId: avalanche.id,
+        decimals: 6
+      },
+      {
+        address: `0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7`,
+        name: "usdt",
+        chainId: avalanche.id,
+        decimals: 6
+      },
       // Solana mainnet. Mints stored as 32-byte hex, like the devnet entries
       // below — `Token.address` is the app's internal identity, and `getCoin`
       // compares Solana addresses whole rather than truncating to 20 bytes.
@@ -532,6 +548,7 @@ export const polymerChainIds = {
   pharos: pharos.id,
   hyperEvm: hyperEvm.id,
   monad: monad.id,
+  avalanche: avalanche.id,
   arcTestnet: arcTestnet.id,
   tron: tron.id
 } as const;
@@ -719,6 +736,14 @@ export const clients = {
     transport: fallback([
       ...routemeshRpc(monad.id),
       ...monad.rpcUrls.default.http.map((v) => http(v))
+    ])
+  }),
+  avalanche: createPublicClient({
+    chain: avalanche,
+    transport: fallback([
+      ...routemeshRpc(avalanche.id),
+      http("https://avalanche-c-chain-rpc.publicnode.com"),
+      ...avalanche.rpcUrls.default.http.map((v) => http(v))
     ])
   }),
   // Testnet

@@ -23,6 +23,7 @@ jobs:
           app-id: ${{ secrets.QA_APP_ID }}
           private-key: ${{ secrets.QA_APP_PRIVATE_KEY }}
           owner: lifinance
+          repositories: QA
 
       - name: Swap labels
         env:

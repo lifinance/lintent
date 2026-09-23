@@ -25,6 +25,8 @@ import { createSolanaPrograms } from "$lib/solana/program";
 import { getSolanaSigner } from "$lib/solana/wallet";
 import {
   fillOutputs as fillSolanaOutputs,
+  fillAndSettle as fillAndSettleSolana,
+  closeFillRecord as closeSolanaFillRecord,
   finalise as finaliseSolana,
   receiveProof as receiveSolanaProof,
   submitFillProof as submitSolanaFillProof
@@ -33,6 +35,12 @@ import { polymerScratchPdas } from "$lib/solana/pda";
 import { POLYMER_PROGRAM_ID } from "$lib/idl";
 import { readPolymerProverId } from "$lib/solana/reads";
 import type { SolanaDeps } from "$lib/solana/types";
+import { atomicFillProblem } from "$lib/solana/order";
+import {
+  persistFillBeforeCleanup,
+  solanaOrderSettled,
+  invalidateSolanaProgress
+} from "./solanaHistory";
 import { getTronReads, getTronSigner } from "$lib/tron/client";
 import {
   fillOutputs as fillTronOutputs,
@@ -183,6 +191,7 @@ export class Solver {
     args: {
       orderContainer: OrderContainer;
       outputs: MandateOutput[];
+      mode?: "atomic" | "ordinary";
     },
     opts: {
       preHook?: (chainId: number) => Promise<any>;
@@ -207,12 +216,27 @@ export class Solver {
         // single reference for the whole group, and each output's solver and
         // timestamp are later recovered from that transaction's logs. Separate
         // transactions would leave outputs 2..N filled but unprovable.
-        const signature = await fillSolanaOutputs(await solanaDeps(BigInt(outputChainId)), {
-          orderId,
-          outputs,
-          fillDeadline: Number(order.fillDeadline),
-          solverBytes32: addressToBytes32(solverAddress)
-        });
+        if (preHook) await preHook(outputChainId);
+        const deps = await solanaDeps(BigInt(outputChainId));
+        const problem = args.mode === "atomic" ? atomicFillProblem(args.orderContainer) : undefined;
+        if (problem) throw new Error(problem);
+        const solanaIntent = containerToIntent(args.orderContainer);
+        if (args.mode === "atomic" && !(solanaIntent instanceof StandardSolanaIntent))
+          throw new Error("Atomic settlement requires a Solana order");
+        const signature =
+          args.mode === "atomic" && solanaIntent instanceof StandardSolanaIntent
+            ? await fillAndSettleSolana(deps, {
+                order: solanaIntent.asOrder(),
+                orderId,
+                solverBytes32: addressToBytes32(solverAddress)
+              })
+            : await fillSolanaOutputs(deps, {
+                orderId,
+                outputs,
+                fillDeadline: Number(order.fillDeadline),
+                solverBytes32: addressToBytes32(solverAddress)
+              });
+        invalidateSolanaProgress();
         if (postHook) await postHook();
         return signature;
       }
@@ -290,6 +314,21 @@ export class Solver {
     };
   }
 
+  static async reclaimFillRent(
+    orderContainer: OrderContainer,
+    output: MandateOutput,
+    fillSignature?: string
+  ) {
+    const orderId = containerToIntent(orderContainer).orderId();
+    await persistFillBeforeCleanup(orderId, output, fillSignature);
+    const signature = await closeSolanaFillRecord(await solanaDeps(output.chainId), {
+      orderId,
+      output
+    });
+    invalidateSolanaProgress();
+    return signature;
+  }
+
   static validate(
     walletClient: WC,
     args: {
@@ -331,6 +370,10 @@ export class Solver {
         }
 
         const orderId = containerToIntent(args.orderContainer).orderId();
+        if (await solanaOrderSettled(args.orderContainer, fillTransactionHash)) {
+          if (postHook) await postHook();
+          return { alreadyProven: true };
+        }
 
         // A Solana OUTPUT is proven by submitting the fill to Polymer, which
         // reads the `Prove:` log the submit instruction writes. A same-chain
@@ -720,6 +763,7 @@ export class Solver {
           solveParams,
           destinationBytes32: addressToBytes32(account())
         });
+        invalidateSolanaProgress();
         if (postHook) await postHook();
         return signature;
       }

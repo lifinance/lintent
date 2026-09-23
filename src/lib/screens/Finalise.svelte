@@ -20,7 +20,7 @@
   } from "$lib/config";
   import { COMPACT_ABI } from "$lib/abi/compact";
   import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
-  import { idToToken } from "@lifi/intent";
+  import { inputTokenAddress } from "$lib/utils/address";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
   import { hashStruct } from "viem";
@@ -29,6 +29,8 @@
   import { isValidTxRef } from "$lib/utils/txRef";
   import { getSolanaReads } from "$lib/solana/client";
   import { readIsOrderFinalised } from "$lib/solana/reads";
+  import { solanaOrderSettled } from "$lib/libraries/solanaHistory";
+  import SolanaRentReclaim from "$lib/components/SolanaRentReclaim.svelte";
   import { getTronReads } from "$lib/tron/client";
   import { readOrderStatus } from "$lib/tron/reads";
   import { getOrFetchRpc } from "$lib/libraries/rpcCache";
@@ -47,6 +49,7 @@
 
   let refreshClaimed = $state(0);
   let claimedByChain = $state<Record<string, boolean>>({});
+  let closedWithoutReceipt = $state<Record<string, boolean>>({});
   let claimStatusRun = 0;
   const inputChains = $derived(containerToIntent(orderContainer).inputChains());
   const getInputsForChain = (container: OrderContainer, inputChain: bigint): [bigint, bigint][] => {
@@ -112,14 +115,12 @@
     const orderId = intent.orderId();
 
     if (isSolanaChain(chainId)) {
-      // No status enum on Solana: finalise and refund both close order_context,
-      // so its absence (with consumed_order still present) is the terminal
-      // signal — the same Claimed-or-Refunded conflation as the branches below.
-      return getOrFetchRpc(
-        `claim:solana:${orderId}`,
-        async () => readIsOrderFinalised(await getSolanaReads(chainId), orderId),
-        { ttlMs: 30_000 }
-      );
+      // Finalise and refund both close order_context. Only a verified settlement
+      // receipt establishes success; closure alone blocks a duplicate claim.
+      const settled = await solanaOrderSettled(container, fillTransactionHashesFor(container)[0]);
+      closedWithoutReceipt[chainId.toString()] =
+        !settled && (await readIsOrderFinalised(await getSolanaReads(chainId), orderId));
+      return settled;
     }
 
     if (isTronChain(chainId)) {
@@ -239,6 +240,10 @@
               >
                 Finalised
               </button>
+            {:else if closedWithoutReceipt[inputChain.toString()]}
+              <span class="text-xs text-gray-600"
+                >Escrow closed; settlement or refund receipt unavailable.</span
+              >
             {:else}
               {@const fillTransactionHashes = fillTransactionHashesFor(orderContainer)}
               {@const canClaim = hasAllFillTransactions(orderContainer)}
@@ -282,12 +287,12 @@
                 amountText={formatTokenAmount(
                   input[1],
                   getCoin({
-                    address: idToToken(input[0]),
+                    address: inputTokenAddress(input[0], inputChain),
                     chainId: inputChain
                   }).decimals
                 )}
                 symbol={getCoin({
-                  address: idToToken(input[0]),
+                  address: inputTokenAddress(input[0], inputChain),
                   chainId: inputChain
                 }).name}
                 tone="neutral"
@@ -297,6 +302,7 @@
         </ChainActionRow>
       </SectionCard>
     {/each}
+    <SolanaRentReclaim {orderContainer} />
   </div>
 </ScreenFrame>
 

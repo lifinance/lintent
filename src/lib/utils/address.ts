@@ -1,11 +1,17 @@
-import { isAddress } from "viem";
+import { isAddress, toHex } from "viem";
 import {
   isSolanaBase58Address,
+  idToToken,
   isTronBase58Address,
   solanaBase58ToBytes32,
   tronBase58ToHex
 } from "@lifi/intent";
-import type { ChainType } from "$lib/utils/chainType";
+import { isSolanaChain, type ChainType } from "$lib/utils/chainType";
+
+/** Solana input IDs contain the full mint, unlike EVM resource-lock IDs. */
+export function inputTokenAddress(tokenId: bigint, chainId: number | bigint): `0x${string}` {
+  return isSolanaChain(chainId) ? toHex(BigInt(tokenId), { size: 32 }) : idToToken(tokenId);
+}
 
 /**
  * Resolves a user-entered address to the app's internal hex form: 20 bytes for

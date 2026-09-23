@@ -176,6 +176,7 @@
             class="w-full cursor-pointer rounded border border-gray-200 bg-white px-2 py-2 text-left transition-shadow ease-linear select-none hover:shadow-md focus:outline-none focus-visible:outline-none"
             style="-webkit-tap-highlight-color: transparent;"
             onclick={() => handleSelectActive(row)}
+            data-testid={`intent-select-${row.orderId}`}
             onkeydown={(event) => handleCardKeydown(event, () => handleSelectActive(row))}
           >
             <IntentListDetailRow
@@ -207,6 +208,7 @@
             class="w-full cursor-pointer px-2 py-1.5 text-left text-xs text-gray-500 transition-colors select-none hover:bg-gray-100 focus:outline-none focus-visible:outline-none"
             style="-webkit-tap-highlight-color: transparent;"
             onclick={() => toggleExpired(row.orderId)}
+            data-testid={`intent-expired-${row.orderId}`}
             onkeydown={(event) => handleCardKeydown(event, () => toggleExpired(row.orderId))}
           >
             {#if expandedExpiredOrderId === row.orderId}
@@ -225,6 +227,11 @@
             {/if}
           </div>
           {#if expandedExpiredOrderId === row.orderId}
+            <button
+              type="button"
+              class="m-2 rounded border border-gray-200 px-2 py-1 text-xs font-semibold"
+              onclick={() => handleSelectActive(row)}>View settlement and rent</button
+            >
             <button
               type="button"
               class="absolute right-2 bottom-1.5 rounded border border-rose-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 hover:border-rose-300 disabled:cursor-not-allowed disabled:text-rose-300"

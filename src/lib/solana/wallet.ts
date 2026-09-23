@@ -368,8 +368,14 @@ export async function getSolanaSigner(chainId: number | bigint): Promise<SolanaS
     async signAndSend(instructions: SolanaInstructionLike[], opts) {
       await assertSolanaCluster(chainId, reads);
 
-      const { ComputeBudgetProgram, Connection, PublicKey, Transaction, TransactionInstruction } =
-        await import("@solana/web3.js");
+      const {
+        ComputeBudgetProgram,
+        Connection,
+        PublicKey,
+        Transaction,
+        TransactionInstruction,
+        VersionedTransaction
+      } = await import("@solana/web3.js");
 
       const transaction = new Transaction();
       if (opts?.computeUnitLimit) {
@@ -398,6 +404,20 @@ export async function getSolanaSigner(chainId: number | bigint): Promise<SolanaS
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = new PublicKey(address);
+
+      // Include signature slots when measuring, before asking the wallet to sign.
+      const wire = transaction.serialize({ requireAllSignatures: false, verifySignatures: false });
+      if (wire.length > 1232)
+        throw new Error("Solana transaction exceeds the 1232-byte packet limit");
+      const simulation = await connection.simulateTransaction(
+        new VersionedTransaction(transaction.compileMessage()),
+        { sigVerify: false }
+      );
+      if (simulation.value.err) {
+        throw new Error(
+          `Solana simulation failed: ${JSON.stringify(simulation.value.err)}\n${(simulation.value.logs ?? []).join("\n")}`
+        );
+      }
 
       const signed = await adapter.signTransaction(transaction);
       // Attach the program logs to the thrown error — see `failureLogs` for why
@@ -456,6 +476,15 @@ export async function getSolanaSigner(chainId: number | bigint): Promise<SolanaS
         throw new Error(
           `Solana transaction ${signature} reverted: ${JSON.stringify(tx.meta.err)}\n${logs}`
         );
+      }
+
+      // Reuse the confirmed read-back receipt; storage failure cannot undo the send.
+      try {
+        const store = (await import("$lib/state.svelte")).default;
+        store.transactionReceipts[`${chainId}:${signature}`] = JSON.stringify(tx);
+        await store.saveTransactionReceipt(chainId, signature, tx);
+      } catch (error) {
+        console.warn("Could not persist Solana receipt", error);
       }
 
       return signature;

@@ -7,11 +7,8 @@
 // print a `Program data:` line, including one crafted to look like a fill.
 // Frame attribution is therefore the anti-spoof, not a nicety.
 //
-// None of the events below appear in the generated IDLs: they are defined in
-// the helper crates (output_settler_base, input_settler_base, oracle_base)
-// rather than inside a `#[program]` module, so `anchor build` omits them and
-// `output_settler_simple.json` ships `"events": []`. The layouts here are
-// hand-rolled against the Rust structs and pinned by tests.
+// Layouts are pinned against the verified production IDLs. Frame attribution
+// remains necessary even with an IDL: another program can print identical bytes.
 
 import { getOutputHash } from "@lifi/intent";
 import type { MandateOutput } from "@lifi/intent";
@@ -257,4 +254,37 @@ export function findOutputFilledLog(
     );
   }
   return matches[0]!;
+}
+
+export type DecodedSolanaFinalised = {
+  settler: `0x${string}`;
+  orderId: `0x${string}`;
+  solver: `0x${string}`;
+  destination: `0x${string}`;
+};
+
+export function findFinalisedLog(
+  logs: readonly string[],
+  expected: { programId: string; orderId: `0x${string}`; orderContext: `0x${string}` }
+): DecodedSolanaFinalised | undefined {
+  const matches: DecodedSolanaFinalised[] = [];
+  for (const payload of programDataLogs(logs, expected.programId)) {
+    if (!startsWithDiscriminator(payload, FINALISED_DISCRIMINATOR) || payload.length !== 136)
+      continue;
+    const reader = new BorshReader(payload.subarray(8));
+    const event = {
+      settler: reader.bytes32(),
+      orderId: reader.bytes32(),
+      solver: reader.bytes32(),
+      destination: reader.bytes32()
+    };
+    if (
+      event.orderId.toLowerCase() === expected.orderId.toLowerCase() &&
+      event.settler.toLowerCase() === expected.orderContext.toLowerCase() &&
+      BigInt(event.solver) !== 0n
+    )
+      matches.push(event);
+  }
+  if (matches.length > 1) throw new Error("Ambiguous Solana finalisation events");
+  return matches[0];
 }

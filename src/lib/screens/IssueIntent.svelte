@@ -120,6 +120,11 @@
   // already exceed Solana's 1232-byte transaction cap. Such an order opens,
   // escrows the inputs, and then can never be filled, so it is blocked here.
   const solanaOutputOverflow = $derived.by(() => {
+    if (
+      store.inputTokens.some(({ token }) => getChainType(token.chainId) === "solana") &&
+      store.outputTokens.length > 1
+    )
+      return true;
     const perChain = new Map<number, number>();
     for (const { token } of store.outputTokens) {
       if (getChainType(token.chainId) !== "solana") continue;
@@ -132,7 +137,7 @@
     recipientProblem ??
       exclusiveForProblem ??
       (solanaOutputOverflow
-        ? "Solana orders support a single output: all outputs must be filled in one Solana transaction, and more than one exceeds the 1232-byte transaction size — the order would open but could never be filled."
+        ? "Solana input orders support one output within the settlement transaction limit. Routes into Solana also support only one output per Solana chain."
         : undefined)
   );
 

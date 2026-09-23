@@ -34,7 +34,9 @@ import {
   openEscrow,
   submitFillProof
 } from "../../src/lib/solana/writes";
-import { PublicKey } from "@solana/web3.js";
+import { clockData, contextData, localAttestationData } from "../fixtures/solana/accounts";
+import { CLOCK_SYSVAR } from "../../src/lib/solana/reads";
+import { solanaOrderId } from "../../src/lib/solana/order";
 
 const CHAIN_ID = SOLANA_DEVNET_CHAIN_ID;
 const DEVNET_GENESIS = SOLANA_GENESIS_HASHES[CHAIN_ID.toString()]!;
@@ -108,7 +110,10 @@ function makeDeps(
 ) {
   const calls: RecordedCall[] = [];
   const sent: SolanaInstructionLike[][] = [];
-  const accounts = opts.accounts ?? { [MINT]: { owner: TOKEN_PROGRAM_ID } };
+  const accounts: Record<string, { owner: string; data?: Uint8Array }> = {
+    [CLOCK_SYSVAR]: { owner: "Sysvar1111111111111111111111111111111111111", data: clockData() },
+    ...(opts.accounts ?? { [MINT]: { owner: TOKEN_PROGRAM_ID } })
+  };
 
   const deps: SolanaDeps = {
     chainId: CHAIN_ID,
@@ -162,11 +167,7 @@ function makeDeps(
  * The sponsor is at byte 72 — reading it from byte 8 yields `input_token`.
  */
 function orderContextData(opts: { inputToken: string; user: string; sponsor: string }): Uint8Array {
-  const data = new Uint8Array(8 + 32 + 32 + 32 + 1);
-  data.set(new PublicKey(opts.inputToken).toBytes(), 8);
-  data.set(new PublicKey(opts.user).toBytes(), 40);
-  data.set(new PublicKey(opts.sponsor).toBytes(), 72);
-  return data;
+  return contextData(opts.inputToken, opts.user, opts.sponsor);
 }
 
 function makeOutput(overrides: Partial<MandateOutput> = {}): MandateOutput {
@@ -225,7 +226,8 @@ describe("openEscrow", () => {
       accounts: { [MINT]: { owner: TOKEN_PROGRAM_ID } }
     });
 
-    const signature = await openEscrow(deps, { order, orderId: ORDER_ID });
+    const orderId = solanaOrderId(order);
+    const signature = await openEscrow(deps, { order, orderId });
 
     expect(signature).toBe("sig1");
     expect(sent).toHaveLength(1);
@@ -233,8 +235,8 @@ describe("openEscrow", () => {
     expect(call.program).toBe("inputSettlerEscrow");
     // consumed_order is the replay guard and is easy to omit — the reference
     // test in catalyst-intent-svm predates it and does exactly that.
-    expect(call.accounts?.consumedOrder).toBe(consumedOrderPda(ORDER_ID).toBase58());
-    expect(call.accounts?.orderContext).toBe(orderContextPda(ORDER_ID).toBase58());
+    expect(call.accounts?.consumedOrder).toBe(consumedOrderPda(orderId).toBase58());
+    expect(call.accounts?.orderContext).toBe(orderContextPda(orderId).toBase58());
     expect(call.accounts?.tokenProgram).toBe(TOKEN_PROGRAM_ID);
     // The vault is the order context's OWN ata, not the user's.
     expect(call.accounts?.orderPdaTokenAccount).not.toBe(call.accounts?.userTokenAccount);
@@ -245,7 +247,7 @@ describe("openEscrow", () => {
     // wallet builds a transaction that cannot succeed.
     const order = makeOrder();
     const { deps } = makeDeps({ signerPublicKey: USER });
-    await expect(openEscrow(deps, { order, orderId: ORDER_ID })).rejects.toThrow(
+    await expect(openEscrow(deps, { order, orderId: solanaOrderId(order) })).rejects.toThrow(
       /is not the order's user/
     );
   });
@@ -255,7 +257,7 @@ describe("openEscrow", () => {
     const user = bytes32ToPubkey(order.user as `0x${string}`).toBase58();
     const { deps } = makeDeps({ signerPublicKey: user });
     await expect(openEscrow(deps, { order, orderId: ORDER_ID })).rejects.toThrow(
-      /no native-SOL input path/
+      /requires an SPL mint/
     );
   });
 
@@ -266,7 +268,7 @@ describe("openEscrow", () => {
       signerPublicKey: user,
       accounts: { [MINT]: { owner: INTENTS_PROTOCOL_PROGRAM_ID } }
     });
-    await expect(openEscrow(deps, { order, orderId: ORDER_ID })).rejects.toThrow(
+    await expect(openEscrow(deps, { order, orderId: solanaOrderId(order) })).rejects.toThrow(
       /not a token program/
     );
   });
@@ -286,7 +288,7 @@ describe("fillOutput", () => {
     });
 
     const call = calls.find((c) => c.method === "fill")!;
-    expect(call.accounts?.fillId).toBe(fillIdPda(ORDER_ID, getOutputHash(output)).toBase58());
+    expect(call.accounts?.fillRecord).toBe(fillIdPda(ORDER_ID, getOutputHash(output)).toBase58());
     expect(call.accounts?.localAttestation).toBe(
       localAttestationPda(
         outputSettlerSimplePda(),
@@ -482,7 +484,20 @@ describe("finalise", () => {
       signerPublicKey: solverBase58,
       accounts: {
         [MINT]: { owner: TOKEN_PROGRAM_ID },
-        [context]: { owner: INPUT_SETTLER_ESCROW_PROGRAM_ID, data: new Uint8Array(40) }
+        [context]: { owner: INPUT_SETTLER_ESCROW_PROGRAM_ID, data: contextData(MINT, USER) },
+        ...Object.fromEntries(
+          outputs.map((output, index) => [
+            localAttestationPda(
+              outputSettlerSimplePda(),
+              output.oracle,
+              localAttestationDataHash({ solver, orderId: ORDER_ID, output })
+            ).toBase58(),
+            {
+              owner: INTENTS_PROTOCOL_PROGRAM_ID,
+              data: localAttestationData(solverBase58, 1_700_000_000 + index)
+            }
+          ])
+        )
       }
     });
 
@@ -497,7 +512,11 @@ describe("finalise", () => {
     });
 
     const call = calls.find((c) => c.method === "finalise")!;
-    expect(call.remaining).toHaveLength(2);
+    expect(call.remaining).toHaveLength(4);
+    expect(call.remaining?.slice(2)).toEqual([
+      { pubkey: "11111111111111111111111111111111", isSigner: false, isWritable: false },
+      { pubkey: "11111111111111111111111111111111", isSigner: false, isWritable: false }
+    ]);
     // Both outputs are same-chain here, so both are LocalAttestations.
     expect(call.remaining?.[0]?.pubkey).toBe(
       localAttestationPda(
@@ -526,6 +545,14 @@ describe("finalise sponsor resolution", () => {
       signerPublicKey: solverBase58,
       accounts: {
         [MINT]: { owner: TOKEN_PROGRAM_ID },
+        [localAttestationPda(
+          outputSettlerSimplePda(),
+          order.outputs[0].oracle,
+          localAttestationDataHash({ solver, orderId: ORDER_ID, output: order.outputs[0] })
+        ).toBase58()]: {
+          owner: INTENTS_PROTOCOL_PROGRAM_ID,
+          data: localAttestationData(solverBase58)
+        },
         [context]: {
           owner: INPUT_SETTLER_ESCROW_PROGRAM_ID,
           data: orderContextData({ inputToken: MINT, user, sponsor: SPONSOR })
@@ -579,7 +606,7 @@ describe("fillOutputs batching", () => {
       solverBytes32: b32("5")
     });
     const fills = calls.filter((c) => c.method === "fill");
-    expect(fills[0]!.accounts?.fillId).not.toBe(fills[1]!.accounts?.fillId);
+    expect(fills[0]!.accounts?.fillRecord).not.toBe(fills[1]!.accounts?.fillRecord);
   });
 
   test("rejects an empty output list", async () => {

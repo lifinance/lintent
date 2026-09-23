@@ -1,10 +1,8 @@
 // Read-side Solana state.
 //
-// Almost every question the flow asks — was this filled, was it proven, is it
-// finished — is answered on Solana by whether a PDA exists. The programs
-// create marker accounts rather than writing status enums, so "account
-// present" is the fact, and the account's owner is what makes it trustworthy:
-// anyone can fund an address, only the program can own it.
+// Live PDA records establish fills and proofs. Successful receipts preserve
+// settlement history after rent reclamation closes those accounts. Ownership
+// and layout checks prevent unrelated accounts from standing in for records.
 
 import { getOutputHash } from "@lifi/intent";
 import type { MandateOutput } from "@lifi/intent";
@@ -27,6 +25,33 @@ import {
   polymerOraclePda
 } from "./pda";
 import type { SolanaConnectionLike } from "./types";
+import { decodeFillRecord, decodeLocalAttestation } from "./accounts";
+
+export const CLOCK_SYSVAR = "SysvarC1ock11111111111111111111111111111111";
+
+export async function readChainTimestamp(reads: SolanaConnectionLike): Promise<number> {
+  const info = await reads.getAccountInfo(CLOCK_SYSVAR);
+  if (!info || info.data.length !== 40) throw new Error("Could not read Solana's clock");
+  const timestamp = new DataView(
+    info.data.buffer,
+    info.data.byteOffset,
+    info.data.byteLength
+  ).getBigInt64(32, true);
+  if (timestamp < 0n || timestamp > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new Error("Invalid Solana clock timestamp");
+  return Number(timestamp);
+}
+
+export async function readFillRecord(
+  reads: SolanaConnectionLike,
+  args: { orderId: `0x${string}`; output: MandateOutput }
+) {
+  const info = await reads.getAccountInfo(
+    fillIdPda(args.orderId, getOutputHash(args.output)).toBase58()
+  );
+  if (!info || info.owner !== OUTPUT_SETTLER_SIMPLE_PROGRAM_ID) return null;
+  return decodeFillRecord(info);
+}
 
 /**
  * Whether `address` holds a live account owned by `expectedOwner`.
@@ -50,8 +75,7 @@ export async function readIsOutputFilled(
   reads: SolanaConnectionLike,
   args: { orderId: `0x${string}`; output: MandateOutput }
 ): Promise<boolean> {
-  const fillId = fillIdPda(args.orderId, getOutputHash(args.output));
-  return accountExistsOwnedBy(reads, fillId.toBase58(), OUTPUT_SETTLER_SIMPLE_PROGRAM_ID);
+  return (await readFillRecord(reads, args)) !== null;
 }
 
 /**
@@ -74,7 +98,8 @@ export async function readIsLocallyAttested(
     output: args.output
   });
   const pda = localAttestationPda(outputSettlerSimplePda(), args.output.oracle, dataHash);
-  return accountExistsOwnedBy(reads, pda.toBase58(), INTENTS_PROTOCOL_PROGRAM_ID);
+  const info = await reads.getAccountInfo(pda.toBase58());
+  return info?.owner === INTENTS_PROTOCOL_PROGRAM_ID && !decodeLocalAttestation(info).consumed;
 }
 
 /**
@@ -122,10 +147,8 @@ export async function readIsOrderOpen(
  * open and never closed — so "context gone, consumed_order still there" is the
  * only available signal, and it means *terminal*, not specifically *claimed*.
  *
- * That matches how the app already treats EVM and Tron, where Claimed and
- * Refunded are folded into one state (flowProgress.ts, Finalise.svelte).
- * Telling them apart would mean scanning FinalisedEvent vs RefundedEvent, and
- * would need doing on all three chain types to be worth anything.
+ * Callers use this to block duplicate claims. They must verify a FinalisedEvent
+ * separately before reporting a successful settlement.
  */
 export async function readIsOrderFinalised(
   reads: SolanaConnectionLike,

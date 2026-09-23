@@ -478,6 +478,15 @@ export async function getSolanaSigner(chainId: number | bigint): Promise<SolanaS
         );
       }
 
+      // Reuse the confirmed read-back receipt; storage failure cannot undo the send.
+      try {
+        const store = (await import("$lib/state.svelte")).default;
+        store.transactionReceipts[`${chainId}:${signature}`] = JSON.stringify(tx);
+        await store.saveTransactionReceipt(chainId, signature, tx);
+      } catch (error) {
+        console.warn("Could not persist Solana receipt", error);
+      }
+
       return signature;
     }
   };

@@ -37,9 +37,7 @@ import { readPolymerProverId } from "$lib/solana/reads";
 import type { SolanaDeps } from "$lib/solana/types";
 import { atomicFillProblem } from "$lib/solana/order";
 import {
-  rememberSolanaFill,
   persistFillBeforeCleanup,
-  solanaTransaction,
   solanaOrderSettled,
   invalidateSolanaProgress
 } from "./solanaHistory";
@@ -238,7 +236,7 @@ export class Solver {
                 fillDeadline: Number(order.fillDeadline),
                 solverBytes32: addressToBytes32(solverAddress)
               });
-        await Promise.all(outputs.map((output) => rememberSolanaFill(orderId, output, signature)));
+        invalidateSolanaProgress();
         if (postHook) await postHook();
         return signature;
       }
@@ -327,7 +325,6 @@ export class Solver {
       orderId,
       output
     });
-    await solanaTransaction(output.chainId, signature);
     invalidateSolanaProgress();
     return signature;
   }
@@ -766,7 +763,6 @@ export class Solver {
           solveParams,
           destinationBytes32: addressToBytes32(account())
         });
-        await solanaTransaction(sourceChainId, signature);
         invalidateSolanaProgress();
         if (postHook) await postHook();
         return signature;

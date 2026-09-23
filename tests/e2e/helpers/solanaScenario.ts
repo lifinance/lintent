@@ -39,12 +39,13 @@ import type { SolanaTransactionLike } from "$lib/solana/types";
 let signed = 0;
 let simulated = 0;
 const submissions: string[][] = [];
+const transactionReads: Record<string, number> = {};
 let clock = Math.floor(Date.now() / 1000);
 let simulationFailure = false;
 let currentOrder: StandardSolana;
 
 export function inspectScenario() {
-  return { signed, simulated, submissions };
+  return { signed, simulated, submissions, transactionReads };
 }
 export function makeRentReclaimable() {
   clock = currentOrder.fillDeadline + 172801;
@@ -60,7 +61,12 @@ export function receiptStorageAvailable(available: boolean) {
 }
 
 export async function installScenario(
-  options: { simulationFailure?: boolean; restore?: boolean; noPreset?: boolean } = {}
+  options: {
+    simulationFailure?: boolean;
+    restore?: boolean;
+    noPreset?: boolean;
+    singleReceiptRead?: boolean;
+  } = {}
 ) {
   simulationFailure = !!options.simulationFailure;
   const wallet = Keypair.fromSeed(new Uint8Array(32).fill(1));
@@ -142,7 +148,12 @@ export async function installScenario(
   };
   reads.getMultipleAccountsInfo = async (addresses) =>
     Promise.all(addresses.map((a) => reads.getAccountInfo(a)));
-  reads.getTransaction = async (signature) => receipts.get(signature) ?? null;
+  reads.getTransaction = async (signature) => {
+    transactionReads[signature] = (transactionReads[signature] ?? 0) + 1;
+    if (options.singleReceiptRead && transactionReads[signature] > 1)
+      throw new Error("RPC history unavailable after confirmation");
+    return receipts.get(signature) ?? null;
+  };
 
   Connection.prototype.getLatestBlockhash = async () => ({
     blockhash: mint.toBase58(),
@@ -242,5 +253,5 @@ export async function installScenario(
   } as OrderContainer;
   if (!options.noPreset && !options.restore) await store.saveOrderToDb(orderContainer);
   localStorage.setItem("solana-test-order", JSON.stringify(order));
-  return { id, user };
+  return { id, user, orderContainer };
 }

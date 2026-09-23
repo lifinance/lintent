@@ -24,18 +24,12 @@ export async function solanaTransaction(
     `solana-tx:${chainId}:${signature}`,
     async () => {
       const store = await receiptStore();
-      let tx: SolanaTransactionLike;
-      try {
-        tx = await (
-          await getSolanaReads(chainId)
-        ).getTransaction(signature, { commitment: "confirmed" });
-      } catch (error) {
-        const saved = store.getSolanaTransactionReceipt(chainId, signature);
-        if (saved) return saved;
-        throw error;
-      }
+      const saved = store.getSolanaTransactionReceipt(chainId, signature);
+      if (saved) return saved;
+      const tx = await (
+        await getSolanaReads(chainId)
+      ).getTransaction(signature, { commitment: "confirmed" });
       if (tx?.meta?.err) throw new Error(`Solana transaction ${signature} failed`);
-      if (!tx) tx = store.getSolanaTransactionReceipt(chainId, signature) ?? null;
       if (!successfulSolanaTransaction(tx))
         throw new Error(
           `Solana transaction ${signature} is not confirmed or its logs are unavailable`
@@ -81,8 +75,12 @@ export async function solanaOrderSettled(
     order.outputs.length === 1 &&
     BigInt(order.outputs[0].chainId) === BigInt(order.originChainId)
   ) {
-    const tx = await solanaTransaction(order.originChainId, fillSignature);
-    if (verifiedAtomicSettlement(tx, orderId, order.outputs[0])) return true;
+    try {
+      const tx = await solanaTransaction(order.originChainId, fillSignature);
+      if (verifiedAtomicSettlement(tx, orderId, order.outputs[0])) return true;
+    } catch {
+      // A stale or unavailable fill signature must not hide stored settlement evidence.
+    }
   }
   const store = await receiptStore();
   for (const [key, value] of Object.entries(store.transactionReceipts)) {

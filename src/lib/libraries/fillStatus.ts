@@ -27,7 +27,11 @@ export async function isOutputFilled(
   if (isSolanaChain(output.chainId)) {
     // A closed FillRecord is not proof that a fill never happened. Verified
     // transaction logs survive rent reclamation, including after a reload.
-    if (await solanaFillEvidence(orderId, output, fillSignature)) return true;
+    const fill = await solanaFillEvidence(orderId, output, fillSignature).catch(() =>
+      // Saved signatures are hints: another order can have the same output.
+      solanaFillEvidence(orderId, output)
+    );
+    if (fill) return true;
     const reads = await getSolanaReads(output.chainId);
     return readIsSolanaOutputFilled(reads, { orderId, output });
   }

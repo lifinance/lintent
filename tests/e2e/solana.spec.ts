@@ -1,8 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { StandardSolana } from "@lifi/intent";
 
 async function setup(
   page: Page,
-  options: { simulationFailure?: boolean; restore?: boolean; noPreset?: boolean } = {}
+  options: {
+    simulationFailure?: boolean;
+    restore?: boolean;
+    noPreset?: boolean;
+    singleReceiptRead?: boolean;
+  } = {}
 ) {
   await page.route("**/quote/request", (route) => route.fulfill({ json: { quotes: [] } }));
   await page.routeWebSocket(/^wss?:\/\/(?!127\.0\.0\.1[:/]|localhost[:/])/, (socket) =>
@@ -108,6 +114,109 @@ test("ordinary filling keeps a separate claim step", async ({ page }) => {
     )
   ).toEqual([["fill"], ["finalise"]]);
 });
+
+test("stale fill signatures fall back to live accounts and matching saved receipts", async ({
+  page
+}) => {
+  const { orderContainer } = await setup(page);
+  const result = await page.evaluate(async (container) => {
+    const { default: store } = await import("/src/lib/state.svelte.ts");
+    const { getSolanaReads } = await import("/src/lib/solana/client.ts");
+    const { isOutputFilled } = await import("/src/lib/libraries/fillStatus.ts");
+    const { solanaOrderSettled, rememberSolanaFill } = await import(
+      "/src/lib/libraries/solanaHistory.ts"
+    );
+    const { solanaOrderId } = await import("/src/lib/solana/order.ts");
+    const { fillReceipt } = await import("/tests/fixtures/solana/transactions.ts");
+    const { fillRecordData } = await import("/tests/fixtures/solana/accounts.ts");
+    const { bytes32ToPubkey } = await import("/src/lib/solana/pda.ts");
+    const { OUTPUT_SETTLER_SIMPLE_PROGRAM_ID } = await import("/src/lib/idl/index.ts");
+    const order = container.order as StandardSolana;
+    const id = solanaOrderId(order);
+    const output = order.outputs[0];
+    const reads = await getSolanaReads(output.chainId);
+    const previous = fillReceipt(
+      { ...order, nonce: order.nonce + 1n },
+      order.user,
+      order.fillDeadline - 1
+    );
+    reads.getTransaction = async (signature) => {
+      if (signature === "unrelated") return previous;
+      if (signature === "failed") return { ...previous, meta: { err: "failed", logMessages: [] } };
+      if (signature === "unavailable") throw new Error("RPC history unavailable");
+      return null;
+    };
+    const hints = ["unrelated", "failed", "unavailable", "missing"];
+    const unfilled = await Promise.all(hints.map((hint) => isOutputFilled(id, output, hint)));
+    const unsettled = await Promise.all(hints.map((hint) => solanaOrderSettled(container, hint)));
+    const getAccountInfo = reads.getAccountInfo;
+    reads.getAccountInfo = async () => ({
+      owner: OUTPUT_SETTLER_SIMPLE_PROGRAM_ID,
+      data: fillRecordData(bytes32ToPubkey(order.user).toBase58()),
+      lamports: 1_000_000
+    });
+    const filled = await Promise.all(hints.map((hint) => isOutputFilled(id, output, hint)));
+    reads.getAccountInfo = getAccountInfo;
+    await store.saveTransactionReceipt(
+      output.chainId,
+      "matching",
+      fillReceipt(order, order.user, order.fillDeadline - 1)
+    );
+    const recovered = await Promise.all(hints.map((hint) => isOutputFilled(id, output, hint)));
+    const settled = await Promise.all(hints.map((hint) => solanaOrderSettled(container, hint)));
+    const rejectedImports = await Promise.all(
+      hints.map((hint) =>
+        rememberSolanaFill(id, output, hint).then(
+          () => false,
+          () => true
+        )
+      )
+    );
+    return { unfilled, unsettled, filled, recovered, settled, rejectedImports };
+  }, orderContainer);
+  expect(result).toEqual({
+    unfilled: [false, false, false, false],
+    unsettled: [false, false, false, false],
+    filled: [true, true, true, true],
+    recovered: [true, true, true, true],
+    settled: [true, true, true, true],
+    rejectedImports: [true, true, true, true]
+  });
+});
+
+for (const mode of ["atomic", "ordinary"]) {
+  test(`${mode} completion reuses confirmation receipts when storage and further RPC reads fail`, async ({
+    page
+  }) => {
+    const { id, orderContainer } = await setup(page, { singleReceiptRead: true });
+    await select(page, id);
+    await page.getByLabel("Fill method").selectOption(mode);
+    await page.evaluate(async () =>
+      (await import("/tests/e2e/helpers/solanaScenario.ts")).receiptStorageAvailable(false)
+    );
+    await page
+      .getByRole("button", { name: mode === "atomic" ? "Fill and settle" : "Fill", exact: true })
+      .click();
+    if (mode === "ordinary") await page.getByRole("button", { name: "Claim", exact: true }).click();
+    await expect(page.getByText("Intent fully solved.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    const state = await page.evaluate(async (container) => {
+      const { default: store } = await import("/src/lib/state.svelte.ts");
+      const { getOutputStorageKey } = await import("/src/lib/libraries/flowProgress.ts");
+      const { inspectScenario } = await import("/tests/e2e/helpers/solanaScenario.ts");
+      await store.loadFillTransactionsFromDb();
+      return {
+        ...inspectScenario(),
+        fillSignature: store.fillTransactions[getOutputStorageKey(container.order.outputs[0])]
+      };
+    }, orderContainer);
+    expect(state.fillSignature).toBeTruthy();
+    expect(state.submissions).toEqual(
+      mode === "atomic" ? [["finalise_with_prefill", "fill_samechain"]] : [["fill"], ["finalise"]]
+    );
+    expect(Object.values(state.transactionReads)).toEqual(mode === "atomic" ? [1] : [1, 1]);
+  });
+}
 
 test("failed simulation never requests a wallet signature or reports completion", async ({
   page

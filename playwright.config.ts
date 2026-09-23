@@ -23,7 +23,7 @@ export default defineConfig({
     }
   ],
   webServer: {
-    command: "bunx vite dev --force --host 127.0.0.1 --port 4173",
+    command: "bunx vite dev --mode test --force --host 127.0.0.1 --port 4173",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000

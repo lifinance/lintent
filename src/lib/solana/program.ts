@@ -22,7 +22,7 @@ import type {
 
 /** Anchor's builder, narrowed to the parts the adapter touches. */
 type AnchorBuilder = {
-  accounts(accounts: Record<string, unknown>): AnchorBuilder;
+  accountsStrict(accounts: Record<string, unknown>): AnchorBuilder;
   remainingAccounts(accounts: unknown[]): AnchorBuilder;
   instruction(): Promise<{
     programId: { toBase58(): string };
@@ -45,7 +45,7 @@ function adaptBuilder(
       const mapped = Object.fromEntries(
         Object.entries(accounts).map(([name, address]) => [name, toPublicKey(address)])
       );
-      return adaptBuilder(builder.accounts(mapped), toPublicKey);
+      return adaptBuilder(builder.accountsStrict(mapped), toPublicKey);
     },
     remainingAccounts(accounts) {
       const mapped = accounts.map((account) => ({
@@ -72,7 +72,7 @@ function adaptBuilder(
   };
 }
 
-function adaptProgram(
+export function adaptProgram(
   program: AnchorProgram,
   toPublicKey: (address: string) => unknown
 ): SolanaProgramLike {

@@ -52,6 +52,7 @@ import { readSolBalance, readSplBalance } from "$lib/solana/reads";
 import { maxUint256 } from "viem";
 import { isSolanaChain, isTronChain } from "./utils/chainType";
 import type { TxRef } from "./utils/txRef";
+import { successfulSolanaTransaction } from "./solana/history";
 
 function generateUUID(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -189,10 +190,10 @@ class Store {
     this.transactionReceipts = loaded;
   }
 
-  async saveTransactionReceipt(chainId: number | bigint, txHash: `0x${string}`, receipt: unknown) {
+  async saveTransactionReceipt(chainId: number | bigint, txHash: TxRef, receipt: unknown) {
     if (!browser) return;
     if (!db) await initDb();
-    if (!db) return;
+    if (!db) throw new Error("Local receipt storage is unavailable");
     const chainIdNumber = Number(chainId);
     const serializedReceipt = JSON.stringify(receipt, (_key, value) =>
       typeof value === "bigint" ? value.toString() : value
@@ -239,6 +240,17 @@ class Store {
         txHash,
         error
       });
+      return undefined;
+    }
+  }
+
+  getSolanaTransactionReceipt(chainId: number | bigint, txHash: TxRef) {
+    const serialized = this.transactionReceipts[`${Number(chainId)}:${txHash}`];
+    if (!serialized) return undefined;
+    try {
+      const receipt: unknown = JSON.parse(serialized);
+      return successfulSolanaTransaction(receipt) ? receipt : undefined;
+    } catch {
       return undefined;
     }
   }

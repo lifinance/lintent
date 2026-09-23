@@ -8,7 +8,14 @@
 
 import { getOutputHash } from "@lifi/intent";
 import type { MandateOutput, StandardSolana } from "@lifi/intent";
-import { INTENTS_PROTOCOL_PROGRAM_ID, POLYMER_PROGRAM_ID } from "$lib/idl";
+import {
+  INPUT_SETTLER_ESCROW_PROGRAM_ID,
+  INTENTS_PROTOCOL_PROGRAM_ID,
+  POLYMER_PROGRAM_ID
+} from "$lib/idl";
+import { decodeOrderContext, decodeLocalAttestation } from "./accounts";
+import { compactSamechainOrder, solanaOrderId, validateSolanaOrder } from "./order";
+import { readFillRecord, readChainTimestamp } from "./reads";
 import { assertSolanaCluster } from "./client";
 import {
   assertSolanaAmountFitsU64,
@@ -30,11 +37,17 @@ import {
   fillIdPda,
   inputSettlerEscrowPda,
   localAttestationPda,
+  localConsumerPda,
   orderContextPda,
   outputSettlerSimplePda,
   polymerOraclePda
 } from "./pda";
-import type { SolanaConnectionLike, SolanaDeps, SolanaInstructionLike } from "./types";
+import type {
+  SolanaAccountMeta,
+  SolanaConnectionLike,
+  SolanaDeps,
+  SolanaInstructionLike
+} from "./types";
 
 /** `receive_attest` verifies a proof by CPI and needs well above the 200k default. */
 const RECEIVE_ATTEST_COMPUTE_UNITS = 1_000_000;
@@ -169,6 +182,13 @@ export async function openEscrow(
   await assertSolanaCluster(deps.chainId, deps.reads);
   const c = await codecs();
   const { order, orderId } = args;
+  validateSolanaOrder(order, order.user);
+  if (solanaOrderId(order).toLowerCase() !== orderId.toLowerCase())
+    throw new Error("Solana order ID does not match its canonical order");
+  if (BigInt(order.originChainId) !== deps.chainId)
+    throw new Error("Order origin does not match the Solana cluster");
+  if (order.fillDeadline < (await readChainTimestamp(deps.reads)))
+    throw new Error("The order fill deadline has passed");
 
   const [input] = order.inputs;
   if (!input) throw new Error("A Solana order must have exactly one input");
@@ -303,7 +323,7 @@ async function buildFillInstruction(
     filler: deps.signer.publicKey,
     recipient,
     outputSettlerSimple: settlerPda,
-    fillId: fillId.toBase58(),
+    fillRecord: fillId.toBase58(),
     localAttestation: localAttestation.toBase58(),
     intentsProtocolProgram: INTENTS_PROTOCOL_PROGRAM_ID,
     systemProgram: SYSTEM_PROGRAM_ID
@@ -388,9 +408,7 @@ export async function submitFillProof(
       Buffer.from(payload.replace(/^0x/, ""), "hex")
     ])
     .accounts({
-      submitter: deps.signer.publicKey,
-      oraclePolymer: polymerOraclePda().toBase58(),
-      intentsProtocolProgram: INTENTS_PROTOCOL_PROGRAM_ID
+      oraclePolymer: polymerOraclePda().toBase58()
     })
     .remainingAccounts([
       { pubkey: localAttestation.toBase58(), isSigner: false, isWritable: false }
@@ -507,6 +525,8 @@ export async function finalise(
 
   const first = solveParams[0];
   if (!first) throw new Error("finalise requires at least one solve param");
+  if (solveParams.length !== order.outputs.length)
+    throw new Error("finalise requires exactly one solve param per output");
 
   // The program requires solve_params[0].solver to sign. Check before building
   // the transaction so the wrong wallet gets a sentence, not a program error.
@@ -525,6 +545,7 @@ export async function finalise(
   if (!contextInfo) {
     throw new Error(`Order ${orderId} has no open escrow on Solana; it may already be settled`);
   }
+  const context = decodeOrderContext(contextInfo);
 
   const [input] = order.inputs;
   if (!input) throw new Error("A Solana order must have exactly one input");
@@ -533,7 +554,9 @@ export async function finalise(
   const destination = bytes32ToPubkey(destinationBytes32).toBase58();
   const user = bytes32ToPubkey(order.user as `0x${string}`).toBase58();
 
-  const remaining = order.outputs.map((output, index) => {
+  const attestations: SolanaAccountMeta[] = [];
+  const refunds: SolanaAccountMeta[] = [];
+  for (const [index, output] of order.outputs.entries()) {
     const params = solveParams[index] ?? first;
     // Compared as bigints, not with `===`: a container reloaded from the local
     // DB carries these as decimal strings (see `toBytes32`), and a string/bigint
@@ -558,8 +581,20 @@ export async function finalise(
             output
           })
         );
-    return { pubkey: pubkey.toBase58(), isSigner: false, isWritable: false };
-  });
+    const consumedHere =
+      sameChain && bytes32ToPubkey(output.oracle).toBase58() === INPUT_SETTLER_ESCROW_PROGRAM_ID;
+    let refund = SYSTEM_PROGRAM_ID;
+    if (sameChain) {
+      const attestation = decodeLocalAttestation(
+        await deps.reads.getAccountInfo(pubkey.toBase58())
+      );
+      if (attestation.consumed || attestation.timestamp !== params.timestamp)
+        throw new Error("Local attestation is consumed or has a different fill timestamp");
+      if (consumedHere) refund = attestation.rentRefund;
+    }
+    attestations.push({ pubkey: pubkey.toBase58(), isSigner: false, isWritable: consumedHere });
+    refunds.push({ pubkey: refund, isSigner: false, isWritable: consumedHere });
+  }
 
   const instruction = await deps.programs.inputSettlerEscrow.methods
     .finalise(
@@ -573,7 +608,7 @@ export async function finalise(
       solver: deps.signer.publicKey,
       inputSettlerEscrow: inputSettlerEscrowPda().toBase58(),
       user,
-      sponsor: readSponsor(contextInfo.data, user),
+      sponsor: context.sponsor,
       destination,
       destinationTokenAccount: associatedTokenAddress(
         mint.toBase58(),
@@ -588,36 +623,137 @@ export async function finalise(
       ).toBase58(),
       mint: mint.toBase58(),
       intentsProtocolProgram: INTENTS_PROTOCOL_PROGRAM_ID,
+      localConsumer: localConsumerPda(INPUT_SETTLER_ESCROW_PROGRAM_ID).toBase58(),
       tokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SYSTEM_PROGRAM_ID
     })
-    .remainingAccounts(remaining)
+    .remainingAccounts([...attestations, ...refunds])
     .instruction();
 
   return deps.signer.signAndSend([instruction]);
 }
 
-/**
- * Reads `sponsor` out of a raw OrderContext account.
- *
- * Layout (input_settler_escrow/src/state/input_settler_escrow.rs):
- *   discriminator[8] | input_token: Pubkey | user: Pubkey | sponsor: Pubkey | bump
- * so `sponsor` starts at byte 72, NOT immediately after the discriminator.
- *
- * The sponsor is whoever paid the rent at open — often but not always the
- * user — and `finalise` refunds the closed account to it under a
- * `has_one = sponsor` constraint, so reading the wrong offset makes every
- * claim fail. Decoded by hand rather than through the Anchor account coder so
- * this stays on the DI seam and tests can supply plain bytes.
- */
-const ORDER_CONTEXT_SPONSOR_OFFSET = 8 + 32 + 32;
+/** Compact fills are deliberately private to this atomic builder. */
+export async function fillAndSettle(
+  deps: SolanaDeps,
+  args: { order: StandardSolana; orderId: `0x${string}`; solverBytes32: `0x${string}` }
+): Promise<string> {
+  await assertSolanaCluster(deps.chainId, deps.reads);
+  const { order, orderId, solverBytes32 } = args;
+  const compact = compactSamechainOrder(order, solverBytes32);
+  if (BigInt(order.originChainId) !== deps.chainId)
+    throw new Error("Order origin does not match the Solana cluster");
+  if (solanaOrderId(order).toLowerCase() !== orderId.toLowerCase())
+    throw new Error("Solana order ID does not match the expanded compact order");
+  if (bytes32ToPubkey(solverBytes32).toBase58() !== deps.signer.publicKey)
+    throw new Error(
+      "Atomic settlement must be signed by the recorded solver. Connect that wallet or use ordinary filling."
+    );
+  const now = await readChainTimestamp(deps.reads);
+  if (order.fillDeadline < now) throw new Error("The order fill deadline has passed");
+  const exclusive = compact.context.exclusiveFor;
+  if (exclusive && now < exclusive.startTime)
+    throw new Error("This order is still exclusive to another solver");
+  const c = await codecs();
+  const output = order.outputs[0];
+  const orderContext = orderContextPda(orderId).toBase58();
+  const context = decodeOrderContext(await deps.reads.getAccountInfo(orderContext));
+  const user = bytes32ToPubkey(order.user).toBase58();
+  const mint = bytes32ToPubkey(toBytes32(order.inputs[0][0])).toBase58();
+  if (context.user !== user || context.inputToken !== mint)
+    throw new Error("Escrow does not match the order user and input mint");
+  const tokenProgram = await tokenProgramForMint(deps.reads, mint);
+  const solver = deps.signer.publicKey;
+  const release = await deps.programs.inputSettlerEscrow.methods
+    .finaliseWithPrefill(bytes32Array(orderId))
+    .accounts({
+      solver,
+      inputSettlerEscrow: inputSettlerEscrowPda().toBase58(),
+      user,
+      sponsor: context.sponsor,
+      destination: solver,
+      destinationTokenAccount: associatedTokenAddress(mint, solver, tokenProgram).toBase58(),
+      orderContext,
+      orderPdaTokenAccount: associatedTokenAddress(mint, orderContext, tokenProgram).toBase58(),
+      mint,
+      instructionsSysvar: "Sysvar1nstructions1111111111111111111111111",
+      tokenProgram,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SYSTEM_PROGRAM_ID
+    })
+    .instruction();
+  const fillArgs = {
+    orderId: bytes32Array(orderId),
+    order: {
+      ...compact,
+      nonce: new c.BN(compact.nonce.toString()),
+      inputAmount: new c.BN(compact.inputAmount.toString()),
+      outputAmount: new c.BN(compact.outputAmount.toString()),
+      context: exclusive
+        ? { exclusiveFor: { ...exclusive, exclusiveFor: bytes32Array(exclusive.exclusiveFor) } }
+        : compact.context
+    }
+  };
+  const recipient = bytes32ToPubkey(output.recipient).toBase58();
+  const common = {
+    filler: solver,
+    recipient,
+    outputSettlerSimple: outputSettlerSimplePda().toBase58(),
+    fillRecord: fillIdPda(orderId, getOutputHash(output)).toBase58(),
+    systemProgram: SYSTEM_PROGRAM_ID
+  };
+  let fill: SolanaInstructionLike;
+  if (isNativeSolanaOutput(output)) {
+    fill = await deps.programs.outputSettlerSimple.methods
+      .nativeFillSamechain(fillArgs)
+      .accounts(common)
+      .instruction();
+  } else {
+    const outputMint = bytes32ToPubkey(output.token).toBase58();
+    const outputTokenProgram = await tokenProgramForMint(deps.reads, outputMint);
+    fill = await deps.programs.outputSettlerSimple.methods
+      .fillSamechain(fillArgs)
+      .accounts({
+        ...common,
+        fillerTokenAccount: associatedTokenAddress(
+          outputMint,
+          solver,
+          outputTokenProgram
+        ).toBase58(),
+        recipientTokenAccount: associatedTokenAddress(
+          outputMint,
+          recipient,
+          outputTokenProgram
+        ).toBase58(),
+        mint: outputMint,
+        tokenProgram: outputTokenProgram,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID
+      })
+      .instruction();
+  }
+  return deps.signer.signAndSend([release, fill], { computeUnitLimit: 400_000 });
+}
 
-function readSponsor(data: Uint8Array, fallback: string): string {
-  const end = ORDER_CONTEXT_SPONSOR_OFFSET + 32;
-  if (data.length < end) return fallback;
-  const bytes = data.subarray(ORDER_CONTEXT_SPONSOR_OFFSET, end);
-  let hex = "0x";
-  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
-  return bytes32ToPubkey(hex as `0x${string}`).toBase58();
+export async function closeFillRecord(
+  deps: SolanaDeps,
+  args: { orderId: `0x${string}`; output: MandateOutput }
+): Promise<string> {
+  await assertSolanaCluster(deps.chainId, deps.reads);
+  if (BigInt(args.output.chainId) !== deps.chainId)
+    throw new Error("Fill record belongs to another chain");
+  const record = await readFillRecord(deps.reads, args);
+  if (!record) throw new Error("Fill record is already closed or does not exist");
+  if (BigInt(await readChainTimestamp(deps.reads)) <= record.closeAfter)
+    throw new Error("Fill record rent is not reclaimable yet");
+  const hash = getOutputHash(args.output);
+  const instruction = await deps.programs.outputSettlerSimple.methods
+    .closeFillRecord(bytes32Array(args.orderId), bytes32Array(hash))
+    .accounts({
+      payer: deps.signer.publicKey,
+      fillRecord: fillIdPda(args.orderId, hash).toBase58(),
+      rentRefund: record.rentRefund
+    })
+    .instruction();
+  return deps.signer.signAndSend([instruction]);
 }

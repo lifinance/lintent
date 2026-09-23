@@ -138,6 +138,10 @@ tests/
 
 ## Testing
 
+See [Solana pipeline integration](docs/solana-pipeline.md) for issuing Solana
+escrows, atomic and ordinary fills, receipt recovery, rent reclamation, and
+contract-version rollout checks.
+
 - `bun run test:unit` runs library and unit tests with coverage
 - `bun run test:e2e` runs Playwright browser tests (requires `bunx playwright install chromium`)
 - `bun run test:all` runs both suites

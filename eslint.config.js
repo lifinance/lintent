@@ -10,6 +10,7 @@ import svelteConfig from "./svelte.config.js";
 const gitignorePath = fileURLToPath(new URL("./.gitignore", import.meta.url));
 
 export default ts.config(
+  { ignores: ["src/lib/idl/types/**"] },
   includeIgnoreFile(gitignorePath),
   js.configs.recommended,
   ...ts.configs.recommended,

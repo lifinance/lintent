@@ -19,6 +19,7 @@ export const SOLANA_PDA_SEEDS = {
   chainId: "chain_id",
   chainMapping: "chain_mapping",
   localAttestation: "local_attestation",
+  localConsumer: "local_consumer",
   attestation: "attestation",
   inputSettlerEscrow: "input_settler_escrow",
   orderContext: "order_context",
@@ -143,6 +144,10 @@ export function consumedOrderPda(
   programId: string = INPUT_SETTLER_ESCROW_PROGRAM_ID
 ): PublicKey {
   return derive([SOLANA_PDA_SEEDS.consumedOrder, bytes32Seed(orderId, "orderId")], programId);
+}
+
+export function localConsumerPda(programId: string): PublicKey {
+  return derive([SOLANA_PDA_SEEDS.localConsumer], programId);
 }
 
 /**

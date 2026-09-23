@@ -15,14 +15,19 @@ import { getSolanaReads } from "$lib/solana/client";
 import { readIsOutputFilled as readIsSolanaOutputFilled } from "$lib/solana/reads";
 import { getTronReads } from "$lib/tron/client";
 import { readIsOutputFilled as readIsTronOutputFilled } from "$lib/tron/reads";
+import { solanaFillEvidence } from "./solanaHistory";
 
 export async function isOutputFilled(
   orderId: `0x${string}`,
-  output: MandateOutput
+  output: MandateOutput,
+  fillSignature?: string
 ): Promise<boolean> {
   const outputHash = getOutputHash(output);
 
   if (isSolanaChain(output.chainId)) {
+    // A closed FillRecord is not proof that a fill never happened. Verified
+    // transaction logs survive rent reclamation, including after a reload.
+    if (await solanaFillEvidence(orderId, output, fillSignature)) return true;
     const reads = await getSolanaReads(output.chainId);
     return readIsSolanaOutputFilled(reads, { orderId, output });
   }

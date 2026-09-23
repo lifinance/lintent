@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { SOLANA_MAINNET_CHAIN_ID, solanaBase58ToBytes32 } from "@lifi/intent";
+import { inputTokenAddress } from "../../src/lib/utils/address";
 import {
   buildBaseIntentRow,
   EXPIRING_THRESHOLD_SECONDS,
@@ -54,6 +56,22 @@ const baseRow: BaseIntentRow = {
 };
 
 describe("intentList timing and formatting", () => {
+  it("keeps all 32 bytes of a Solana input mint for token metadata", () => {
+    const mint = solanaBase58ToBytes32("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+    expect(inputTokenAddress(BigInt(mint), SOLANA_MAINNET_CHAIN_ID)).toBe(mint);
+    const row = buildBaseIntentRow({
+      ...baseRow.orderContainer,
+      order: {
+        ...baseRow.orderContainer.order,
+        user: mint,
+        originChainId: SOLANA_MAINNET_CHAIN_ID,
+        inputs: [[BigInt(mint), 1_000_000n]]
+      }
+    });
+    expect(row.inputChips[0].text).toBe("1.0000 USDC on solana");
+    expect(inputTokenAddress(BigInt(mint), 8453).toLowerCase()).toBe(`0x${mint.slice(-40)}`);
+  });
+
   it("marks expired rows", () => {
     const row = withTiming(baseRow, baseRow.fillDeadline + 1);
     expect(row.status).toBe("expired");

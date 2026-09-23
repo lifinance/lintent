@@ -29,6 +29,7 @@ import {
 } from "../../src/lib/solana/reads";
 import type { SolanaAccountInfoLike, SolanaConnectionLike } from "../../src/lib/solana/types";
 import { PublicKey } from "@solana/web3.js";
+import { fillRecordData, localAttestationData } from "../fixtures/solana/accounts";
 
 const b32 = (nibble: string) => `0x${nibble.repeat(64)}` as `0x${string}`;
 const ORDER_ID = b32("6");
@@ -97,7 +98,9 @@ describe("readIsOutputFilled", () => {
   const fillId = fillIdPda(ORDER_ID, getOutputHash(output)).toBase58();
 
   test("true when the FillId account is owned by the output settler", () => {
-    const { reads } = makeReads({ [fillId]: { owner: OUTPUT_SETTLER_SIMPLE_PROGRAM_ID } });
+    const { reads } = makeReads({
+      [fillId]: { owner: OUTPUT_SETTLER_SIMPLE_PROGRAM_ID, data: fillRecordData(SYSTEM_PROGRAM) }
+    });
     return expect(readIsOutputFilled(reads, { orderId: ORDER_ID, output })).resolves.toBe(true);
   });
 
@@ -126,7 +129,9 @@ describe("readIsLocallyAttested", () => {
   const pda = localAttestationPda(outputSettlerSimplePda(), output.oracle, dataHash).toBase58();
 
   test("true when the protocol owns the LocalAttestation account", async () => {
-    const { reads } = makeReads({ [pda]: { owner: INTENTS_PROTOCOL_PROGRAM_ID } });
+    const { reads } = makeReads({
+      [pda]: { owner: INTENTS_PROTOCOL_PROGRAM_ID, data: localAttestationData(SYSTEM_PROGRAM) }
+    });
     expect(await readIsLocallyAttested(reads, { orderId: ORDER_ID, output, solver: SOLVER })).toBe(
       true
     );

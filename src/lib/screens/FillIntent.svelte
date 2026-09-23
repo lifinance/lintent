@@ -11,10 +11,12 @@
   import { containerToIntent } from "$lib/utils/intent";
   import { compactTypes } from "@lifi/intent";
   import { hashStruct } from "viem";
-  import { isTronBase58Address } from "$lib/utils/chainType";
+  import { getChainType, isSolanaChain } from "$lib/utils/chainType";
   import { isValidTxRef, normalizeTxRef, txRefError, txRefPlaceholder } from "$lib/utils/txRef";
   import { isOutputFilled } from "$lib/libraries/fillStatus";
-  import { tronBase58ToHex } from "@lifi/intent";
+  import { resolveAddressForChainType } from "$lib/utils/address";
+  import { atomicFillProblem } from "$lib/solana/order";
+  import { rememberSolanaFill, solanaOrderSettled } from "$lib/libraries/solanaHistory";
 
   let {
     scroll,
@@ -45,13 +47,20 @@
   let manualFillTxSaved = $state<Record<string, boolean>>({});
   let manualFillTxErrors = $state<Record<string, string>>({});
   let solverOverride = $state("");
+  let fillError = $state("");
+  let selectedMode = $state<"atomic" | "ordinary">("atomic");
+  const atomicProblem = $derived(atomicFillProblem(orderContainer));
+  const atomicMode = $derived(!atomicProblem && selectedMode === "atomic");
+  const solanaOrigin = $derived(
+    "originChainId" in orderContainer.order && isSolanaChain(orderContainer.order.originChainId)
+  );
   const parsedSolver = $derived.by((): `0x${string}` | undefined => {
     const trimmed = solverOverride.trim();
     if (!trimmed) return undefined;
-    if (/^0x[0-9a-fA-F]{40}$/.test(trimmed)) return trimmed as `0x${string}`;
-    if (isTronBase58Address(trimmed)) return tronBase58ToHex(trimmed);
-    if (/^41[0-9a-fA-F]{40}$/.test(trimmed)) return `0x${trimmed.slice(2)}` as `0x${string}`;
-    return undefined;
+    return resolveAddressForChainType(
+      trimmed,
+      getChainType(containerToIntent(orderContainer).inputChains()[0])
+    );
   });
   const solverGetter = $derived(parsedSolver ? () => parsedSolver : undefined);
   // The recorded solver must be an identity that can finalise on the SOURCE
@@ -109,6 +118,12 @@
     manualFillTxErrors[key] = "";
     try {
       const normalizedHash = normalizeTxRef(txHash, output.chainId);
+      if (isSolanaChain(output.chainId))
+        await rememberSolanaFill(
+          containerToIntent(orderContainer).orderId(),
+          output,
+          normalizedHash
+        );
       store.fillTransactions[key] = normalizedHash;
       await store.saveFillTransaction(key, normalizedHash);
       manualFillTxSaved[key] = true;
@@ -129,40 +144,50 @@
     if (autoScrolledOrderId === orderId) return;
 
     const outputs = sortOutputsByChain(orderContainer).flatMap(([, chainOutputs]) => chainOutputs);
+    const signatures = outputs.map((output) => store.fillTransactions[outputKey(output)]);
     if (outputs.length === 0) return;
 
     const currentRun = ++fillRun;
     Promise.all(
       outputs.map(
-        async (output) => [outputKey(output), await isOutputFilled(orderId, output)] as const
+        async (output, index) =>
+          [outputKey(output), await isOutputFilled(orderId, output, signatures[index])] as const
       )
     )
-      .then((entries) => {
+      .then(async (entries) => {
         if (currentRun !== fillRun) return;
         const nextStatuses: Record<string, boolean> = {};
         for (const [key, status] of entries) nextStatuses[key] = status;
         fillStatuses = nextStatuses;
         if (!entries.every(([, filled]) => filled)) return;
         autoScrolledOrderId = orderId;
-        scroll(4)();
+        const settled = await solanaOrderSettled(orderContainer, signatures[0]);
+        if (currentRun === fillRun) scroll(settled ? 5 : 4)();
       })
       .catch((e) => console.warn("auto-scroll fill check failed", e));
   });
 
   const fillWrapper = (outputs: MandateOutput[], func: ReturnType<typeof Solver.fill>) => {
     return async () => {
-      const result = await func();
+      fillError = "";
+      try {
+        if (solverOverride.trim() && !parsedSolver)
+          throw new Error("Enter a valid solver address for the input chain");
+        const result = await func();
 
-      for (const output of outputs) {
-        const outputHash = hashStruct({
-          data: output,
-          types: compactTypes,
-          primaryType: "MandateOutput"
-        });
-        store.fillTransactions[outputHash] = result;
-        store
-          .saveFillTransaction(outputHash, result)
-          .catch((e) => console.warn("saveFillTransaction error", e));
+        for (const output of outputs) {
+          const outputHash = hashStruct({
+            data: output,
+            types: compactTypes,
+            primaryType: "MandateOutput"
+          });
+          store.fillTransactions[outputHash] = result;
+          await store.saveFillTransaction(outputHash, result);
+        }
+        refreshValidation += 1;
+      } catch (error) {
+        fillError = error instanceof Error ? error.message : String(error);
+        throw error;
       }
     };
   };
@@ -173,6 +198,31 @@
   description="Fill each chain once and continue to the right. If you refreshed the page provide your fill tx hash in the input box."
 >
   <div class="space-y-2">
+    {#if fillError}<p role="alert" class="text-xs break-words text-rose-700">{fillError}</p>{/if}
+    {#if solanaOrigin}
+      <SectionCard compact title="Settlement">
+        {#if !atomicProblem}
+          <label class="flex items-center gap-2 text-sm">
+            <span>Fill method</span>
+            <select
+              aria-label="Fill method"
+              class="rounded border border-gray-200 bg-white p-1"
+              bind:value={selectedMode}
+            >
+              <option value="atomic">Fill and settle</option>
+              <option value="ordinary">Fill, then prove and claim</option>
+            </select>
+          </label>
+          <p class="mt-1 text-xs text-gray-600">
+            {atomicMode
+              ? "Release the input and deliver the output in one transaction. Different-token outputs use your existing balance; SOL is still needed for fees and rent."
+              : "Deliver the output first, then claim the input in the later steps."}
+          </p>
+        {:else}
+          <p class="text-xs text-gray-600">{atomicProblem} Use ordinary filling.</p>
+        {/if}
+      </SectionCard>
+    {/if}
     <SectionCard compact title="Solver Address">
       <div class="flex items-center gap-2">
         <input
@@ -258,7 +308,8 @@
                         store.walletClient,
                         {
                           orderContainer,
-                          outputs: chainIdAndOutputs[1]
+                          outputs: chainIdAndOutputs[1],
+                          mode: atomicMode ? "atomic" : "ordinary"
                         },
                         {
                           preHook,
@@ -271,7 +322,11 @@
                   : async () => {}}
               >
                 {#snippet name()}
-                  Fill
+                  {chainStatuses.every(Boolean)
+                    ? "Filled"
+                    : atomicMode
+                      ? "Fill and settle"
+                      : "Fill"}
                 {/snippet}
                 {#snippet awaiting()}
                   Waiting for transaction...

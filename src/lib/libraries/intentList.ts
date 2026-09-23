@@ -7,7 +7,8 @@ import {
   MULTICHAIN_INPUT_SETTLER_ESCROW,
   MULTICHAIN_INPUT_SETTLER_COMPACT
 } from "../config";
-import { bytes32ToAddress, idToToken } from "@lifi/intent";
+import { bytes32ToAddress } from "@lifi/intent";
+import { inputTokenAddress } from "$lib/utils/address";
 import { containerToIntent } from "$lib/utils/intent";
 import type { OrderContainerWithMeta } from "$lib/appTypes";
 import type { OrderContainer, StandardOrder, MultichainOrder } from "@lifi/intent";
@@ -89,7 +90,7 @@ function shortAddress(value: string, start = 6, end = 4) {
 }
 
 function summarizeInput(chainId: bigint, tokenId: bigint, amount: bigint): string {
-  const tokenAddress = idToToken(tokenId);
+  const tokenAddress = inputTokenAddress(tokenId, chainId);
   const chainName = safeChainName(chainId);
   if (!chainName) {
     return `${amount.toString()} ${shortAddress(tokenAddress)} on chain-${chainId.toString()}`;

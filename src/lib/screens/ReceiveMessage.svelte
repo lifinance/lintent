@@ -19,6 +19,7 @@
   import { getSolanaReads } from "$lib/solana/client";
   import { readIsLocallyAttested, readIsProvenOnSolana } from "$lib/solana/reads";
   import { getFillDetails } from "$lib/libraries/fillEvent";
+  import { solanaOrderSettled } from "$lib/libraries/solanaHistory";
   import { getTronReads } from "$lib/tron/client";
   import { readIsProven } from "$lib/tron/reads";
 
@@ -69,6 +70,7 @@
   ) {
     // Validated against the OUTPUT chain: a Solana fill of an EVM-input order
     // is a base58 signature even though `chainId` here is the input chain.
+    if (await solanaOrderSettled(orderContainer, fillTransactionHash)) return true;
     if (!isValidTxRef(fillTransactionHash, output.chainId)) return false;
     const { order } = orderContainer;
     // Solver and timestamp come from the OutputFilled event — the recorded

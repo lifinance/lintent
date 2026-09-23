@@ -4,3 +4,8 @@ pnpm-lock.yaml
 yarn.lock
 bun.lock
 bun.lockb
+
+# Verified upstream bundle: provenance.json pins these bytes.
+src/lib/idl/*.json
+src/lib/idl/types/
+src/lib/idl/README.md

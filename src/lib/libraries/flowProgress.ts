@@ -1,5 +1,6 @@
+import { isOutputFilled } from "./fillStatus";
+import { solanaOrderSettled } from "./solanaHistory";
 import {
-  BYTES32_ZERO,
   COMPACT,
   INPUT_SETTLER_COMPACT_LIFI,
   INPUT_SETTLER_ESCROW_LIFI,
@@ -7,29 +8,22 @@ import {
   MULTICHAIN_INPUT_SETTLER_ESCROW,
   getClient
 } from "$lib/config";
-import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COMPACT_ABI } from "$lib/abi/compact";
 import { hashStruct, keccak256 } from "viem";
 import { compactTypes } from "@lifi/intent";
-import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
-import { bytes32ToAddress } from "@lifi/intent";
+import { encodeMandateOutput } from "@lifi/intent";
 import { containerToIntent } from "$lib/utils/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import { isValidTxRef, type TxRef } from "$lib/utils/txRef";
 import { getSolanaReads } from "$lib/solana/client";
-import {
-  readIsLocallyAttested,
-  readIsOrderFinalised,
-  readIsOutputFilled as readIsSolanaOutputFilled,
-  readIsProvenOnSolana
-} from "$lib/solana/reads";
+import { readIsLocallyAttested, readIsProvenOnSolana } from "$lib/solana/reads";
 import { getFillDetails } from "$lib/libraries/fillEvent";
 import { getTronReads } from "$lib/tron/client";
-import { readIsOutputFilled, readIsProven, readOrderStatus } from "$lib/tron/reads";
+import { readIsProven, readOrderStatus } from "$lib/tron/reads";
 
 const PROGRESS_TTL_MS = 30_000;
 const OrderStatus_Claimed = 2;
@@ -47,40 +41,6 @@ export function getOutputStorageKey(output: MandateOutput) {
     types: compactTypes,
     primaryType: "MandateOutput"
   });
-}
-
-async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
-  const outputKey = getOutputStorageKey(output);
-  const outputHash = getOutputHash(output);
-  if (isSolanaChain(output.chainId)) {
-    return getOrFetchRpc(
-      `progress:filled:${orderId}:${outputKey}`,
-      async () =>
-        readIsSolanaOutputFilled(await getSolanaReads(output.chainId), { orderId, output }),
-      { ttlMs: PROGRESS_TTL_MS }
-    );
-  }
-  if (isTronChain(output.chainId)) {
-    return getOrFetchRpc(
-      `progress:filled:${orderId}:${outputKey}`,
-      async () => readIsOutputFilled(await getTronReads(), output.settler, orderId, outputHash),
-      { ttlMs: PROGRESS_TTL_MS }
-    );
-  }
-  return getOrFetchRpc(
-    `progress:filled:${orderId}:${outputKey}`,
-    async () => {
-      const outputClient = getClient(output.chainId);
-      const result = await outputClient.readContract({
-        address: bytes32ToAddress(output.settler),
-        abi: COIN_FILLER_ABI,
-        functionName: "getFillRecord",
-        args: [orderId, outputHash]
-      });
-      return result !== BYTES32_ZERO;
-    },
-    { ttlMs: PROGRESS_TTL_MS }
-  );
 }
 
 async function isOutputValidatedOnChain(
@@ -167,15 +127,9 @@ async function isInputChainFinalised(chainId: bigint, container: OrderContainer)
   const orderId = intent.orderId();
 
   if (isSolanaChain(chainId)) {
-    // No status enum on Solana: finalise and refund both close order_context,
-    // so "context gone, consumed_order still present" is the terminal signal.
-    // That folds Claimed and Refunded into one state, exactly as the EVM and
-    // Tron branches below already do.
-    return getOrFetchRpc(
-      `progress:finalised:solana:${orderId}`,
-      async () => readIsOrderFinalised(await getSolanaReads(chainId), orderId),
-      { ttlMs: PROGRESS_TTL_MS }
-    );
+    // A missing escrow can also mean refunded. Only a settlement receipt
+    // completes this step; rent cleanup must not erase a successful claim.
+    return solanaOrderSettled(container);
   }
 
   if (isTronChain(chainId)) {
@@ -252,8 +206,25 @@ export async function getOrderProgressChecks(
     const inputChains = intent.inputChains();
     const outputs = orderContainer.order.outputs;
 
+    if (
+      await solanaOrderSettled(
+        orderContainer,
+        outputs[0] && fillTransactions[getOutputStorageKey(outputs[0])]
+      )
+    ) {
+      return { allFilled: true, allValidated: true, allFinalised: true };
+    }
+
     const filledStates = await Promise.all(
-      outputs.map((output) => isOutputFilled(orderId, output))
+      outputs.map((output) => {
+        const outputKey = getOutputStorageKey(output);
+        const signature = fillTransactions[outputKey];
+        return getOrFetchRpc(
+          `progress:filled:${orderId}:${outputKey}:${signature ?? ""}`,
+          () => isOutputFilled(orderId, output, signature),
+          { ttlMs: PROGRESS_TTL_MS }
+        );
+      })
     );
     const allFilled = outputs.length > 0 && filledStates.every(Boolean);
 

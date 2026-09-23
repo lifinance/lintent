@@ -1,0 +1,573 @@
+{
+  "version": 1,
+  "note": "Catalog associations include shared validation and protocol CPI errors, not a per-variant reachability guarantee. Identify the actual failing program from logs; never use these codes to label an unrelated external program's error.",
+  "catalogs": {
+    "CommonErrors": {
+      "name": "CommonErrors",
+      "source": "common/src/errors.rs",
+      "errors": [
+        {
+          "code": 6000,
+          "name": "PayloadCountTooLarge",
+          "msg": "Payload count is too large"
+        },
+        {
+          "code": 6001,
+          "name": "PayloadLengthTooLarge",
+          "msg": "Payload length is too large"
+        },
+        {
+          "code": 6002,
+          "name": "RemoteCallTooLarge",
+          "msg": "The remote callback data is too large"
+        },
+        {
+          "code": 6003,
+          "name": "FulfilmentContextTooLarge",
+          "msg": "Fulfilment context is too large"
+        },
+        {
+          "code": 6004,
+          "name": "EncodedMessageMalformed",
+          "msg": "Encoded message is malformed"
+        },
+        {
+          "code": 6005,
+          "name": "InvalidBytes",
+          "msg": "Encoded bytes are invalid"
+        },
+        {
+          "code": 6006,
+          "name": "InvalidInputToken",
+          "msg": "Invalid input Token"
+        },
+        {
+          "code": 6007,
+          "name": "InvalidOutputToken",
+          "msg": "Invalid output token"
+        },
+        {
+          "code": 6008,
+          "name": "InvalidOutputChainId",
+          "msg": "Invalid output chain id"
+        },
+        {
+          "code": 6009,
+          "name": "InvalidOutputSettler",
+          "msg": "Invalid output settler"
+        },
+        {
+          "code": 6010,
+          "name": "InvalidOutputRecipient",
+          "msg": "Invalid output recipient"
+        },
+        {
+          "code": 6011,
+          "name": "InvalidOutputCallback",
+          "msg": "Invalid output callback"
+        },
+        {
+          "code": 6012,
+          "name": "FillDescriptionMalformed",
+          "msg": "Fill description is malformed"
+        },
+        {
+          "code": 6013,
+          "name": "UserNotOrderUser",
+          "msg": "User is not the order user"
+        },
+        {
+          "code": 6014,
+          "name": "FillDeadlineAfterExpiry",
+          "msg": "Fill deadline is after expiry"
+        },
+        {
+          "code": 6015,
+          "name": "WrongChain",
+          "msg": "Invalid origin chain id"
+        },
+        {
+          "code": 6016,
+          "name": "TimestampNotPassed",
+          "msg": "Expiry has not passed"
+        },
+        {
+          "code": 6017,
+          "name": "TimestampPassed",
+          "msg": "Fill or expiry has passed"
+        },
+        {
+          "code": 6018,
+          "name": "NoOrderOutputs",
+          "msg": "Order must have at least one output"
+        },
+        {
+          "code": 6019,
+          "name": "InvalidPayloadMagic",
+          "msg": "Payload magic is invalid"
+        },
+        {
+          "code": 6020,
+          "name": "NotFilledDescriptionMalformed",
+          "msg": "Not-filled description is malformed"
+        },
+        {
+          "code": 6021,
+          "name": "FillDeadlineNotPassed",
+          "msg": "Fill deadline has not passed"
+        },
+        {
+          "code": 6022,
+          "name": "InvalidTimestamp",
+          "msg": "Clock timestamp is invalid"
+        }
+      ]
+    },
+    "InputSettlerBaseErrors": {
+      "name": "InputSettlerBaseErrors",
+      "source": "programs/inputs/input_settler_base/src/errors.rs",
+      "errors": [
+        {
+          "code": 6200,
+          "name": "ParametersLengthMismatch",
+          "msg": "Parameters length mismatch."
+        },
+        {
+          "code": 6201,
+          "name": "FilledTooLate",
+          "msg": "Output filled too late."
+        }
+      ]
+    },
+    "OutputSettlerBaseErrors": {
+      "name": "OutputSettlerBaseErrors",
+      "source": "programs/outputs/output_settler_base/src/errors.rs",
+      "errors": [
+        {
+          "code": 6400,
+          "name": "FillDeadline",
+          "msg": "Fill deadline passed."
+        },
+        {
+          "code": 6401,
+          "name": "InvalidRecipient",
+          "msg": "Invalid recipient."
+        },
+        {
+          "code": 6402,
+          "name": "FillDeadlineNotPassed",
+          "msg": "Fill deadline has not passed."
+        },
+        {
+          "code": 6403,
+          "name": "AlreadyFilled",
+          "msg": "Output has already been filled."
+        },
+        {
+          "code": 6404,
+          "name": "NotFilledWindowElapsed",
+          "msg": "Not-filled attestation window has elapsed."
+        },
+        {
+          "code": 6405,
+          "name": "ArithmeticOverflow",
+          "msg": "Arithmetic overflow."
+        }
+      ]
+    },
+    "OracleBaseErrors": {
+      "name": "OracleBaseErrors",
+      "source": "programs/oracles/oracle_base/src/errors.rs",
+      "errors": [
+        {
+          "code": 6600,
+          "name": "AttestationContextLengthMismatch",
+          "msg": "Attestation context length mismatch"
+        },
+        {
+          "code": 6601,
+          "name": "EmptyPayloads",
+          "msg": "Payloads must not be empty"
+        },
+        {
+          "code": 6602,
+          "name": "InvalidPayloadMagic",
+          "msg": "Payload magic is invalid"
+        }
+      ]
+    },
+    "IntentsProtocolErrors": {
+      "name": "IntentsProtocolErrors",
+      "source": "programs/protocol/src/errors.rs",
+      "errors": [
+        {
+          "code": 6100,
+          "name": "InvalidOracle",
+          "msg": "Invalid oracle"
+        },
+        {
+          "code": 6101,
+          "name": "InvalidLocalAttestationTimestamp",
+          "msg": "Invalid local attestation timestamp"
+        },
+        {
+          "code": 6102,
+          "name": "InvalidChainMappingAccount",
+          "msg": "Invalid chain mapping account"
+        },
+        {
+          "code": 6103,
+          "name": "InvalidLocalAttestationAccount",
+          "msg": "Invalid local attestation account"
+        },
+        {
+          "code": 6104,
+          "name": "InvalidAttestationAccount",
+          "msg": "Invalid attestation account"
+        },
+        {
+          "code": 6105,
+          "name": "InvalidChainIdAccount",
+          "msg": "Invalid chain id account"
+        },
+        {
+          "code": 6106,
+          "name": "UnauthorizedLocalAttestationConsumer",
+          "msg": "Signer is not the attestation's committed consumer"
+        },
+        {
+          "code": 6107,
+          "name": "InvalidRentRefundAccount",
+          "msg": "Rent refund account does not match the stored rent refund"
+        },
+        {
+          "code": 6108,
+          "name": "LocalAttestationAlreadyConsumed",
+          "msg": "Local attestation has already been consumed"
+        },
+        {
+          "code": 6109,
+          "name": "ExecutableRentRefundAccount",
+          "msg": "Rent refund recipient is still executable"
+        },
+        {
+          "code": 6110,
+          "name": "LocalAttestationNotConsumed",
+          "msg": "Local attestation has not been consumed"
+        }
+      ]
+    },
+    "InputSettlerEscrowErrors": {
+      "name": "InputSettlerEscrowErrors",
+      "source": "programs/inputs/input_settler_escrow/src/errors.rs",
+      "errors": [
+        {
+          "code": 6300,
+          "name": "SolversLengthMismatch",
+          "msg": "Solvers length mismatch."
+        },
+        {
+          "code": 6301,
+          "name": "FirstSolverNotInSolvers",
+          "msg": "First solver not in solvers."
+        },
+        {
+          "code": 6302,
+          "name": "FinaliseTxTooLarge",
+          "msg": "Finalise transaction would exceed Solana's max packet size."
+        },
+        {
+          "code": 6303,
+          "name": "OutputIndexOutOfBounds",
+          "msg": "Output index is out of bounds."
+        },
+        {
+          "code": 6304,
+          "name": "WrongAttestationCount",
+          "msg": "Exactly one attestation account is required."
+        },
+        {
+          "code": 6305,
+          "name": "NotTopLevel",
+          "msg": "Input-first finalisation must be invoked as a top-level instruction."
+        },
+        {
+          "code": 6306,
+          "name": "MissingSamechainFillInstruction",
+          "msg": "A matching future compact same-chain fill instruction is required."
+        },
+        {
+          "code": 6307,
+          "name": "AmbiguousSamechainFillInstruction",
+          "msg": "More than one matching compact same-chain fill instruction was found."
+        },
+        {
+          "code": 6308,
+          "name": "InvalidSamechainFillInstruction",
+          "msg": "The compact same-chain fill instruction is malformed or has invalid accounts."
+        },
+        {
+          "code": 6309,
+          "name": "InvalidSamechainOrder",
+          "msg": "The compact same-chain order does not hash to the supplied order id."
+        },
+        {
+          "code": 6310,
+          "name": "InvalidSamechainOrderContext",
+          "msg": "The order context does not match the compact same-chain order."
+        },
+        {
+          "code": 6311,
+          "name": "ExecutableRentRefundAccount",
+          "msg": "The selected rent refund recipient must not be executable."
+        }
+      ]
+    },
+    "OutputSettlerSimpleErrors": {
+      "name": "OutputSettlerSimpleErrors",
+      "source": "programs/outputs/output_settler_simple/src/errors.rs",
+      "errors": [
+        {
+          "code": 6500,
+          "name": "NotImplemented",
+          "msg": "Order type not implemented."
+        },
+        {
+          "code": 6501,
+          "name": "AmountTooLarge",
+          "msg": "Amount is too large."
+        },
+        {
+          "code": 6502,
+          "name": "ArithmeticOverflow",
+          "msg": "Arithmetic overflow."
+        },
+        {
+          "code": 6503,
+          "name": "InvalidFillerData",
+          "msg": "Invalid filler data."
+        },
+        {
+          "code": 6504,
+          "name": "InvalidContextDataLength",
+          "msg": "Invalid context data length."
+        },
+        {
+          "code": 6505,
+          "name": "ExclusiveTo",
+          "msg": "Order is exclusive to another solver or time passed."
+        },
+        {
+          "code": 6506,
+          "name": "ZeroValue",
+          "msg": "Zero value is not allowed."
+        },
+        {
+          "code": 6507,
+          "name": "NotTopLevel",
+          "msg": "Compact same-chain fills must be invoked as top-level instructions."
+        },
+        {
+          "code": 6508,
+          "name": "FillRecordNotClosable",
+          "msg": "Fill record is not closable yet."
+        },
+        {
+          "code": 6509,
+          "name": "InvalidRentRefund",
+          "msg": "Rent refund account does not match the recorded rent refund."
+        }
+      ]
+    },
+    "OraclePolymerErrors": {
+      "name": "OraclePolymerErrors",
+      "source": "programs/oracles/oracle_polymer/src/errors.rs",
+      "errors": [
+        {
+          "code": 6700,
+          "name": "InvalidChainId",
+          "msg": "Invalid chain id"
+        },
+        {
+          "code": 6701,
+          "name": "InvalidProof",
+          "msg": "Invalid proof"
+        },
+        {
+          "code": 6702,
+          "name": "InvalidOutputChainId",
+          "msg": "Invalid output chain id"
+        },
+        {
+          "code": 6703,
+          "name": "Unauthorized",
+          "msg": "Unauthorized mapping creation"
+        },
+        {
+          "code": 6704,
+          "name": "CouldNotDecodeSolver",
+          "msg": "Could not decode solver"
+        },
+        {
+          "code": 6705,
+          "name": "CouldNotDecodeTimestamp",
+          "msg": "Could not decode timestamp"
+        },
+        {
+          "code": 6706,
+          "name": "CouldNotDecodeMandateOutputFieldsTuple",
+          "msg": "Could not decode mandate output fields tuple"
+        },
+        {
+          "code": 6707,
+          "name": "CouldNotDecodeOracle",
+          "msg": "Could not decode oracle"
+        },
+        {
+          "code": 6708,
+          "name": "CouldNotDecodeSettler",
+          "msg": "Could not decode settler"
+        },
+        {
+          "code": 6709,
+          "name": "CouldNotDecodeChainId",
+          "msg": "Could not decode chain id"
+        },
+        {
+          "code": 6710,
+          "name": "CouldNotDecodeToken",
+          "msg": "Could not decode token"
+        },
+        {
+          "code": 6711,
+          "name": "CouldNotDecodeAmount",
+          "msg": "Could not decode amount"
+        },
+        {
+          "code": 6712,
+          "name": "CouldNotDecodeRecipient",
+          "msg": "Could not decode recipient"
+        },
+        {
+          "code": 6713,
+          "name": "CouldNotDecodeCallbackData",
+          "msg": "Could not decode callback data"
+        },
+        {
+          "code": 6714,
+          "name": "CouldNotDecodeContext",
+          "msg": "Could not decode context"
+        },
+        {
+          "code": 6715,
+          "name": "CouldNotDecodeFinalAmount",
+          "msg": "Could not decode final amount"
+        },
+        {
+          "code": 6716,
+          "name": "CouldNotConvertU256ToU64",
+          "msg": "Could not convert u128 to u64"
+        },
+        {
+          "code": 6717,
+          "name": "CouldNotConvertU256ToU128",
+          "msg": "Could not convert u256 to u128"
+        },
+        {
+          "code": 6718,
+          "name": "CouldNotConvertU256ToU32",
+          "msg": "Could not convert u256 to u32"
+        },
+        {
+          "code": 6719,
+          "name": "NoAttestationsProvided",
+          "msg": "No attestations provided"
+        },
+        {
+          "code": 6720,
+          "name": "NotCorrectEncodedTypes",
+          "msg": "Not correct encoded types"
+        },
+        {
+          "code": 6721,
+          "name": "WrongEventSignature",
+          "msg": "Event signature topic does not match OutputFilled or OutputNotFilled"
+        },
+        {
+          "code": 6722,
+          "name": "UnauthorizedFillSubmitter",
+          "msg": "Fill submission requires the filler to sign as submitter"
+        }
+      ]
+    },
+    "OracleWormholeErrors": {
+      "name": "OracleWormholeErrors",
+      "source": "programs/oracles/oracle_wormhole/src/errors.rs",
+      "errors": [
+        {
+          "code": 6800,
+          "name": "WrongProgram",
+          "msg": "Wrong program"
+        },
+        {
+          "code": 6801,
+          "name": "InvalidPostedVaa",
+          "msg": "Invalid posted VAA data"
+        },
+        {
+          "code": 6802,
+          "name": "InvalidChainId",
+          "msg": "Invalid chain id"
+        },
+        {
+          "code": 6803,
+          "name": "Unauthorized",
+          "msg": "Unauthorized mapping creation"
+        }
+      ]
+    }
+  },
+  "programs": {
+    "LiFixdGLT5CMdLsHBvaijTXpPy4Uux9Y53SXkuR4HaK": {
+      "name": "intents_protocol",
+      "local": "IntentsProtocolErrors",
+      "sharedOrCpi": []
+    },
+    "LiFiRp8RM7nJUZyUYC9FPPpDr7sAy5XPfBN6ABzBgT7": {
+      "name": "input_settler_escrow",
+      "local": "InputSettlerEscrowErrors",
+      "sharedOrCpi": [
+        "CommonErrors",
+        "InputSettlerBaseErrors",
+        "IntentsProtocolErrors"
+      ]
+    },
+    "LiFiEDFjz5x1jJe9gSXNDHQW4dWt4yLXdp2VN4EiQUt": {
+      "name": "output_settler_simple",
+      "local": "OutputSettlerSimpleErrors",
+      "sharedOrCpi": [
+        "CommonErrors",
+        "OutputSettlerBaseErrors",
+        "IntentsProtocolErrors"
+      ]
+    },
+    "LiFiBtfyPT1DnTHTAeZ2rwr5RgMrThwA5kt7KGT5nBV": {
+      "name": "polymer",
+      "local": "OraclePolymerErrors",
+      "sharedOrCpi": [
+        "CommonErrors",
+        "OracleBaseErrors",
+        "IntentsProtocolErrors"
+      ]
+    },
+    "Fy28CqdB1WtDJLdc18fDGKqvpG8HxtSiSG5HChdhR4nU": {
+      "name": "wormhole",
+      "local": "OracleWormholeErrors",
+      "sharedOrCpi": [
+        "CommonErrors",
+        "OracleBaseErrors",
+        "IntentsProtocolErrors"
+      ]
+    }
+  }
+}

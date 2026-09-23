@@ -63,9 +63,8 @@ export type SolanaInstructionLike = {
 /**
  * Anchor's fluent instruction builder, narrowed to what the writes layer uses.
  *
- * `accounts` takes base58 strings so callers never construct a `PublicKey`,
- * and `remainingAccounts` is explicit because `finalise` passes one attestation
- * per output and their order is load-bearing.
+ * `accounts` takes base58 strings and uses Anchor's accountsStrict: every named
+ * account must be supplied. Finalise appends attestations then refund slots.
  */
 export type SolanaInstructionBuilder = {
   accounts(accounts: Record<string, string>): SolanaInstructionBuilder;

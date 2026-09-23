@@ -1,21 +1,19 @@
-import type { Idl } from "@coral-xyz/anchor";
+import type { InputSettlerEscrow } from "./types/input_settler_escrow";
+import type { OutputSettlerSimple } from "./types/output_settler_simple";
+import type { Polymer } from "./types/polymer";
+import type { IntentsProtocol } from "./types/intents_protocol";
 import inputSettlerEscrowIdl from "./input_settler_escrow.json";
 import outputSettlerSimpleIdl from "./output_settler_simple.json";
 import polymerIdl from "./polymer.json";
 import intentsProtocolIdl from "./intents_protocol.json";
 
-// The four IDLs are copied VERBATIM from catalyst-intent-svm/target/idl. Never
-// hand-edit them: `anchor build` regenerates them and any local tweak is lost
-// silently, taking the instruction encoding with it. Re-copy instead.
-//
-// Anchor's generated `Idl` type is stricter than what `resolveJsonModule`
-// infers from the literal (enum-ish fields widen to `string`), so the casts
-// below are unavoidable. They are safe precisely because the files are
-// unmodified compiler output.
-export const INPUT_SETTLER_ESCROW_IDL = inputSettlerEscrowIdl as unknown as Idl;
-export const OUTPUT_SETTLER_SIMPLE_IDL = outputSettlerSimpleIdl as unknown as Idl;
-export const POLYMER_IDL = polymerIdl as unknown as Idl;
-export const INTENTS_PROTOCOL_IDL = intentsProtocolIdl as unknown as Idl;
+// Verbatim corrected production bundle from lifi-intent-svm PR #127, 0072887.
+// provenance.json pins source 776773a and every generated artifact. Anchor
+// converts snake-case JSON names to the accompanying camel-case client types.
+export const INPUT_SETTLER_ESCROW_IDL = inputSettlerEscrowIdl as unknown as InputSettlerEscrow;
+export const OUTPUT_SETTLER_SIMPLE_IDL = outputSettlerSimpleIdl as unknown as OutputSettlerSimple;
+export const POLYMER_IDL = polymerIdl as unknown as Polymer;
+export const INTENTS_PROTOCOL_IDL = intentsProtocolIdl as unknown as IntentsProtocol;
 
 // Program ids come from the TOP-LEVEL `address` field of each IDL — NOT from
 // `metadata`, which in Anchor >= 0.30 only carries name/version/spec. Reading

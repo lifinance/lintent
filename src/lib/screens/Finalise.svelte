@@ -7,24 +7,16 @@
 
   import { Solver } from "$lib/libraries/solver";
   import type { OrderContainer } from "@lifi/intent";
-  import {
-    COMPACT,
-    formatTokenAmount,
-    getChainName,
-    getClient,
-    getCoin,
-    INPUT_SETTLER_COMPACT_LIFI,
-    INPUT_SETTLER_ESCROW_LIFI,
-    MULTICHAIN_INPUT_SETTLER_COMPACT,
-    MULTICHAIN_INPUT_SETTLER_ESCROW
-  } from "$lib/config";
-  import { COMPACT_ABI } from "$lib/abi/compact";
-  import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
+  import { formatTokenAmount, getChainName, getCoin, isStellarChain } from "$lib/config";
   import { idToToken } from "@lifi/intent";
+  import { toHex } from "viem";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
-  import { hashStruct } from "viem";
-  import { compactTypes } from "@lifi/intent";
+  import {
+    getOutputStorageKey as outputKey,
+    isInputChainFinalised
+  } from "$lib/libraries/flowProgress";
+  import { invalidateRpcPrefix } from "$lib/libraries/rpcCache";
 
   let {
     orderContainer,
@@ -45,9 +37,12 @@
   const getInputsForChain = (container: OrderContainer, inputChain: bigint): [bigint, bigint][] => {
     const { order } = container;
     if ("originChainId" in order) {
-      return order.originChainId === inputChain ? order.inputs : [];
+      return BigInt(order.originChainId) === BigInt(inputChain) ? order.inputs : [];
     }
-    return order.inputs.find((chainInput) => chainInput.chainId === inputChain)?.inputs ?? [];
+    return (
+      order.inputs.find((chainInput) => BigInt(chainInput.chainId) === BigInt(inputChain))
+        ?.inputs ?? []
+    );
   };
   const allFinalised = $derived(
     inputChains.length > 0 &&
@@ -63,71 +58,20 @@
 
   const postHookRefreshValidate = async () => {
     if (postHook) await postHook();
+    invalidateRpcPrefix("progress:finalised:");
     refreshClaimed += 1;
   };
-
-  const outputKey = (output: (typeof orderContainer.order.outputs)[number]) =>
-    hashStruct({
-      data: output,
-      types: compactTypes,
-      primaryType: "MandateOutput"
-    });
 
   const fillTransactionHashesFor = (container: OrderContainer) =>
     container.order.outputs.map((output) => store.fillTransactions[outputKey(output)]);
 
   const isValidFillTxHash = (hash: unknown): hash is `0x${string}` =>
-    typeof hash === "string" && hash.startsWith("0x") && hash.length === 66;
+    typeof hash === "string" && /^0x[0-9a-fA-F]{64}$/.test(hash);
 
-  // Order status enum
-  const OrderStatus_None = 0;
-  const OrderStatus_Deposited = 1;
-  const OrderStatus_Claimed = 2;
-  const OrderStatus_Refunded = 3;
-
-  async function isClaimed(chainId: bigint, container: OrderContainer, _: any) {
-    const { order, inputSettler } = container;
-    const inputChainClient = getClient(chainId);
-
-    const intent = containerToIntent(container);
-    const orderId = intent.orderId();
-    // Determine the order type.
-    if (
-      inputSettler === INPUT_SETTLER_ESCROW_LIFI ||
-      inputSettler === MULTICHAIN_INPUT_SETTLER_ESCROW
-    ) {
-      // Check order status
-      const orderStatus = await inputChainClient.readContract({
-        address: inputSettler,
-        abi: SETTLER_ESCROW_ABI,
-        functionName: "orderStatus",
-        args: [orderId]
-      });
-      return orderStatus === OrderStatus_Claimed || orderStatus === OrderStatus_Refunded;
-    } else if (
-      inputSettler === INPUT_SETTLER_COMPACT_LIFI ||
-      inputSettler === MULTICHAIN_INPUT_SETTLER_COMPACT
-    ) {
-      // Check claim status
-      const flattenedInputs = "originChainId" in order ? order.inputs : order.inputs[0]?.inputs;
-      if (!flattenedInputs || flattenedInputs.length === 0) return false;
-
-      const [token, allocator, resetPeriod, scope] = await inputChainClient.readContract({
-        address: COMPACT,
-        abi: COMPACT_ABI,
-        functionName: "getLockDetails",
-        args: [flattenedInputs[0][0]]
-      });
-      // Check if nonce is spent.
-      return await inputChainClient.readContract({
-        address: COMPACT,
-        abi: COMPACT_ABI,
-        functionName: "hasConsumedAllocatorNonce",
-        args: [order.nonce, allocator]
-      });
-    }
-    return false;
-  }
+  // Stellar input ids are raw 32-byte contract ids, not EVM token ids.
+  // Orders reloaded from the DB carry bigints as decimal strings.
+  const inputTokenAddress = (inputChain: bigint, tokenId: bigint) =>
+    isStellarChain(inputChain) ? toHex(BigInt(tokenId), { size: 32 }) : idToToken(tokenId);
 
   $effect(() => {
     refreshClaimed;
@@ -135,10 +79,7 @@
     Promise.all(
       inputChains.map(
         async (inputChain) =>
-          [
-            inputChain.toString(),
-            await isClaimed(inputChain, orderContainer, refreshClaimed)
-          ] as const
+          [inputChain.toString(), await isInputChainFinalised(inputChain, orderContainer)] as const
       )
     )
       .then((entries) => {
@@ -235,12 +176,12 @@
                 amountText={formatTokenAmount(
                   input[1],
                   getCoin({
-                    address: idToToken(input[0]),
+                    address: inputTokenAddress(inputChain, input[0]),
                     chainId: inputChain
                   }).decimals
                 )}
                 symbol={getCoin({
-                  address: idToToken(input[0]),
+                  address: inputTokenAddress(inputChain, input[0]),
                   chainId: inputChain
                 }).name}
                 tone="neutral"

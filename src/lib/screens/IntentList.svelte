@@ -153,8 +153,9 @@
           <button
             class:border-amber-300={row.status === "expiring"}
             class:bg-amber-50={row.status === "expiring"}
-            class="w-full cursor-pointer rounded border border-gray-200 bg-white px-2 py-2 text-left transition-shadow ease-linear select-none hover:shadow-md focus:outline-none focus-visible:outline-none"
+            class="w-full cursor-pointer rounded border border-gray-200 bg-white px-2 py-2 text-left transition-shadow ease-linear select-none hover:shadow-md focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none"
             style="-webkit-tap-highlight-color: transparent;"
+            disabled={row.unsupportedChains.length > 0}
             onclick={async () => {
               selectedOrder = row.orderContainer;
               await tick();

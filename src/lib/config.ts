@@ -1,3 +1,12 @@
+import {
+  COIN_FILLER,
+  COMPACT,
+  INPUT_SETTLER_COMPACT_LIFI,
+  INPUT_SETTLER_ESCROW_LIFI,
+  MULTICHAIN_INPUT_SETTLER_COMPACT,
+  MULTICHAIN_INPUT_SETTLER_ESCROW,
+  STELLAR_MAINNET_CHAIN_ID
+} from "@lifi/intent";
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
 import {
   arbitrum,
@@ -27,36 +36,62 @@ export const pharos = defineChain({
 export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000" as const;
 export const BYTES32_ZERO =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as const;
-export const COMPACT = "0x00000000000000171ede64904551eeDF3C6C9788" as const;
-export const INPUT_SETTLER_COMPACT_LIFI = "0x0000000000cd5f7fDEc90a03a31F79E5Fbc6A9Cf" as const;
-export const INPUT_SETTLER_ESCROW_LIFI = "0x000025c3226C00B2Cdc200005a1600509f4e00C0" as const;
-export const MULTICHAIN_INPUT_SETTLER_ESCROW =
-  "0xb912b4c38ab54b94D45Ac001484dEBcbb519Bc2B" as const;
-export const MULTICHAIN_INPUT_SETTLER_COMPACT =
-  "0x1fccC0807F25A58eB531a0B5b4bf3dCE88808Ed7" as const;
+export {
+  COIN_FILLER,
+  COMPACT,
+  INPUT_SETTLER_COMPACT_LIFI,
+  INPUT_SETTLER_ESCROW_LIFI,
+  MULTICHAIN_INPUT_SETTLER_COMPACT,
+  MULTICHAIN_INPUT_SETTLER_ESCROW
+};
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
-export const COIN_FILLER = "0x0000000000eC36B683C2E6AC89e9A75989C22a2e" as const;
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [ethereum.id]: "0x0000000000000000000000000000000000000000",
   [arbitrum.id]: "0x0000000000000000000000000000000000000000",
   [base.id]: "0x0000000000000000000000000000000000000000"
 };
 export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
-  [ethereum.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [arbitrum.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [base.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+  [ethereum.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [arbitrum.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [base.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [megaeth.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [katana.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [polygon.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [bsc.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
-  [pharos.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
+  [katana.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [polygon.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [bsc.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [pharos.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   // testnet
-  [sepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
-  [baseSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
-  [arbitrumSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
-  [optimismSepolia.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0",
-  [arcTestnet.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
+  [sepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
+  [baseSepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
+  [arbitrumSepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
+  [optimismSepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
+  [arcTestnet.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90"
+};
+
+// Stellar mainnet (intent-soroban). Not a viem chain: Stellar code paths must
+// branch on isStellarChain before touching chainMap/clients/getClient.
+export const STELLAR_CHAIN_ID = Number(STELLAR_MAINNET_CHAIN_ID);
+export const STELLAR_RPC_URL = "https://mainnet.sorobanrpc.com";
+export const STELLAR_NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015";
+
+export function isStellarChain(chainId: number | bigint | string) {
+  return normalizeChainId(chainId) === STELLAR_CHAIN_ID;
+}
+
+// Axelar GMP oracles. EVM entries are addresses; the Stellar entry is the raw
+// 32-byte contract id (CAVJORXN3EOHH5GGHOK66YTPBUFNICWGSAO3UBUG6SS75VSMGWIEQX4V).
+export const AXELAR_ORACLE: Partial<Record<number, `0x${string}`>> = {
+  [base.id]: "0xb7eA767b54aF5Dd8AD12Df648A399F9075D93FeE",
+  [STELLAR_CHAIN_ID]: "0x2a9746edd91c73f4c63b95ef626f0d0ad40ac6901dba0686f4a5fed64c359048"
+};
+export const AXELAR_CHAIN_NAMES: Partial<Record<number, string>> = {
+  [base.id]: "base",
+  [STELLAR_CHAIN_ID]: "stellar"
+};
+// Minimum Axelar gas payment, in the SOURCE chain's base unit (wei / stroops).
+export const AXELAR_GAS_FLOOR: Partial<Record<number, bigint>> = {
+  [base.id]: 500000000000000n,
+  [STELLAR_CHAIN_ID]: 50000000n
 };
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
@@ -104,8 +139,9 @@ export const chainList = (mainnet: boolean) => {
     ] as ChainName[];
 };
 
-export const chainIdList = (mainnet: boolean) => {
-  return chainList(mainnet).map((name) => chainMap[name].id);
+export const chainIdList = (mainnet: boolean): number[] => {
+  const ids: number[] = chainList(mainnet).map((name) => chainMap[name].id);
+  return mainnet ? [...ids, STELLAR_CHAIN_ID] : ids;
 };
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
@@ -236,6 +272,18 @@ export const coinList = (mainnet: boolean) => {
         name: "usdc.e",
         chainId: polygon.id,
         decimals: 6
+      },
+      {
+        address: `0x25b4fcd859aec2fa6348438c489b3c3c10c98b6d21be4fd3cb30cb68953ef977`,
+        name: "xlm",
+        chainId: STELLAR_CHAIN_ID,
+        decimals: 7
+      },
+      {
+        address: `0xadefce59aee52968f76061d494c2525b75659fa4296a65f499ef29e56477e496`,
+        name: "usdc",
+        chainId: STELLAR_CHAIN_ID,
+        decimals: 7
       }
     ] as const;
   else
@@ -364,7 +412,7 @@ export const polymerChainIds = {
   arcTestnet: arcTestnet.id
 } as const;
 
-export type Verifier = "wormhole" | "polymer";
+export type Verifier = "wormhole" | "polymer" | "axelar";
 
 export function getCoin(
   args:
@@ -377,14 +425,16 @@ export function getCoin(
 ) {
   const { name = undefined, address = undefined } = args;
   const chainId = normalizeChainId(args.chainId);
-  // ensure the address is ERC20-sized.
-  const concatedAddress =
-    "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
+  // EVM ids are compared as 20-byte addresses (inputs may be bytes32-padded);
+  // Stellar contract ids are full 32-byte values.
+  const comparedAddress = isStellarChain(chainId)
+    ? address
+    : "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
   for (const token of coinList(!isChainIdTestnet(chainId))) {
     // check chain first.
     if (token.chainId === chainId) {
       if (name === undefined) {
-        if (concatedAddress?.toLowerCase() === token.address.toLowerCase()) return token;
+        if (comparedAddress?.toLowerCase() === token.address.toLowerCase()) return token;
       }
       if (name?.toLowerCase() === token.name.toLowerCase()) return token;
     }
@@ -406,13 +456,15 @@ function normalizeChainId(chainId: number | bigint | string) {
 
 export function isChainIdTestnet(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
+  if (normalized === STELLAR_CHAIN_ID) return false;
   const chain = chainById[normalized];
   if (!chain) throw new Error(`Chain is not known: ${normalized}`);
   return chain.testnet;
 }
 
-export function getChainName(chainId: number | bigint | string) {
+export function getChainName(chainId: number | bigint | string): ChainName | "stellar" {
   const normalized = normalizeChainId(chainId);
+  if (normalized === STELLAR_CHAIN_ID) return "stellar";
   const name = chainNameById[normalized];
   if (!name) throw new Error(`Chain is not known: ${normalized}`);
   return name;
@@ -432,6 +484,7 @@ export function getOracle(verifier: Verifier, chainId: number | bigint | string)
   const normalized = normalizeChainId(chainId);
   if (verifier === "polymer") return POLYMER_ORACLE[normalized];
   if (verifier === "wormhole") return WORMHOLE_ORACLE[normalized];
+  if (verifier === "axelar") return AXELAR_ORACLE[normalized];
   return undefined;
 }
 

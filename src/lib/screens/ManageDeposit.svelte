@@ -101,6 +101,33 @@
             onChange={(v) => (store.useProductionApi = v === "auto" ? null : v === "production")}
           />
         </div>
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-sm font-medium text-gray-700">Stellar wallet</h2>
+          {#if store.stellarAccount}
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-xs text-gray-600" data-testid="stellar-account"
+                >{store.stellarAccount.slice(0, 6)}…{store.stellarAccount.slice(-4)}</span
+              >
+              <AwaitButton size="sm" buttonFunction={() => store.disconnectStellar()}>
+                {#snippet name()}
+                  Disconnect
+                {/snippet}
+                {#snippet awaiting()}
+                  Disconnecting...
+                {/snippet}
+              </AwaitButton>
+            </div>
+          {:else}
+            <AwaitButton size="sm" buttonFunction={() => store.connectStellar()}>
+              {#snippet name()}
+                Connect
+              {/snippet}
+              {#snippet awaiting()}
+                Connecting...
+              {/snippet}
+            </AwaitButton>
+          {/if}
+        </div>
       </div>
     </SectionCard>
     <SectionCard compact>

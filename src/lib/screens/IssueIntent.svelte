@@ -435,7 +435,7 @@
       {:else if stellarInvolved && !store.stellarAccount}
         <AwaitButton buttonFunction={() => store.connectStellar()}>
           {#snippet name()}
-            Connect Stellar wallet
+            Connect Freighter
           {/snippet}
           {#snippet awaiting()}
             Connecting...

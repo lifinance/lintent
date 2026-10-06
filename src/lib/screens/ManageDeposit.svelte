@@ -120,7 +120,7 @@
           {:else}
             <AwaitButton size="sm" buttonFunction={() => store.connectStellar()}>
               {#snippet name()}
-                Connect
+                Connect Freighter
               {/snippet}
               {#snippet awaiting()}
                 Connecting...

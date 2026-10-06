@@ -1,52 +1,57 @@
-import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
+import {
+  getAddress,
+  getNetworkDetails,
+  isConnected,
+  requestAccess,
+  signTransaction
+} from "@stellar/freighter-api";
 import { STELLAR_NETWORK_PASSPHRASE } from "$lib/config";
 
-// Stellar Wallets Kit touches `window`/custom elements on import, so it is only
-// ever loaded through dynamic imports from browser code paths.
-let kitReady: Promise<typeof StellarWalletsKit>;
+// Freighter has no programmatic disconnect; this flag decides whether a reload
+// restores the account.
+const CONNECTED_KEY = "lintent:stellar-connected";
+const FREIGHTER_URL = "https://www.freighter.app/";
 
-export function ensureStellarKit() {
-  kitReady ??= (async () => {
-    const [{ StellarWalletsKit }, { defaultModules }, { Networks }] = await Promise.all([
-      import("@creit.tech/stellar-wallets-kit/sdk"),
-      import("@creit.tech/stellar-wallets-kit/modules/utils"),
-      import("@creit.tech/stellar-wallets-kit/types")
-    ]);
-    StellarWalletsKit.init({ modules: defaultModules(), network: Networks.PUBLIC });
-    return StellarWalletsKit;
-  })();
-  return kitReady;
-}
-
-/** Opens the wallet picker and returns the connected account (`G…`). */
+/** Requests access from Freighter and returns the connected account (`G…`). */
 export async function connectStellarWallet(): Promise<string> {
-  const kit = await ensureStellarKit();
-  const { address } = await kit.authModal();
+  const { isConnected: installed } = await isConnected();
+  if (!installed) {
+    window.open(FREIGHTER_URL, "_blank");
+    throw new Error("Freighter extension not found");
+  }
+
+  const { address, error } = await requestAccess();
+  if (error) throw new Error(`Freighter: ${error.message}`);
+
+  const network = await getNetworkDetails();
+  if (network.error) throw new Error(`Freighter: ${network.error.message}`);
+  if (network.networkPassphrase !== STELLAR_NETWORK_PASSPHRASE) {
+    throw new Error("Switch Freighter to Mainnet");
+  }
+
+  localStorage.setItem(CONNECTED_KEY, "1");
   return address;
 }
 
-/** Returns the account remembered by the kit, or undefined if none is connected. */
+/** Returns the previously connected account, or undefined if none is available. */
 export async function restoreStellarWallet(): Promise<string | undefined> {
-  const kit = await ensureStellarKit();
-  try {
-    const { address } = await kit.getAddress();
-    return address || undefined;
-  } catch {
-    return undefined;
-  }
+  if (localStorage.getItem(CONNECTED_KEY) !== "1") return undefined;
+  // Empty when the site is not allowed or Freighter is locked.
+  const { address, error } = await getAddress();
+  if (error || !address) return undefined;
+  return address;
 }
 
 export async function disconnectStellarWallet() {
-  const kit = await ensureStellarKit();
-  await kit.disconnect();
+  localStorage.removeItem(CONNECTED_KEY);
 }
 
 /** Signs a transaction envelope (base64 XDR) on Stellar mainnet. */
 export async function signStellarTransaction(xdr: string, address: string): Promise<string> {
-  const kit = await ensureStellarKit();
-  const { signedTxXdr } = await kit.signTransaction(xdr, {
+  const { signedTxXdr, error } = await signTransaction(xdr, {
     networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
     address
   });
+  if (error) throw new Error(`Freighter: ${error.message}`);
   return signedTxXdr;
 }

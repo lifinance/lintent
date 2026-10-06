@@ -49,6 +49,8 @@ export type BaseIntentRow = {
   outputOverflow: number;
   validationPassed: boolean;
   validationReason: string;
+  /** Chain ids the app has no config for; such orders cannot be opened in the flow screens. */
+  unsupportedChains: string[];
 };
 
 export type TimedIntentRow = BaseIntentRow & {
@@ -137,6 +139,18 @@ function toChainScopeBadge(scope: ChainScope) {
   if (scope === "samechain") return "SameChain";
   if (scope === "singlechain") return "SingleChain";
   return "MultiChain";
+}
+
+function getUnsupportedChains(order: StandardOrder | MultichainOrder): string[] {
+  const chainIds =
+    "originChainId" in order
+      ? [order.originChainId]
+      : order.inputs.map((chainInput) => chainInput.chainId);
+  for (const output of order.outputs) chainIds.push(output.chainId);
+  const unsupported = chainIds
+    .filter((chainId) => safeChainName(chainId) === undefined)
+    .map((chainId) => chainId.toString());
+  return [...new Set(unsupported)];
 }
 
 function shortHexAddress(value: `0x${string}`) {
@@ -250,7 +264,8 @@ export function buildBaseIntentRow(orderContainer: OrderContainer): BaseIntentRo
     outputChips: outputChipsRaw.slice(0, MAX_CHIPS_PER_SIDE),
     outputOverflow: Math.max(0, outputChipsRaw.length - MAX_CHIPS_PER_SIDE),
     validationPassed: validation.passed,
-    validationReason: validation.reason
+    validationReason: validation.reason,
+    unsupportedChains: getUnsupportedChains(order)
   };
 }
 

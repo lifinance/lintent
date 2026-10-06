@@ -50,7 +50,8 @@ const baseRow: BaseIntentRow = {
   outputChips: [],
   outputOverflow: 0,
   validationPassed: true,
-  validationReason: "Validation pass"
+  validationReason: "Validation pass",
+  unsupportedChains: []
 };
 
 describe("intentList timing and formatting", () => {
@@ -105,6 +106,7 @@ describe("intentList timing and formatting", () => {
     expect(row.outputChips[0].text).toContain("chain-999999999");
     expect(row.inputChips[0].text).toContain("...");
     expect(row.outputChips[0].text).toContain("...");
+    expect(row.unsupportedChains).toEqual(["999999999"]);
   });
 
   it("builds a Stellar row from an order reloaded from storage", () => {
@@ -145,5 +147,6 @@ describe("intentList timing and formatting", () => {
     expect(row.inputChips[0].text).toBe("1.0000 XLM on stellar");
     expect(row.inputSchemeBadge).toBe("Escrow");
     expect(row.orderId).toBe(buildBaseIntentRow(container).orderId);
+    expect(row.unsupportedChains).toEqual([]);
   });
 });

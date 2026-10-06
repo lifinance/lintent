@@ -141,7 +141,7 @@ function toChainScopeBadge(scope: ChainScope) {
   return "MultiChain";
 }
 
-function getUnsupportedChains(order: StandardOrder | MultichainOrder): string[] {
+export function getUnsupportedChains(order: StandardOrder | MultichainOrder): string[] {
   const chainIds =
     "originChainId" in order
       ? [order.originChainId]

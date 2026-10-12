@@ -302,4 +302,59 @@ export async function finalise(
   return txId;
 }
 
+/** Slow refund after `expires`. Permissionless: funds always go to
+ * order.user, so any connected Tron account may send it. */
+export async function refund(
+  deps: TronDeps,
+  args: { inputSettler: `0x${string}`; order: EVMOrder }
+): Promise<string> {
+  await assertTronMainnet(deps.signer, deps.reads);
+  const contract = await signerContract(deps, TRON_INPUT_SETTLER_ABI, args.inputSettler);
+  const txId = await contract.refund!(
+    orderToTuple(args.order, (hex) => toTronAddress(deps.signer, hex))
+  ).send({ feeLimit: OPEN_FEE_LIMIT });
+  await waitForTronTransaction(deps.reads, txId, { mode: "inclusion" });
+  return txId;
+}
+
+/** Fast refund once the input oracle holds a proven non-fill attestation
+ * for `order.outputs[outputIndex]`. Permissionless like `refund`. */
+export async function refundOnNonFill(
+  deps: TronDeps,
+  args: { inputSettler: `0x${string}`; order: EVMOrder; outputIndex: number }
+): Promise<string> {
+  await assertTronMainnet(deps.signer, deps.reads);
+  const contract = await signerContract(deps, TRON_INPUT_SETTLER_ABI, args.inputSettler);
+  const txId = await contract.refundOnNonFill!(
+    orderToTuple(args.order, (hex) => toTronAddress(deps.signer, hex)),
+    args.outputIndex
+  ).send({ feeLimit: OPEN_FEE_LIMIT });
+  await waitForTronTransaction(deps.reads, txId, { mode: "inclusion" });
+  return txId;
+}
+
+/** Emits `OutputNotFilled` on a Tron output settler (reverts if filled or
+ * before fillDeadline). Waits for confirmation because Polymer proves only
+ * finalized logs. */
+export async function emitNotFilled(
+  deps: TronDeps,
+  args: {
+    outputSettlerBytes32: `0x${string}`;
+    orderId: `0x${string}`;
+    output: MandateOutput;
+    fillDeadline: number;
+  }
+): Promise<string> {
+  await assertTronMainnet(deps.signer, deps.reads);
+  const settlerHex = bytes32ToAddress(args.outputSettlerBytes32);
+  const contract = await signerContract(deps, TRON_OUTPUT_SETTLER_ABI, settlerHex);
+  const txId = await contract.emitNotFilled!(
+    args.orderId,
+    outputToTuple(args.output),
+    args.fillDeadline
+  ).send({ feeLimit: ORACLE_FEE_LIMIT });
+  await waitForTronTransaction(deps.reads, txId, { mode: "confirmed" });
+  return txId;
+}
+
 export { TRON_MAINNET_INPUT_SETTLER };

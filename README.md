@@ -18,6 +18,7 @@ flowchart TD
         S4["Fill Intent"]
         S5["Receive Message"]
         S6["Finalise"]
+        R["/refund\nself-serve refund page"]
 
         Store["Svelte 5 runes store\nbalances, allowances, orders"]
         DB["PGlite via IndexedDB\nintents, fills, receipts"]
@@ -53,6 +54,10 @@ flowchart TD
     S5 -->|"receiveMessage"| PORACLE
     S5 -->|"setAttestation"| CF
     S6 -->|"finalise"| ESC
+    R -->|"order status lookup"| OS
+    R -->|"proof request"| API_P
+    R -->|"refund / refundOnNonFill"| ESC
+    R -->|"emitNotFilled"| CF
     S6 -->|"finalise"| CSETT
     S1 -->|"deposit / withdraw"| COMPACT
     S2 -->|"open escrow"| ESC
@@ -73,6 +78,17 @@ The app exposes six sequential screens, each representing one step in the OIF fl
 - **Fill Intent** is the solver side, where output tokens are delivered to recipients via the CoinFiller contract on each output chain
 - **Receive Message** fetches a cross-chain proof from Polymer and submits it to the Polymer Oracle on the source chain (or calls `setAttestation` for same-chain fills)
 - **Finalise** calls `finalise()` on the appropriate input settler, releasing the locked input tokens to the solver
+
+## Refund Page
+
+`/refund` (`src/routes/refund/`) lets anyone look up an escrow order by its on-chain order id or by the transaction that opened it (EVM/Tron hash or Solana signature) and refund it to the order's user. Every write is permissionless and pays out to `order.user`; the sender only pays gas. `?order=<input>` resumes the page, and every step is re-derived from chain state on load.
+
+- **Supported** escrow orders on lintent's mainnet chains, EVM, Tron and Solana, as origin or destination. Compact, multichain, unknown-settler and unregistered-chain orders show their status but no action.
+- **Slow refund** calls `refund(order)` once `expires` has passed (Solana → Solana waits an extra 900s).
+- **Fast refund** runs once the fill deadline has passed with no fill and at least 2h remain before `expires`, in three user-signed steps: record the non-fill on the destination (`emitNotFilled`, or Solana `attest_not_filled` + `submit_consume`), get a Polymer proof and deliver it to the origin oracle, then `refundOnNonFill`. A Solana-destination record must be made within 48h of the fill deadline.
+- **Not refundable** when any output is filled or the order service reports it delivered, when an output's chain can't be read here, or when the escrow is already claimed, refunded or settled.
+
+States: not opened · waiting for the fill deadline · waiting for expiry (with the reason fast is unavailable) · fast refund (record / prove / refund) · refundable now · refunded · claimed · settled · filled · fill unverifiable · not refundable here.
 
 ## Tech Stack
 
@@ -119,6 +135,7 @@ src/
     schema.ts         # Drizzle table definitions
   routes/
     +page.svelte      # single-page entry point (renders all six screens)
+    refund/           # self-serve refund page (slow + fast refund)
     polymer/          # server route proxying to Polymer API
     allocator/        # server route proxying to Polymer Allocator
     health/           # liveness check

@@ -1,3 +1,5 @@
+import { TRON_LEGACY_POLYMER_ORACLES } from "@lifi/intent";
+import { getOracle } from "$lib/config";
 import { isSolanaChain } from "$lib/utils/chainType";
 
 /**
@@ -28,4 +30,20 @@ export function polymerReceiveFunction(
   outputChainId: number | bigint
 ): "receiveMessage" | "receiveSolanaMessage" {
   return isSolanaChain(outputChainId) ? "receiveSolanaMessage" : "receiveMessage";
+}
+
+/**
+ * The oracle addresses a chain's input side will accept a Polymer proof
+ * from, lower-cased.
+ *
+ * Includes known legacy deployments alongside the current one: an order
+ * opened before an address rotation must stay provable, or its inputs are
+ * stranded until the deadline.
+ */
+export function polymerOraclesFor(chainId: number | bigint): Set<string> {
+  return new Set(
+    [getOracle("polymer", chainId), ...(TRON_LEGACY_POLYMER_ORACLES[chainId.toString()] ?? [])]
+      .filter((oracle): oracle is `0x${string}` => !!oracle)
+      .map((oracle) => oracle.toLowerCase())
+  );
 }

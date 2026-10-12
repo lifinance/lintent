@@ -184,5 +184,20 @@ export const POLYMER_ORACLE_ABI = [
     type: "error",
     name: "WrongEventSignature",
     inputs: []
+  },
+  {
+    // Canonical chain id -> Polymer protocol chain id; 0 means proofs from that chain revert
+    // `ZeroValue()`. Source: ../intents-auto-refund/src/core/abi.ts REVERSE_CHAIN_ID_MAP_ABI;
+    // lifi-oif src/oracles/ChainMap.sol:18-19.
+    type: "function",
+    name: "reverseChainIdMap",
+    inputs: [{ name: "chainId", type: "uint256", internalType: "uint256" }],
+    outputs: [{ name: "", type: "uint256", internalType: "uint256" }],
+    stateMutability: "view"
+  },
+  {
+    type: "error",
+    name: "ZeroValue",
+    inputs: []
   }
 ] as const;

@@ -11,6 +11,7 @@ import {
   POLYMER_PROVER_PROGRAM_ID,
   attestationPda,
   bytes32ToPubkey,
+  chainMappingPda,
   consumedOrderPda,
   fillIdPda,
   localAttestationPda,
@@ -18,7 +19,16 @@ import {
   outputSettlerSimplePda,
   polymerOraclePda
 } from "../../src/lib/solana/pda";
+import { getNotFilledDescriptionHash } from "@lifi/intent";
 import {
+  CHAIN_MAPPING_DISCRIMINATOR,
+  LOCAL_ATTESTATION_DISCRIMINATOR,
+  expectedNotFilledProveLog
+} from "../../src/lib/solana/nonFill";
+import {
+  findNotFilledRecordSignature,
+  readChainMappingCanonicalId,
+  readNotFilledLocalAttestation,
   readPolymerProverId,
   readIsLocallyAttested,
   readIsOrderFinalised,
@@ -87,7 +97,9 @@ function makeReads(accounts: Record<string, { owner: string; data?: Uint8Array }
     getTransaction: async () => null,
     getBalance: async () => 0n,
     getTokenAccountBalance: async () => 0n,
-    getLatestBlockhash: async () => ({ blockhash: "hash", lastValidBlockHeight: 1 })
+    getLatestBlockhash: async () => ({ blockhash: "hash", lastValidBlockHeight: 1 }),
+    getSignaturesForAddress: async () => [],
+    getFinalizedBlockTime: async () => 0
   };
   return { reads, requested };
 }
@@ -242,5 +254,91 @@ describe("readPolymerProverId", () => {
   test("throws when the oracle account is missing", async () => {
     const { reads } = makeReads();
     await expect(readPolymerProverId(reads)).rejects.toThrow("does not exist");
+  });
+});
+
+describe("non-fill record reads", () => {
+  const output = makeOutput();
+  const fillDeadline = 1_700_000_900;
+  const args = { orderId: ORDER_ID, output, fillDeadline };
+  const pda = localAttestationPda(
+    outputSettlerSimplePda(),
+    output.oracle,
+    getNotFilledDescriptionHash(args)
+  ).toBase58();
+
+  test("readNotFilledLocalAttestation classifies the derived PDA", async () => {
+    const data = new Uint8Array(46);
+    data.set(LOCAL_ATTESTATION_DISCRIMINATOR);
+    new DataView(data.buffer).setUint32(8, fillDeadline, true);
+    data.fill(5, 13, 45);
+    data[45] = 1;
+    const { reads } = makeReads({ [pda]: { owner: INTENTS_PROTOCOL_PROGRAM_ID, data } });
+    expect(await readNotFilledLocalAttestation(reads, args)).toEqual({ kind: "consumed" });
+    expect(await readNotFilledLocalAttestation(makeReads().reads, args)).toEqual({
+      kind: "absent"
+    });
+  });
+
+  test("findNotFilledRecordSignature skips failed and unrelated txs", async () => {
+    const log = expectedNotFilledProveLog(args);
+    const queried: string[] = [];
+    const txs: Record<string, { err: unknown; logs: string[] }> = {
+      unrelated: { err: null, logs: ["Program log: Prove: program: x, y"] },
+      revertedInMeta: { err: { InstructionError: [0, "x"] }, logs: [log] },
+      good: { err: null, logs: ["other", log] }
+    };
+    const { reads } = makeReads();
+    reads.getSignaturesForAddress = async (address, opts) => {
+      queried.push(address);
+      expect(opts?.limit).toBe(20);
+      return [
+        { signature: "failed", err: { x: 1 } },
+        { signature: "unrelated", err: null },
+        { signature: "revertedInMeta", err: null },
+        { signature: "good", err: null }
+      ];
+    };
+    reads.getTransaction = async (sig) => {
+      if (sig === "failed") throw new Error("must not fetch an errored signature");
+      const tx = txs[sig]!;
+      return { slot: 1, meta: { err: tx.err, logMessages: tx.logs } };
+    };
+    expect(await findNotFilledRecordSignature(reads, args)).toBe("good");
+    expect(queried).toEqual([pda]);
+  });
+
+  test("findNotFilledRecordSignature returns null when nothing matches", async () => {
+    const { reads } = makeReads();
+    expect(await findNotFilledRecordSignature(reads, args)).toBeNull();
+  });
+});
+
+describe("readChainMappingCanonicalId", () => {
+  const polymerId = 8453n;
+  const pda = chainMappingPda(polymerOraclePda(), polymerId).toBase58();
+  const mapping = (value: bigint, disc = CHAIN_MAPPING_DISCRIMINATOR) => {
+    const data = new Uint8Array(25);
+    data.set(disc);
+    for (let i = 0; i < 16; i++) data[8 + i] = Number((value >> BigInt(8 * i)) & 0xffn);
+    return data;
+  };
+
+  test("decodes the u128 LE chain id", async () => {
+    const value = (1n << 100n) + 8453n;
+    const { reads } = makeReads({
+      [pda]: { owner: INTENTS_PROTOCOL_PROGRAM_ID, data: mapping(value) }
+    });
+    expect(await readChainMappingCanonicalId(reads, polymerId)).toBe(value);
+  });
+
+  test("null when absent, foreign-owned or mis-tagged", async () => {
+    expect(await readChainMappingCanonicalId(makeReads().reads, polymerId)).toBeNull();
+    const foreign = makeReads({ [pda]: { owner: SYSTEM_PROGRAM, data: mapping(8453n) } });
+    expect(await readChainMappingCanonicalId(foreign.reads, polymerId)).toBeNull();
+    const badDisc = makeReads({
+      [pda]: { owner: INTENTS_PROTOCOL_PROGRAM_ID, data: mapping(8453n, new Uint8Array(8)) }
+    });
+    expect(await readChainMappingCanonicalId(badDisc.reads, polymerId)).toBeNull();
   });
 });

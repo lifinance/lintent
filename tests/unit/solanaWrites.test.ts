@@ -10,8 +10,11 @@ import {
 import { SOLANA_GENESIS_HASHES, invalidateSolanaClusterGuard } from "../../src/lib/solana/client";
 import { localAttestationDataHash } from "../../src/lib/solana/encode";
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  attestationPda,
   bytes32ToPubkey,
+  polymerOraclePda,
   consumedOrderPda,
   fillIdPda,
   localAttestationPda,
@@ -32,8 +35,19 @@ import {
   fillOutputs,
   finalise,
   openEscrow,
+  receiveProof,
+  recordNotFilled,
+  refund,
+  refundOnNonFill,
   submitFillProof
 } from "../../src/lib/solana/writes";
+import { getNotFilledDescriptionHash } from "@lifi/intent";
+import {
+  ATTEST_NOT_FILLED_DISCRIMINATOR,
+  LOCAL_ATTESTATION_DISCRIMINATOR,
+  REFUND_ON_NON_FILL_DISCRIMINATOR,
+  SUBMIT_CONSUME_DISCRIMINATOR
+} from "../../src/lib/solana/nonFill";
 import { PublicKey } from "@solana/web3.js";
 
 const CHAIN_ID = SOLANA_DEVNET_CHAIN_ID;
@@ -104,6 +118,7 @@ function makeDeps(
     accounts?: Record<string, { owner: string; data?: Uint8Array }>;
     signerPublicKey?: string;
     genesis?: string;
+    chainTime?: number;
   } = {}
 ) {
   const calls: RecordedCall[] = [];
@@ -139,7 +154,12 @@ function makeDeps(
       getTransaction: async () => null,
       getBalance: async () => 0n,
       getTokenAccountBalance: async () => 0n,
-      getLatestBlockhash: async () => ({ blockhash: "hash", lastValidBlockHeight: 1 })
+      getLatestBlockhash: async () => ({ blockhash: "hash", lastValidBlockHeight: 1 }),
+      getSignaturesForAddress: async () => [],
+      getFinalizedBlockTime: async () => {
+        if (opts.chainTime === undefined) throw new Error("no block time");
+        return opts.chainTime;
+      }
     },
     signer: {
       publicKey: opts.signerPublicKey ?? USER,
@@ -604,5 +624,207 @@ describe("fillOutputs batching", () => {
     });
     expect(sent).toHaveLength(1);
     expect(sent[0]).toHaveLength(1);
+  });
+});
+
+describe("refund paths", () => {
+  const sponsor = bytes32ToPubkey(b32("7")).toBase58();
+  const order = makeOrder({ outputs: [makeOutput({ chainId: 8453n })] });
+  const user = bytes32ToPubkey(order.user as `0x${string}`).toBase58();
+  const context = orderContextPda(ORDER_ID).toBase58();
+  const accounts = {
+    [MINT]: { owner: TOKEN_PROGRAM_ID },
+    [context]: {
+      owner: INPUT_SETTLER_ESCROW_PROGRAM_ID,
+      data: orderContextData({ inputToken: MINT, user, sponsor })
+    }
+  };
+
+  test("refund prepends the user's ATA and pays the stored sponsor", async () => {
+    const { deps, calls, sent } = makeDeps({ accounts });
+    await refund(deps, { order, orderId: ORDER_ID });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("refund");
+    expect(calls[0]!.accounts).toMatchObject({
+      signer: USER,
+      user,
+      sponsor,
+      orderContext: context,
+      mint: MINT,
+      tokenProgram: TOKEN_PROGRAM_ID
+    });
+    expect(sent[0]).toHaveLength(2);
+    expect(sent[0]![0]!.programId).toBe(ASSOCIATED_TOKEN_PROGRAM_ID);
+    expect(sent[0]![0]!.keys[2]!.pubkey).toBe(user);
+  });
+
+  test("refund refuses a closed escrow", () => {
+    const { deps } = makeDeps();
+    return expect(refund(deps, { order, orderId: ORDER_ID })).rejects.toThrow("no open escrow");
+  });
+
+  test("refundOnNonFill names the attestation the input oracle wrote", async () => {
+    const { deps, sent } = makeDeps({ accounts });
+    const output = order.outputs[0]!;
+    const notFilledHash = b32("c");
+    await refundOnNonFill(deps, {
+      order,
+      orderId: ORDER_ID,
+      outputIndex: 0,
+      output,
+      notFilledHash
+    });
+    const [ata, ix] = sent[0]!;
+    expect(ata!.programId).toBe(ASSOCIATED_TOKEN_PROGRAM_ID);
+    expect([...ix!.data.subarray(0, 8)]).toEqual([...REFUND_ON_NON_FILL_DISCRIMINATOR]);
+    expect(ix!.keys[2]!.pubkey).toBe(sponsor);
+    expect(ix!.keys[13]!.pubkey).toBe(
+      attestationPda(
+        bytes32ToPubkey(order.inputOracle),
+        output.chainId,
+        output.oracle,
+        output.settler,
+        notFilledHash
+      ).toBase58()
+    );
+  });
+});
+
+describe("recordNotFilled", () => {
+  const fillDeadline = 1_700_000_900;
+  const output = makeOutput({ oracle: pubkeyToBytes32(new PublicKey(POLYMER_PROGRAM_ID)) });
+  const args = { orderId: ORDER_ID, output, fillDeadline };
+  const localPda = localAttestationPda(
+    outputSettlerSimplePda(),
+    output.oracle,
+    getNotFilledDescriptionHash(args)
+  ).toBase58();
+  const fillId = fillIdPda(ORDER_ID, getOutputHash(output)).toBase58();
+  const payerOfRecord = bytes32ToPubkey(b32("9"));
+  const local = (consumed: number) => {
+    const data = new Uint8Array(46);
+    data.set(LOCAL_ATTESTATION_DISCRIMINATOR);
+    new DataView(data.buffer).setUint32(8, fillDeadline, true);
+    data.set(payerOfRecord.toBytes(), 13);
+    data[45] = consumed;
+    return { [localPda]: { owner: INTENTS_PROTOCOL_PROGRAM_ID, data } };
+  };
+  const chainTime = fillDeadline + 100;
+
+  test("absent: attest + submit_consume in one tx, rent back to the signer", async () => {
+    const { deps, sent } = makeDeps({ accounts: {}, chainTime });
+    await recordNotFilled(deps, { ...args, nowSecs: chainTime });
+    expect(sent).toHaveLength(1);
+    const [attest, consume] = sent[0]!;
+    expect([...attest!.data.subarray(0, 8)]).toEqual([...ATTEST_NOT_FILLED_DISCRIMINATOR]);
+    expect([...consume!.data.subarray(0, 8)]).toEqual([...SUBMIT_CONSUME_DISCRIMINATOR]);
+    expect(consume!.keys[5]!.pubkey).toBe(USER);
+  });
+
+  test("current: only submit_consume, refunding the stored payer", async () => {
+    const { deps, sent } = makeDeps({ accounts: local(0), chainTime });
+    await recordNotFilled(deps, { ...args, nowSecs: chainTime });
+    expect(sent[0]).toHaveLength(1);
+    expect(sent[0]![0]!.keys[5]!.pubkey).toBe(payerOfRecord.toBase58());
+  });
+
+  test("current is allowed past the mint window (nothing is minted)", async () => {
+    const late = fillDeadline + 172_800;
+    const { deps, sent } = makeDeps({ accounts: local(0), chainTime: late });
+    await recordNotFilled(deps, { ...args, nowSecs: late });
+    expect(sent).toHaveLength(1);
+  });
+
+  test("consumed: refuses", () => {
+    const { deps } = makeDeps({ accounts: local(1), chainTime });
+    return expect(recordNotFilled(deps, { ...args, nowSecs: chainTime })).rejects.toThrow(
+      "unusable state"
+    );
+  });
+
+  test("absent past the mint window margin: refuses", async () => {
+    const edge = fillDeadline + 172_800 - 600;
+    const ok = makeDeps({ accounts: {}, chainTime: edge });
+    await recordNotFilled(ok.deps, { ...args, nowSecs: edge });
+    expect(ok.sent).toHaveLength(1);
+    const late = makeDeps({ accounts: {}, chainTime: edge + 1 });
+    await expect(recordNotFilled(late.deps, { ...args, nowSecs: edge + 1 })).rejects.toThrow("48h");
+    expect(late.sent).toHaveLength(0);
+  });
+
+  test("local clock ahead of the window uses the later of the two clocks", () => {
+    const edge = fillDeadline + 172_800 - 600;
+    const { deps } = makeDeps({ accounts: {}, chainTime: edge - 100 });
+    return expect(recordNotFilled(deps, { ...args, nowSecs: edge + 1 })).rejects.toThrow("48h");
+  });
+
+  test("chain time unavailable or stale: refuses", async () => {
+    const none = makeDeps({ accounts: {} });
+    await expect(recordNotFilled(none.deps, { ...args, nowSecs: chainTime })).rejects.toThrow(
+      "Solana time unavailable"
+    );
+    const stale = makeDeps({ accounts: {}, chainTime });
+    await expect(
+      recordNotFilled(stale.deps, { ...args, nowSecs: chainTime + 601 })
+    ).rejects.toThrow("Solana time unavailable");
+  });
+
+  test("chain not past the fill deadline: refuses", () => {
+    const { deps } = makeDeps({ accounts: {}, chainTime: fillDeadline });
+    return expect(recordNotFilled(deps, { ...args, nowSecs: fillDeadline })).rejects.toThrow(
+      "fill deadline"
+    );
+  });
+
+  test("filled output: refuses", async () => {
+    const { deps, sent } = makeDeps({
+      accounts: { [fillId]: { owner: OUTPUT_SETTLER_SIMPLE_PROGRAM_ID } },
+      chainTime
+    });
+    await expect(recordNotFilled(deps, { ...args, nowSecs: chainTime })).rejects.toThrow("filled");
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe("receiveProof", () => {
+  const output = makeOutput({ chainId: 8453n });
+  const payloadHash = b32("d");
+  const attestation = attestationPda(
+    polymerOraclePda(),
+    output.chainId,
+    output.oracle,
+    output.settler,
+    payloadHash
+  ).toBase58();
+  const prover = { cache: USER, result: USER, internal: USER };
+
+  test("derives the attestation from the given payload hash", async () => {
+    const { deps, calls, sent } = makeDeps({ accounts: {} });
+    const result = await receiveProof(deps, {
+      proof: new Uint8Array([1]),
+      output,
+      payloadHash,
+      proverProgramId: USER,
+      proverAccounts: prover
+    });
+    expect(result.attestation).toBe(attestation);
+    expect(calls.map((c) => c.method)).toEqual(["receiveLoadProof", "receiveAttest"]);
+    expect(calls[1]!.accounts!.attestation).toBe(attestation);
+    expect(sent).toHaveLength(2);
+  });
+
+  test("no-op when that attestation already exists", async () => {
+    const { deps, sent } = makeDeps({
+      accounts: { [attestation]: { owner: INTENTS_PROTOCOL_PROGRAM_ID } }
+    });
+    const result = await receiveProof(deps, {
+      proof: new Uint8Array([1]),
+      output,
+      payloadHash,
+      proverProgramId: USER,
+      proverAccounts: prover
+    });
+    expect(result).toEqual({ attestation });
+    expect(sent).toHaveLength(0);
   });
 });

@@ -1032,6 +1032,47 @@ export const SETTLER_ESCROW_ABI = [
     stateMutability: "nonpayable"
   },
   {
+    // Refund before `expires` against a proven `OutputNotFilled` for outputs[outputIndex].
+    // Source: ../intents-auto-refund/src/core/abi.ts REFUND_ON_NON_FILL_ABI;
+    // lifi-oif src/input/escrow/InputSettlerEscrow.sol:462.
+    type: "function",
+    name: "refundOnNonFill",
+    inputs: [
+      {
+        name: "order",
+        type: "tuple",
+        internalType: "struct StandardOrder",
+        components: [
+          { name: "user", type: "address", internalType: "address" },
+          { name: "nonce", type: "uint256", internalType: "uint256" },
+          { name: "originChainId", type: "uint256", internalType: "uint256" },
+          { name: "expires", type: "uint32", internalType: "uint32" },
+          { name: "fillDeadline", type: "uint32", internalType: "uint32" },
+          { name: "inputOracle", type: "address", internalType: "address" },
+          { name: "inputs", type: "uint256[2][]", internalType: "uint256[2][]" },
+          {
+            name: "outputs",
+            type: "tuple[]",
+            internalType: "struct MandateOutput[]",
+            components: [
+              { name: "oracle", type: "bytes32", internalType: "bytes32" },
+              { name: "settler", type: "bytes32", internalType: "bytes32" },
+              { name: "chainId", type: "uint256", internalType: "uint256" },
+              { name: "token", type: "bytes32", internalType: "bytes32" },
+              { name: "amount", type: "uint256", internalType: "uint256" },
+              { name: "recipient", type: "bytes32", internalType: "bytes32" },
+              { name: "callbackData", type: "bytes", internalType: "bytes" },
+              { name: "context", type: "bytes", internalType: "bytes" }
+            ]
+          }
+        ]
+      },
+      { name: "outputIndex", type: "uint256", internalType: "uint256" }
+    ],
+    outputs: [],
+    stateMutability: "nonpayable"
+  },
+  {
     type: "event",
     name: "EIP712DomainChanged",
     inputs: [],

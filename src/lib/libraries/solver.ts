@@ -7,7 +7,7 @@ import {
   bytes32ToSolanaBase58,
   StandardSolanaIntent
 } from "@lifi/intent";
-import { pollPolymerProof, type PolymerProofBody } from "./polymerProof";
+import { PolymerJobFailedError, pollPolymerProof, type PolymerProofBody } from "./polymerProof";
 import { extractRevertReason } from "$lib/utils/revert";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
@@ -109,10 +109,11 @@ export class Solver {
       });
       return result.status === "complete" ? result.proof : undefined;
     } catch (error) {
-      // Terminal. Keeping the index cached would make every future attempt
-      // poll the same dead job for the rest of the session, so drop it —
-      // the next attempt then places a fresh request.
-      Solver.polymerRequestIndexByLog.delete(cacheKey);
+      // A failed job is terminal: keeping its index would poll the dead job for
+      // the rest of the session. Transport errors keep it so a retry resumes.
+      if (error instanceof PolymerJobFailedError) {
+        Solver.polymerRequestIndexByLog.delete(cacheKey);
+      }
       throw error;
     }
   }

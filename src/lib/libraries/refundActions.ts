@@ -34,9 +34,9 @@ import {
   refundOnNonFill as refundOnNonFillTron,
   submitReceiveMessage as submitTronReceiveMessage
 } from "$lib/tron/writes";
-import { pollPolymerProof, type PolymerProofBody } from "./polymerProof";
+import { PolymerJobFailedError, pollPolymerProof, type PolymerProofBody } from "./polymerProof";
 import { polymerReceiveFunction } from "./polymerReceive";
-import { loadBreadcrumb, saveBreadcrumb } from "./refundBreadcrumbs";
+import { saveBreadcrumb } from "./refundBreadcrumbs";
 import type { EscrowRefundOrder } from "./refundLookup";
 import { assertStillRefundable, RefundActionError } from "./refundReads";
 import { chainLabel, type FastRail, type ProofSource } from "./refundState";
@@ -215,10 +215,14 @@ export type NonFillProofResult =
 
 export const PROOF_WAITS_MS = [2000, 3000, 5000, 8000, 13000, 20000] as const;
 
+// Polymer job index per chain-verified proof source, for this page session.
+// In memory only: see refundBreadcrumbs.ts for why it is never persisted.
+const polymerIndexBySource = new Map<string, number>();
+
 /**
- * Step 2a: ask Polymer to prove the record. The Polymer job index is persisted
- * per source, so "Check again" (or a reload) polls the same job instead of
- * placing a new request.
+ * Step 2a: ask Polymer to prove the record. The Polymer job index is kept per
+ * source for this session, so "Check again" polls the same job instead of
+ * placing a new request. A reload places a new one.
  */
 export async function fetchNonFillProof(
   order: EscrowRefundOrder,
@@ -229,8 +233,6 @@ export async function fetchNonFillProof(
   if ((await assertStillRefundable(order, "prove", rail)) === "already-proven") {
     return { status: "attested" };
   }
-  const { orderId } = order;
-  const { outputIndex } = rail;
   const body: PolymerProofBody =
     source.kind === "evm"
       ? {
@@ -249,22 +251,26 @@ export async function fetchNonFillProof(
     source.kind === "evm"
       ? `evm:${source.chainId}:${source.blockNumber}:${source.logIndex}`
       : `solana:${source.signature}`;
-  const crumb = loadBreadcrumb(orderId, outputIndex);
   let attempt = 0;
   onProgress?.(attempt, PROOF_WAITS_MS.length);
   let result;
   try {
     result = await pollPolymerProof(body, {
-      polymerIndex: crumb?.polymerSourceKey === sourceKey ? crumb.polymerIndex : undefined,
+      polymerIndex: polymerIndexBySource.get(sourceKey),
       waitsMs: PROOF_WAITS_MS,
       onIndex: (index) => {
-        saveBreadcrumb(orderId, outputIndex, { polymerIndex: index, polymerSourceKey: sourceKey });
+        polymerIndexBySource.set(sourceKey, index);
         onProgress?.(++attempt, PROOF_WAITS_MS.length);
       }
     });
   } catch (error) {
+    if (!(error instanceof PolymerJobFailedError)) {
+      throw new RefundActionError(
+        `Couldn't reach Polymer. Retry to resume the same request. (${extractRevertReason(error)})`
+      );
+    }
     // The job failed for good; the next attempt must place a fresh request.
-    saveBreadcrumb(orderId, outputIndex, { polymerIndex: undefined, polymerSourceKey: undefined });
+    polymerIndexBySource.delete(sourceKey);
     throw new RefundActionError(
       `Polymer couldn't generate a proof. Retrying starts a new request. (${extractRevertReason(error)})`
     );

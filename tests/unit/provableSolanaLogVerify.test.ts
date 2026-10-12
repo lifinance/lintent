@@ -111,6 +111,24 @@ describe("verifyProvableSolanaLog", () => {
     ).toBe("mismatch");
   });
 
+  it("rejects the pinned program's Prove text printed by another program", async () => {
+    // Any program can `msg!` this exact line; only the oracle's own frame counts.
+    reply = () =>
+      rpcOk([
+        "Program 11111111111111111111111111111111 invoke [1]",
+        proveLog(POLYMER_SOLANA_PROGRAM_ID),
+        "Program 11111111111111111111111111111111 success"
+      ]);
+
+    expect(
+      await verifyProvableSolanaLog(
+        Number(SOLANA_MAINNET_CHAIN_ID),
+        SIGNATURE,
+        POLYMER_SOLANA_PROGRAM_ID
+      )
+    ).toBe("mismatch");
+  });
+
   it("rejects a transaction with no Prove log at all", async () => {
     reply = () => rpcOk(["Program log: Instruction: Fill", "Program log: success"]);
 

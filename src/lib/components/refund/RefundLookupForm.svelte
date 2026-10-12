@@ -1,7 +1,6 @@
 <script lang="ts">
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
   import FormControl from "$lib/components/ui/FormControl.svelte";
-  import AwaitButton from "$lib/components/AwaitButton.svelte";
   import type { RefundFlow } from "$lib/libraries/refundFlow.svelte";
 
   let { flow }: { flow: RefundFlow } = $props();
@@ -12,7 +11,7 @@
     class="flex gap-2"
     onsubmit={(event) => {
       event.preventDefault();
-      if (flow.busy !== "lookup") flow.lookup(flow.input);
+      flow.lookup(flow.input);
     }}
   >
     <FormControl
@@ -23,10 +22,13 @@
       spellcheck="false"
       autocomplete="off"
     />
-    <AwaitButton buttonFunction={() => flow.lookup(flow.input)}>
-      {#snippet name()}Look up{/snippet}
-      {#snippet awaiting()}Looking up…{/snippet}
-    </AwaitButton>
+    <button
+      type="submit"
+      class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:border-sky-300 hover:text-sky-700 disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:border-gray-200"
+      disabled={flow.busy !== null}
+    >
+      {flow.busy === "lookup" ? "Looking up…" : "Look up"}
+    </button>
   </form>
   <p class="mt-1 text-xs text-gray-500">
     0x… order id, EVM/Tron transaction hash, or Solana signature.

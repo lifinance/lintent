@@ -4,6 +4,7 @@
 // whole /polymer route down, not just Solana verification.
 import { env } from "$env/dynamic/private";
 import { isSolanaMainnet } from "$lib/utils/chainType";
+import { programFrameLines } from "$lib/solana/events";
 
 /**
  * The Solana program `/polymer` will mint a proof for.
@@ -49,9 +50,9 @@ type GetTransactionResponse = {
  *
  * The marker is the log line `oracle_polymer::submit` emits via `msg!`:
  *     `Prove: program: {program_id}, {base64(source || payload)}`
- * which Solana surfaces in `meta.logMessages` prefixed with `Program log: `. Matching on
- * `Prove: program: <programId>,` therefore checks both the marker and the program identity that
- * Polymer will authenticate as `returnedProgramId`.
+ * which Solana surfaces in `meta.logMessages` prefixed with `Program log: `. The line must sit in
+ * an invocation frame of `programId` itself: any program can `msg!` the same text, and the marker
+ * also names the program identity Polymer will authenticate as `returnedProgramId`.
  *
  * Advisory by design, exactly like `verifyProvableLog`: an RPC failure — or a transaction the RPC
  * has not indexed yet — returns "unknown" and the caller proceeds, so an infra blip never blocks
@@ -91,8 +92,10 @@ export async function verifyProvableSolanaLog(
     const logMessages = body.result?.meta?.logMessages;
     if (!body.result || !logMessages) return "unknown";
 
-    const marker = `Prove: program: ${programId},`;
-    return logMessages.some((line) => line.includes(marker)) ? "match" : "mismatch";
+    const marker = `Program log: Prove: program: ${programId},`;
+    return programFrameLines(logMessages, programId).some((line) => line.startsWith(marker))
+      ? "match"
+      : "mismatch";
   } catch (e) {
     console.warn("solana provable-log verification failed", {
       chainId,

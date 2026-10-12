@@ -51,22 +51,24 @@ export class RefundFlow {
   view = $derived(this.order ? deriveRefundView(this.order, this.snapshot, this.now) : null);
 
   #onInput?: (raw: string) => void;
-  // Drops results of a lookup/refresh superseded by a newer one.
-  #lookupSeq = 0;
+  // Drops results of a refresh superseded by a newer one.
   #refreshSeq = 0;
 
   constructor(opts: { onInput?: (raw: string) => void } = {}) {
     this.#onInput = opts.onInput;
   }
 
+  /**
+   * Refused while any lookup or action runs: replacing the order mid-action
+   * would let the action's result and lock release land on the new order.
+   */
   async lookup(raw: string) {
-    const seq = ++this.#lookupSeq;
+    if (this.busy) return;
     this.input = raw.trim();
     this.lookupError = null;
     this.busy = "lookup";
     try {
       const order = await lookupRefundOrder(this.input);
-      if (seq !== this.#lookupSeq) return;
       this.order = order;
       this.snapshot = null;
       this.readError = null;
@@ -75,11 +77,10 @@ export class RefundFlow {
       this.lastTx = {};
       this.#onInput?.(this.input);
     } catch (error) {
-      if (seq !== this.#lookupSeq) return;
       this.lookupError = error instanceof Error ? error.message : String(error);
       return;
     } finally {
-      if (seq === this.#lookupSeq) this.busy = null;
+      this.busy = null;
     }
     await this.refresh();
   }

@@ -11,9 +11,11 @@ import type { MandateOutput } from "@lifi/intent";
 import {
   INPUT_SETTLER_ESCROW_PROGRAM_ID,
   INTENTS_PROTOCOL_PROGRAM_ID,
-  OUTPUT_SETTLER_SIMPLE_PROGRAM_ID
+  OUTPUT_SETTLER_SIMPLE_PROGRAM_ID,
+  POLYMER_PROGRAM_ID
 } from "$lib/idl";
 import { localAttestationDataHash } from "./encode";
+import { programFrameLines } from "./events";
 import {
   POLYMER_PROVER_PROGRAM_ID,
   associatedTokenAddress,
@@ -287,26 +289,39 @@ export async function readChainMappingCanonicalId(
 }
 
 /**
+ * Whether `signature` is a successful non-fill record for this output: its
+ * logs carry the exact Prove line Polymer will prove, printed inside a Polymer
+ * program invocation. Any program can print that text, so an unscoped match
+ * would let a stranger's transaction become the proof source.
+ */
+export async function isNotFilledRecordTx(
+  reads: SolanaConnectionLike,
+  signature: string,
+  a: NotFilledRecordArgs
+): Promise<boolean> {
+  const tx = await reads.getTransaction(signature, { commitment: "confirmed" });
+  if (!tx?.meta || tx.meta.err != null || !tx.meta.logMessages) return false;
+  return programFrameLines(tx.meta.logMessages, POLYMER_PROGRAM_ID).includes(
+    expectedNotFilledProveLog(a)
+  );
+}
+
+/**
  * The signature of a landed non-fill record for this output, or null.
  *
  * Found through the LocalAttestation's signature history, which the RPC
  * indexes by account key — so it still works after `submit_consume` closed
- * the account. A candidate only counts if its logs carry the exact Prove line
- * Polymer will prove.
+ * the account.
  */
 export async function findNotFilledRecordSignature(
   reads: SolanaConnectionLike,
   a: NotFilledRecordArgs
 ): Promise<string | null> {
-  const expectedLog = expectedNotFilledProveLog(a);
   const candidates = await reads.getSignaturesForAddress(notFilledLocalAttestationAddress(a), {
     limit: 20
   });
   for (const { signature, err } of candidates) {
-    if (err != null) continue;
-    const tx = await reads.getTransaction(signature);
-    if (tx?.meta && tx.meta.err == null && tx.meta.logMessages?.includes(expectedLog))
-      return signature;
+    if (err == null && (await isNotFilledRecordTx(reads, signature, a))) return signature;
   }
   return null;
 }

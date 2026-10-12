@@ -18,6 +18,7 @@ import { getChainType } from "$lib/utils/chainType";
 import { getSolanaReads } from "$lib/solana/client";
 import {
   findNotFilledRecordSignature,
+  isNotFilledRecordTx,
   readChainMappingCanonicalId,
   readIsOrderFinalised,
   readIsOrderOpen,
@@ -27,8 +28,7 @@ import {
 import {
   buildCreateAtaIdempotentInstruction,
   buildRefundOnNonFillInstruction,
-  estimateLegacyTxSize,
-  expectedNotFilledProveLog
+  estimateLegacyTxSize
 } from "$lib/solana/nonFill";
 import { attestationPda, bytes32ToPubkey, TOKEN_PROGRAM_ID } from "$lib/solana/pda";
 import { getTronReads } from "$lib/tron/client";
@@ -395,15 +395,13 @@ export async function locateSolanaRecord(
   };
   return readOn(SOLANA_MAINNET_CHAIN_ID, async () => {
     const reads = await getSolanaReads(SOLANA_MAINNET_CHAIN_ID);
-    if (hintSignature) {
-      const tx = await reads.getTransaction(hintSignature, { commitment: "confirmed" });
-      if (
-        tx?.meta &&
-        tx.meta.err == null &&
-        tx.meta.logMessages?.includes(expectedNotFilledProveLog(args))
-      ) {
-        return { kind: "solana", signature: hintSignature };
-      }
+    // The hint comes from localStorage: a malformed or stale value must fall
+    // through to history discovery, not fail every refresh.
+    if (
+      hintSignature &&
+      (await isNotFilledRecordTx(reads, hintSignature, args).catch(() => false))
+    ) {
+      return { kind: "solana", signature: hintSignature };
     }
     const found = await findNotFilledRecordSignature(reads, args);
     if (!found) return null;

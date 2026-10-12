@@ -14,6 +14,9 @@ export type PolymerPollResult =
   | { status: "complete"; proof: `0x${string}`; polymerIndex: number }
   | { status: "pending"; polymerIndex?: number };
 
+/** Polymer reported the job failed: its index is dead and must be dropped. */
+export class PolymerJobFailedError extends Error {}
+
 /**
  * Asks the `/polymer` route for a proof, retrying while it is still being
  * generated. One request per entry in `waitsMs`, sleeping that long after each
@@ -24,8 +27,10 @@ export type PolymerPollResult =
  * a poll of the existing job rather than a fresh request against the org's
  * Polymer quota.
  *
- * Throws when Polymer reports the job failed — the index is dead then, and the
- * caller must drop it so the next attempt places a new request.
+ * Throws `PolymerJobFailedError` when Polymer reports the job failed — the
+ * index is dead then, and the caller must drop it so the next attempt places a
+ * new request. Transport failures (timeouts, HTTP errors) throw as-is and
+ * leave the job resumable.
  */
 export async function pollPolymerProof(
   body: PolymerProofBody,
@@ -51,7 +56,7 @@ export async function pollPolymerProof(
       };
     }
     if (dat.status === "error") {
-      throw new Error(
+      throw new PolymerJobFailedError(
         `Polymer could not generate a proof for request ${polymerIndex} (job failed). Retrying will start a new request.`
       );
     }

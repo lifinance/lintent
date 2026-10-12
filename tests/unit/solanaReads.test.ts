@@ -4,7 +4,8 @@ import type { MandateOutput } from "@lifi/intent";
 import {
   INPUT_SETTLER_ESCROW_PROGRAM_ID,
   INTENTS_PROTOCOL_PROGRAM_ID,
-  OUTPUT_SETTLER_SIMPLE_PROGRAM_ID
+  OUTPUT_SETTLER_SIMPLE_PROGRAM_ID,
+  POLYMER_PROGRAM_ID
 } from "../../src/lib/idl";
 import { localAttestationDataHash } from "../../src/lib/solana/encode";
 import {
@@ -280,13 +281,23 @@ describe("non-fill record reads", () => {
     });
   });
 
-  test("findNotFilledRecordSignature skips failed and unrelated txs", async () => {
+  test("findNotFilledRecordSignature skips failed, unrelated and spoofed txs", async () => {
     const log = expectedNotFilledProveLog(args);
+    const inFrame = (programId: string, lines: string[]) => [
+      `Program ${programId} invoke [1]`,
+      ...lines,
+      `Program ${programId} success`
+    ];
     const queried: string[] = [];
     const txs: Record<string, { err: unknown; logs: string[] }> = {
-      unrelated: { err: null, logs: ["Program log: Prove: program: x, y"] },
-      revertedInMeta: { err: { InstructionError: [0, "x"] }, logs: [log] },
-      good: { err: null, logs: ["other", log] }
+      unrelated: { err: null, logs: inFrame(POLYMER_PROGRAM_ID, ["Program log: Prove: x"]) },
+      // Another program printing the exact line must not become the proof source.
+      spoofed: { err: null, logs: inFrame("11111111111111111111111111111111", [log]) },
+      revertedInMeta: {
+        err: { InstructionError: [0, "x"] },
+        logs: inFrame(POLYMER_PROGRAM_ID, [log])
+      },
+      good: { err: null, logs: ["other", ...inFrame(POLYMER_PROGRAM_ID, [log])] }
     };
     const { reads } = makeReads();
     reads.getSignaturesForAddress = async (address, opts) => {
@@ -295,6 +306,7 @@ describe("non-fill record reads", () => {
       return [
         { signature: "failed", err: { x: 1 } },
         { signature: "unrelated", err: null },
+        { signature: "spoofed", err: null },
         { signature: "revertedInMeta", err: null },
         { signature: "good", err: null }
       ];

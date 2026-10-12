@@ -1,15 +1,15 @@
-// Fast-refund breadcrumbs: tx references and the Polymer job index from earlier
-// steps, kept so a reload resumes without rescanning or re-requesting. HINTS
-// ONLY — every value is re-verified against the chain before it is used, so a
-// stale, foreign or tampered entry costs a lookup, never funds.
+// Fast-refund breadcrumbs: tx references from earlier steps, kept so a reload
+// resumes without rescanning. HINTS ONLY — every value is re-verified against
+// the chain before it is used, so a stale, foreign or tampered entry costs a
+// lookup, never funds. Polymer job indexes are deliberately not stored here:
+// `/polymer` returns whatever proof an index names, and nothing can check that
+// association, so a stored index could make the user submit an unrelated proof.
 
 export type RefundBreadcrumb = {
   v: 1;
   outputIndex: number;
   emitTxHash?: `0x${string}`;
   recordSignature?: string;
-  polymerIndex?: number;
-  polymerSourceKey?: string;
 };
 
 const keyFor = (orderId: string) => `lintent.refund.v1.${orderId.toLowerCase()}`;

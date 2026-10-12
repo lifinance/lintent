@@ -154,16 +154,18 @@ function decodeBase64(value: string): Uint8Array | undefined {
 }
 
 /**
- * Every `Program data:` line emitted inside a top-level invocation of
- * `programId`, in order.
+ * Every log line printed directly inside an invocation of `programId`, in
+ * order, framing lines excluded.
  *
  * Solana logs are a flat list with `Program <id> invoke [depth]` /
  * `Program <id> success|failed` bracketing each frame, so the depth has to be
  * tracked to know which program actually printed a line. Lines emitted by a
- * CPI *into* another program belong to that program's frame, not ours.
+ * CPI *into* another program belong to that program's frame, not ours — and
+ * any program can print any text, so a line only proves something when it sits
+ * in the right frame.
  */
-export function programDataLogs(logs: readonly string[], programId: string): Uint8Array[] {
-  const payloads: Uint8Array[] = [];
+export function programFrameLines(logs: readonly string[], programId: string): string[] {
+  const lines: string[] = [];
   const stack: string[] = [];
 
   for (const line of logs) {
@@ -176,17 +178,20 @@ export function programDataLogs(logs: readonly string[], programId: string): Uin
       stack.pop();
       continue;
     }
-    if (stack[stack.length - 1] !== programId) continue;
-
-    const raw = line.startsWith(PROGRAM_DATA_PREFIX)
-      ? line.slice(PROGRAM_DATA_PREFIX.length)
-      : undefined;
-    if (raw === undefined) continue;
-
-    const decoded = decodeBase64(raw.trim());
-    if (decoded) payloads.push(decoded);
+    if (stack[stack.length - 1] === programId) lines.push(line);
   }
 
+  return lines;
+}
+
+/** Every `Program data:` payload emitted inside an invocation of `programId`, in order. */
+export function programDataLogs(logs: readonly string[], programId: string): Uint8Array[] {
+  const payloads: Uint8Array[] = [];
+  for (const line of programFrameLines(logs, programId)) {
+    if (!line.startsWith(PROGRAM_DATA_PREFIX)) continue;
+    const decoded = decodeBase64(line.slice(PROGRAM_DATA_PREFIX.length).trim());
+    if (decoded) payloads.push(decoded);
+  }
   return payloads;
 }
 

@@ -700,5 +700,39 @@ export const COIN_FILLER_ABI = [
         internalType: "bytes32"
       }
     ]
+  },
+  {
+    // Records that `output` was not filled by `fillDeadline` by emitting `OutputNotFilled`.
+    // Reverts `AlreadyFilled` / `FillDeadlineNotPassed`. Source:
+    // ../intents-auto-refund/src/core/abi.ts EMIT_NOT_FILLED_ABI;
+    // lifi-oif src/output/OutputSettlerBase.sol:315.
+    type: "function",
+    name: "emitNotFilled",
+    inputs: [
+      { name: "orderId", type: "bytes32", internalType: "bytes32" },
+      {
+        name: "output",
+        type: "tuple",
+        internalType: "struct MandateOutput",
+        components: [
+          { name: "oracle", type: "bytes32", internalType: "bytes32" },
+          { name: "settler", type: "bytes32", internalType: "bytes32" },
+          { name: "chainId", type: "uint256", internalType: "uint256" },
+          { name: "token", type: "bytes32", internalType: "bytes32" },
+          { name: "amount", type: "uint256", internalType: "uint256" },
+          { name: "recipient", type: "bytes32", internalType: "bytes32" },
+          { name: "callbackData", type: "bytes", internalType: "bytes" },
+          { name: "context", type: "bytes", internalType: "bytes" }
+        ]
+      },
+      { name: "fillDeadline", type: "uint32", internalType: "uint32" }
+    ],
+    outputs: [],
+    stateMutability: "nonpayable"
+  },
+  {
+    type: "error",
+    name: "FillDeadlineNotPassed",
+    inputs: []
   }
 ] as const;

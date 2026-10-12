@@ -1,4 +1,4 @@
-// Solana write paths: open, fill, submit, receive, finalise.
+// Solana write paths: open, fill, submit, receive, finalise, refund (slow and non-fill).
 //
 // Every function takes `SolanaDeps` first and touches the chain only through
 // it, so the whole layer is testable against a hand-built mock. Each one
@@ -34,6 +34,15 @@ import {
   outputSettlerSimplePda,
   polymerOraclePda
 } from "./pda";
+import {
+  MINT_WINDOW_MARGIN_SECS,
+  NOT_FILLED_WINDOW_SECS,
+  buildAttestNotFilledInstruction,
+  buildCreateAtaIdempotentInstruction,
+  buildRefundOnNonFillInstruction,
+  buildSubmitConsumeNotFilledInstruction
+} from "./nonFill";
+import { readIsOutputFilled, readNotFilledLocalAttestation } from "./reads";
 import type { SolanaConnectionLike, SolanaDeps, SolanaInstructionLike } from "./types";
 
 /** `receive_attest` verifies a proof by CPI and needs well above the 200k default. */
@@ -402,7 +411,7 @@ export async function submitFillProof(
 
 /**
  * Verifies a Polymer proof on Solana and writes the attestation `finalise`
- * will read.
+ * (fill proof) or `refund_on_non_fill` (not-filled proof) will read.
  *
  * Two transactions, because that is why the program splits the steps: the
  * prover CPI plus the attestation exceed one transaction's compute and size
@@ -413,28 +422,21 @@ export async function receiveProof(
   deps: SolanaDeps,
   args: {
     proof: Uint8Array;
-    orderId: `0x${string}`;
     output: MandateOutput;
-    solverBytes32: `0x${string}`;
-    timestamp: number;
+    /** Hash of the proven payload: a fill description (claim) or a not-filled description (refund). */
+    payloadHash: `0x${string}`;
     proverProgramId: string;
     proverAccounts: { cache: string; result: string; internal: string };
   }
 ): Promise<{ loadSignature?: string; attestSignature?: string; attestation: string }> {
   await assertSolanaCluster(deps.chainId, deps.reads);
 
-  const payloadHash = fillPayloadHash({
-    solver: args.solverBytes32,
-    orderId: args.orderId,
-    timestamp: args.timestamp,
-    output: args.output
-  });
   const attestation = attestationPda(
     polymerOraclePda(),
     args.output.chainId,
     args.output.oracle,
     args.output.settler,
-    payloadHash
+    args.payloadHash
   );
 
   const existing = await deps.reads.getAccountInfo(attestation.toBase58());
@@ -620,4 +622,184 @@ function readSponsor(data: Uint8Array, fallback: string): string {
   let hex = "0x";
   for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
   return bytes32ToPubkey(hex as `0x${string}`).toBase58();
+}
+
+/**
+ * The accounts both refund instructions share, read from chain: the mint's
+ * token program and the sponsor recorded on the order context.
+ */
+async function escrowRefundAccounts(
+  deps: SolanaDeps,
+  order: StandardSolana,
+  orderId: `0x${string}`
+) {
+  const orderContext = orderContextPda(orderId);
+  const contextInfo = await deps.reads.getAccountInfo(orderContext.toBase58());
+  if (!contextInfo) {
+    throw new Error(`Order ${orderId} has no open escrow on Solana; it may already be settled`);
+  }
+  const [input] = order.inputs;
+  if (!input) throw new Error("A Solana order must have exactly one input");
+  const mint = bytes32ToPubkey(toBytes32(input[0])).toBase58();
+  const tokenProgram = await tokenProgramForMint(deps.reads, mint);
+  const user = bytes32ToPubkey(order.user as `0x${string}`).toBase58();
+  return {
+    orderContext: orderContext.toBase58(),
+    mint,
+    tokenProgram,
+    user,
+    sponsor: readSponsor(contextInfo.data, user),
+    // Prepended to every refund: `user_token_account` has no init_if_needed,
+    // so a user who closed their ATA would otherwise make the refund fail.
+    createUserAta: buildCreateAtaIdempotentInstruction({
+      payer: deps.signer.publicKey,
+      owner: user,
+      mint,
+      tokenProgramId: tokenProgram
+    })
+  };
+}
+
+/**
+ * Refunds an expired Solana escrow to the order's user. Permissionless: the
+ * signer only pays fees; funds always go to `order.user`.
+ */
+export async function refund(
+  deps: SolanaDeps,
+  args: { order: StandardSolana; orderId: `0x${string}` }
+): Promise<string> {
+  await assertSolanaCluster(deps.chainId, deps.reads);
+  const c = await codecs();
+  const a = await escrowRefundAccounts(deps, args.order, args.orderId);
+  const instruction = await deps.programs.inputSettlerEscrow.methods
+    .refund(toAnchorOrder(args.order, c))
+    .accounts({
+      signer: deps.signer.publicKey,
+      user: a.user,
+      sponsor: a.sponsor,
+      inputSettlerEscrow: inputSettlerEscrowPda().toBase58(),
+      orderContext: a.orderContext,
+      orderPdaTokenAccount: associatedTokenAddress(
+        a.mint,
+        a.orderContext,
+        a.tokenProgram
+      ).toBase58(),
+      userTokenAccount: associatedTokenAddress(a.mint, a.user, a.tokenProgram).toBase58(),
+      mint: a.mint,
+      tokenProgram: a.tokenProgram,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SYSTEM_PROGRAM_ID
+    })
+    .instruction();
+  return deps.signer.signAndSend([a.createUserAta, instruction]);
+}
+
+/**
+ * Refunds a Solana escrow against a proven non-fill of `output`. Raw-built:
+ * the vendored IDL predates the upgraded 13+2 account list (see ./nonFill).
+ */
+export async function refundOnNonFill(
+  deps: SolanaDeps,
+  args: {
+    order: StandardSolana;
+    orderId: `0x${string}`;
+    outputIndex: number;
+    output: MandateOutput;
+    notFilledHash: `0x${string}`;
+  }
+): Promise<string> {
+  await assertSolanaCluster(deps.chainId, deps.reads);
+  const a = await escrowRefundAccounts(deps, args.order, args.orderId);
+  const attestation = attestationPda(
+    bytes32ToPubkey(args.order.inputOracle),
+    args.output.chainId,
+    args.output.oracle,
+    args.output.settler,
+    args.notFilledHash
+  ).toBase58();
+  return deps.signer.signAndSend([
+    a.createUserAta,
+    buildRefundOnNonFillInstruction({
+      signer: deps.signer.publicKey,
+      order: args.order,
+      orderId: args.orderId,
+      sponsor: a.sponsor,
+      tokenProgramId: a.tokenProgram,
+      outputIndex: args.outputIndex,
+      attestation
+    })
+  ]);
+}
+
+const SOLANA_TIME_UNAVAILABLE = "Solana time unavailable. Try again.";
+
+/**
+ * Records on Solana that `output` was not filled, producing the `Prove:` log
+ * Polymer proves to the origin chain.
+ *
+ * `attest_not_filled` + `submit_consume` go in ONE transaction so the
+ * attestation's rent returns to the signer immediately. If a previous attempt
+ * left an unconsumed attestation, only `submit_consume` is sent, refunding the
+ * rent to whoever paid it.
+ *
+ * Time is judged against the finalized chain clock, not the browser's: a
+ * browser clock that runs ahead could otherwise mint after the window, which
+ * makes the FillRecord closable and the proof worthless.
+ */
+export async function recordNotFilled(
+  deps: SolanaDeps,
+  args: { orderId: `0x${string}`; output: MandateOutput; fillDeadline: number; nowSecs: number }
+): Promise<string> {
+  await assertSolanaCluster(deps.chainId, deps.reads);
+  const { orderId, output, fillDeadline, nowSecs } = args;
+
+  let chainTime: number;
+  try {
+    chainTime = await deps.reads.getFinalizedBlockTime();
+  } catch {
+    throw new Error(SOLANA_TIME_UNAVAILABLE);
+  }
+  if (nowSecs - chainTime > MINT_WINDOW_MARGIN_SECS) throw new Error(SOLANA_TIME_UNAVAILABLE);
+  if (chainTime <= fillDeadline) {
+    throw new Error("Solana hasn't passed the fill deadline yet. Retry in a minute.");
+  }
+  if (await readIsOutputFilled(deps.reads, { orderId, output })) {
+    throw new Error("An output was filled. Refund isn't possible.");
+  }
+
+  const payer = deps.signer.publicKey;
+  const local = await readNotFilledLocalAttestation(deps.reads, { orderId, output, fillDeadline });
+  switch (local.kind) {
+    case "absent": {
+      if (
+        Math.max(chainTime, nowSecs) + MINT_WINDOW_MARGIN_SECS >
+        fillDeadline + NOT_FILLED_WINDOW_SECS
+      ) {
+        throw new Error("Solana non-fill proofs must be created within 48h of the fill deadline.");
+      }
+      return deps.signer.signAndSend([
+        buildAttestNotFilledInstruction({ payer, orderId, output, fillDeadline }),
+        buildSubmitConsumeNotFilledInstruction({
+          payer,
+          orderId,
+          output,
+          fillDeadline,
+          rentRefund: payer
+        })
+      ]);
+    }
+    case "current":
+      return deps.signer.signAndSend([
+        buildSubmitConsumeNotFilledInstruction({
+          payer,
+          orderId,
+          output,
+          fillDeadline,
+          rentRefund: local.rentRefund
+        })
+      ]);
+    case "consumed":
+    case "legacy":
+      throw new Error("A non-fill record for this output already exists in an unusable state.");
+  }
 }

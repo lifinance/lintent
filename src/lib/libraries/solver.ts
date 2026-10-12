@@ -1,14 +1,14 @@
-import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
+import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, type WC } from "$lib/config";
 import { encodeFunctionData, hashStruct, hexToBytes, maxUint256, parseEventLogs } from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import {
   addressToBytes32,
   bytes32ToAddress,
   bytes32ToSolanaBase58,
-  StandardSolanaIntent,
-  TRON_LEGACY_POLYMER_ORACLES
+  StandardSolanaIntent
 } from "@lifi/intent";
-import axios from "axios";
+import { PolymerJobFailedError, pollPolymerProof, type PolymerProofBody } from "./polymerProof";
+import { extractRevertReason } from "$lib/utils/revert";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { ERC20_ABI } from "$lib/abi/erc20";
@@ -19,7 +19,7 @@ import { finaliseIntent } from "./intentExecution";
 import { getFillDetails } from "./fillEvent";
 import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import { isValidTxRef, type TxRef } from "$lib/utils/txRef";
-import { polymerReceiveFunction } from "./polymerReceive";
+import { polymerOraclesFor, polymerReceiveFunction } from "./polymerReceive";
 import { getSolanaReads } from "$lib/solana/client";
 import { createSolanaPrograms } from "$lib/solana/program";
 import { getSolanaSigner } from "$lib/solana/wallet";
@@ -32,6 +32,7 @@ import {
 import { polymerScratchPdas } from "$lib/solana/pda";
 import { POLYMER_PROGRAM_ID } from "$lib/idl";
 import { readPolymerProverId } from "$lib/solana/reads";
+import { fillPayloadHash } from "$lib/solana/encode";
 import type { SolanaDeps } from "$lib/solana/types";
 import { getTronReads, getTronSigner } from "$lib/tron/client";
 import {
@@ -42,7 +43,7 @@ import {
 } from "$lib/tron/writes";
 import type { TronDeps } from "$lib/tron/types";
 
-async function tronDeps(): Promise<TronDeps> {
+export async function tronDeps(): Promise<TronDeps> {
   return { reads: await getTronReads(), signer: getTronSigner() };
 }
 
@@ -52,7 +53,7 @@ async function tronDeps(): Promise<TronDeps> {
  * The chain id is always taken from the order — never from the UI's network
  * toggle — so a devnet order cannot be signed against mainnet.
  */
-async function solanaDeps(chainId: bigint): Promise<SolanaDeps> {
+export async function solanaDeps(chainId: bigint): Promise<SolanaDeps> {
   const signer = await getSolanaSigner(chainId);
   const [reads, programs] = await Promise.all([
     getSolanaReads(chainId),
@@ -77,10 +78,6 @@ export class Solver {
    */
   private static solanaSubmitByOutput = new Map<string, string>();
 
-  private static sleep(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
   /** Serialises Solana proof receives; see the call site for why. */
   private static solanaReceiveQueue: Promise<unknown> = Promise.resolve();
 
@@ -102,68 +99,23 @@ export class Solver {
    */
   private static async pollPolymerProof(
     cacheKey: string,
-    body: Record<string, unknown>
+    body: PolymerProofBody
   ): Promise<string | undefined> {
-    let polymerIndex: number | undefined = Solver.polymerRequestIndexByLog.get(cacheKey);
-    for (const waitMs of [1000, 2000, 4000, 8000]) {
-      const response = await axios.post(`/polymer`, { ...body, polymerIndex }, { timeout: 15_000 });
-      const dat = response.data as {
-        proof: undefined | string;
-        polymerIndex: number;
-        status?: "initialized" | "complete" | "error";
-      };
-      polymerIndex = dat.polymerIndex;
-      if (polymerIndex !== undefined) {
-        Solver.polymerRequestIndexByLog.set(cacheKey, polymerIndex);
-      }
-      if (dat.proof) return dat.proof;
-      if (dat.status === "error") {
-        // Terminal. Keeping the index cached would make every future attempt
-        // poll the same dead job for the rest of the session, so drop it —
-        // the next attempt then places a fresh request.
+    try {
+      const result = await pollPolymerProof(body, {
+        polymerIndex: Solver.polymerRequestIndexByLog.get(cacheKey),
+        waitsMs: [1000, 2000, 4000, 8000],
+        onIndex: (index) => Solver.polymerRequestIndexByLog.set(cacheKey, index)
+      });
+      return result.status === "complete" ? result.proof : undefined;
+    } catch (error) {
+      // A failed job is terminal: keeping its index would poll the dead job for
+      // the rest of the session. Transport errors keep it so a retry resumes.
+      if (error instanceof PolymerJobFailedError) {
         Solver.polymerRequestIndexByLog.delete(cacheKey);
-        throw new Error(
-          `Polymer could not generate a proof for request ${polymerIndex} (job failed). Retrying will start a new request.`
-        );
       }
-      await Solver.sleep(waitMs);
+      throw error;
     }
-    return undefined;
-  }
-
-  /**
-   * The oracle addresses a chain's input side will accept a Polymer proof
-   * from, lower-cased.
-   *
-   * Includes known legacy deployments alongside the current one: an order
-   * opened before an address rotation must stay provable, or its inputs are
-   * stranded until the deadline.
-   */
-  private static polymerOraclesFor(chainId: number | bigint): Set<string> {
-    return new Set(
-      [getOracle("polymer", chainId), ...(TRON_LEGACY_POLYMER_ORACLES[chainId.toString()] ?? [])]
-        .filter((oracle): oracle is `0x${string}` => !!oracle)
-        .map((oracle) => oracle.toLowerCase())
-    );
-  }
-
-  private static extractRevertReason(error: unknown): string {
-    if (
-      error &&
-      typeof error === "object" &&
-      "cause" in error &&
-      error.cause &&
-      typeof error.cause === "object" &&
-      "data" in error.cause
-    ) {
-      const reverted = error.cause as { data?: { errorName?: string; args?: unknown[] } };
-      if (reverted.data?.errorName) {
-        const args = reverted.data.args?.length ? ` (${reverted.data.args.join(", ")})` : "";
-        return `${reverted.data.errorName}${args}`;
-      }
-    }
-    if (error instanceof Error) return error.message;
-    return String(error);
   }
 
   private static async persistReceipt(
@@ -365,7 +317,7 @@ export class Solver {
           // Before spending a signature and a fee on `submit`, check the input
           // chain can actually accept the resulting proof. Otherwise the
           // submit succeeds and the failure only surfaces at delivery.
-          if (!Solver.polymerOraclesFor(sourceChainId).has(order.inputOracle.toLowerCase())) {
+          if (!polymerOraclesFor(sourceChainId).has(order.inputOracle.toLowerCase())) {
             throw new Error(
               `Input oracle ${order.inputOracle} on chain ${Number(sourceChainId)} is not a Polymer oracle, so a Solana output cannot be proven to it.`
             );
@@ -420,7 +372,7 @@ export class Solver {
           order.inputOracle === COIN_FILLER;
         const isPolymerPath =
           !sameChainAttestation &&
-          Solver.polymerOraclesFor(sourceChainId).has(order.inputOracle.toLowerCase());
+          polymerOraclesFor(sourceChainId).has(order.inputOracle.toLowerCase());
 
         if (sameChainAttestation) {
           // Same-chain fills: the output settler doubles as the oracle, but the
@@ -569,10 +521,8 @@ export class Solver {
           const { solver, timestamp } = await getFillDetails(orderId, output, fillTransactionHash);
           const { attestSignature, attestation } = await receiveSolanaProof(deps, {
             proof: hexToBytes(`0x${proof.replace(/^0x/, "")}`),
-            orderId,
             output,
-            solverBytes32: solver,
-            timestamp,
+            payloadHash: fillPayloadHash({ solver, orderId, timestamp, output }),
             proverProgramId,
             proverAccounts: polymerScratchPdas(deps.signer.publicKey, proverProgramId)
           });
@@ -615,7 +565,7 @@ export class Solver {
         });
       } catch (simError) {
         throw new Error(
-          `${receiveFn} simulation failed on chain ${Number(sourceChainId)}: ${Solver.extractRevertReason(simError)}`,
+          `${receiveFn} simulation failed on chain ${Number(sourceChainId)}: ${extractRevertReason(simError)}`,
           { cause: simError as Error }
         );
       }

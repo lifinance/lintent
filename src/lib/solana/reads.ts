@@ -6,19 +6,22 @@
 // present" is the fact, and the account's owner is what makes it trustworthy:
 // anyone can fund an address, only the program can own it.
 
-import { getOutputHash } from "@lifi/intent";
+import { getNotFilledDescriptionHash, getOutputHash } from "@lifi/intent";
 import type { MandateOutput } from "@lifi/intent";
 import {
   INPUT_SETTLER_ESCROW_PROGRAM_ID,
   INTENTS_PROTOCOL_PROGRAM_ID,
-  OUTPUT_SETTLER_SIMPLE_PROGRAM_ID
+  OUTPUT_SETTLER_SIMPLE_PROGRAM_ID,
+  POLYMER_PROGRAM_ID
 } from "$lib/idl";
 import { localAttestationDataHash } from "./encode";
+import { programFrameLines } from "./events";
 import {
   POLYMER_PROVER_PROGRAM_ID,
   associatedTokenAddress,
   attestationPda,
   bytes32ToPubkey,
+  chainMappingPda,
   consumedOrderPda,
   fillIdPda,
   localAttestationPda,
@@ -26,6 +29,12 @@ import {
   outputSettlerSimplePda,
   polymerOraclePda
 } from "./pda";
+import {
+  CHAIN_MAPPING_DISCRIMINATOR,
+  classifyNotFilledLocalAttestation,
+  expectedNotFilledProveLog,
+  type NotFilledLocalAttestation
+} from "./nonFill";
 import type { SolanaConnectionLike } from "./types";
 
 /**
@@ -225,4 +234,94 @@ export async function readPolymerProverId(reads: SolanaConnectionLike): Promise<
     );
   }
   return onChain;
+}
+
+type NotFilledRecordArgs = {
+  orderId: `0x${string}`;
+  output: MandateOutput;
+  fillDeadline: number;
+};
+
+function notFilledLocalAttestationAddress(a: NotFilledRecordArgs): string {
+  return localAttestationPda(
+    outputSettlerSimplePda(),
+    a.output.oracle,
+    getNotFilledDescriptionHash(a)
+  ).toBase58();
+}
+
+/**
+ * State of the non-fill record's LocalAttestation: decides whether a record
+ * needs `attest_not_filled` + `submit_consume`, only `submit_consume`, or is
+ * stuck in an unusable state.
+ */
+export async function readNotFilledLocalAttestation(
+  reads: SolanaConnectionLike,
+  a: NotFilledRecordArgs
+): Promise<NotFilledLocalAttestation> {
+  const info = await reads.getAccountInfo(notFilledLocalAttestationAddress(a), "confirmed");
+  return classifyNotFilledLocalAttestation(info, a.fillDeadline);
+}
+
+/**
+ * The protocol chain id the Polymer oracle maps `polymerChainId` to, or null
+ * when no well-formed mapping exists (receive_attest would then fail).
+ *
+ * `ChainMapping` layout: disc(8) ‖ chain_id u128 LE(16) ‖ bump(1).
+ */
+export async function readChainMappingCanonicalId(
+  reads: SolanaConnectionLike,
+  polymerChainId: bigint
+): Promise<bigint | null> {
+  const info = await reads.getAccountInfo(
+    chainMappingPda(polymerOraclePda(), polymerChainId).toBase58()
+  );
+  if (
+    info?.owner !== INTENTS_PROTOCOL_PROGRAM_ID ||
+    info.data.length < 25 ||
+    !CHAIN_MAPPING_DISCRIMINATOR.every((byte, i) => info.data[i] === byte)
+  ) {
+    return null;
+  }
+  let value = 0n;
+  for (let i = 23; i >= 8; i--) value = (value << 8n) | BigInt(info.data[i]!);
+  return value;
+}
+
+/**
+ * Whether `signature` is a successful non-fill record for this output: its
+ * logs carry the exact Prove line Polymer will prove, printed inside a Polymer
+ * program invocation. Any program can print that text, so an unscoped match
+ * would let a stranger's transaction become the proof source.
+ */
+export async function isNotFilledRecordTx(
+  reads: SolanaConnectionLike,
+  signature: string,
+  a: NotFilledRecordArgs
+): Promise<boolean> {
+  const tx = await reads.getTransaction(signature, { commitment: "confirmed" });
+  if (!tx?.meta || tx.meta.err != null || !tx.meta.logMessages) return false;
+  return programFrameLines(tx.meta.logMessages, POLYMER_PROGRAM_ID).includes(
+    expectedNotFilledProveLog(a)
+  );
+}
+
+/**
+ * The signature of a landed non-fill record for this output, or null.
+ *
+ * Found through the LocalAttestation's signature history, which the RPC
+ * indexes by account key — so it still works after `submit_consume` closed
+ * the account.
+ */
+export async function findNotFilledRecordSignature(
+  reads: SolanaConnectionLike,
+  a: NotFilledRecordArgs
+): Promise<string | null> {
+  const candidates = await reads.getSignaturesForAddress(notFilledLocalAttestationAddress(a), {
+    limit: 20
+  });
+  for (const { signature, err } of candidates) {
+    if (err == null && (await isNotFilledRecordTx(reads, signature, a))) return signature;
+  }
+  return null;
 }

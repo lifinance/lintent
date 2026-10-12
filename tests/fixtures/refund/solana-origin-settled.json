@@ -1,0 +1,71 @@
+{
+  "order": {
+    "user": "B4PRAeby5L9Dyk99UxdW5HYLoTPrTMPm9oKhnZT1yVc3",
+    "nonce": "2166153597885740951618033198672043766",
+    "inputs": [["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "100000000"]],
+    "expires": "1791973059",
+    "outputs": [
+      {
+        "token": "0x00000000000000000000000055d398326f99059ff775485246999027b3197955",
+        "amount": "99996300000000000000",
+        "oracle": "0x000000000000000000000000008c3800f3ad9b3b662d002e90cc00000000ee17",
+        "chainId": "56",
+        "context": "0xe04210acd081e2005f0293b81b8f033ba4ea89272ba2ccad121b38c72552e62a2a6accb3dc",
+        "settler": "0x00000000000000000000000075220b7600c300005038432a0000f308e0000068",
+        "recipient": "0x0000000000000000000000000af2a514d1ce43fa0e11d4df7de28f20620e21d3",
+        "callbackData": "0x"
+      }
+    ],
+    "inputOracle": "49zLKETMq34CUC2E2wL1xvv6uN2AUgyhjVX221mjE3Rw",
+    "fillDeadline": "1791807459",
+    "originChainId": "1151111081099710"
+  },
+  "quote": {
+    "id": "465073382",
+    "createdAt": "2026-10-12T10:17:39.986Z",
+    "updatedAt": "2026-10-12T10:17:48.783Z",
+    "quoteId": "quote_AaEvnjWPEm40VK5oqjre9g",
+    "fromChainNetworkId": "1151111081099710",
+    "toChainNetworkId": "56",
+    "fromAssetAddress": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "toAssetAddress": "0x55d398326f99059ff775485246999027b3197955",
+    "fromAssetDecimals": 6,
+    "toAssetDecimals": 18,
+    "quote": "0.999963",
+    "inputAmount": "100000000",
+    "outputAmount": "99996300000000000000",
+    "expiry": "2026-10-12T10:18:17.000Z",
+    "exclusiveFor": "5Stf2HzxgQ1ELarUD45CgM6iErW4BDgvEB9nguAKmiZ7",
+    "user": "B4PRAeby5L9Dyk99UxdW5HYLoTPrTMPm9oKhnZT1yVc3",
+    "orderId": 311207,
+    "solverId": 242
+  },
+  "sponsorSignature": null,
+  "allocatorSignature": null,
+  "inputSettler": "LiFiRp8RM7nJUZyUYC9FPPpDr7sAy5XPfBN6ABzBgT7",
+  "meta": {
+    "submitTime": 1791800268,
+    "orderStatus": "Settled",
+    "destinationAddress": "0x0af2a514d1ce43fa0e11d4df7de28f20620e21d3",
+    "sendingTokenAddress": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "sendingTokenAmount": "100000000",
+    "receivingTokenAddress": "0x55d398326f99059ff775485246999027b3197955",
+    "receivingTokenAmount": "99996300000000000000",
+    "orderIdentifier": "intent_LWg7W5OvFT9WU82xQqkRUXpjCQVPol",
+    "onChainOrderId": "0xd28205b4448fabb5fb39c306d25eaed78ed039bc86d2691750c767a49d0df9c3",
+    "signedAt": "2026-10-12T10:17:46.000Z",
+    "expiredAt": null,
+    "deliveredAt": "2026-10-12T10:17:50.000Z",
+    "settledAt": "2026-10-12T10:18:07.000Z",
+    "refundedAt": null,
+    "lastCompactDepositBlockNumber": null,
+    "orderInitiatedTxHash": "5EAFBSPDkwfaTRhhDWEFauwYfaviW38PTBrcjZiSAosdSpQQ9Zi1HLE5yrXrFRMNiUTxhrdB1PjRMCyymFRstFBq",
+    "orderDeliveredTxHash": "0x6b096ec7fb7ff36fd5a3241e20c4c425ad3bb34a0f53c36f4d8d8d0b11d3ac1b",
+    "orderVerifiedTxHash": null,
+    "orderSettledTxHash": "45pKqXAn6KSSUQUJYo3fU4gBLw1Pyw2uzTrmsQWf3xE3B9kowLxjqW5cECL3VD3a17BaevXbjF6nFdMt2jqK8sN9",
+    "refundTxHash": null,
+    "quoteId": "quote_AaEvnjWPEm40VK5oqjre9g",
+    "solverAddress": "5Stf2HzxgQ1ELarUD45CgM6iErW4BDgvEB9nguAKmiZ7",
+    "integratorKeyHash": null
+  }
+}

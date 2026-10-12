@@ -42,7 +42,13 @@ export async function readIsOutputFilled(
     TRON_OUTPUT_SETTLER_ABI,
     bytes32ToAddress(outputSettlerBytes32)
   );
-  const record = (await contract.getFillRecord!(orderId, outputHash).call()) as string;
+  // `getFillRecord` is overloaded (bytes32 hash / MandateOutput tuple), and
+  // TronWeb binds the bare name to the first ABI entry — the tuple one — which
+  // then fails to encode the hash. Address the hash overload by signature.
+  const record = (await contract["getFillRecord(bytes32,bytes32)"]!(
+    orderId,
+    outputHash
+  ).call()) as string;
   return BigInt(record ?? 0) !== 0n;
 }
 
@@ -62,6 +68,18 @@ export async function readIsProven(
     dataHash
   ).call();
   return Boolean(result);
+}
+
+/** Polymer chain id the oracle maps `chainId` to; 0 means unmapped (the
+ * oracle's receive would revert `ZeroValue()`). */
+export async function readReverseChainIdMap(
+  reads: TronWebLike,
+  oracleHex: `0x${string}`,
+  chainId: bigint
+): Promise<bigint> {
+  const contract = await contractAt(reads, TRON_POLYMER_ORACLE_ABI, oracleHex);
+  const mapped = await contract.reverseChainIdMap!(chainId.toString()).call();
+  return BigInt((mapped as bigint | string | number).toString());
 }
 
 export async function getTronTransactionInfo(

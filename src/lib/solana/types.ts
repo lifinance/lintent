@@ -46,6 +46,13 @@ export type SolanaConnectionLike = {
   /** Resolves to 0n when the associated token account does not exist yet. */
   getTokenAccountBalance(address: string): Promise<bigint>;
   getLatestBlockhash(): Promise<SolanaBlockhash>;
+  /** Newest first, as the RPC returns them. */
+  getSignaturesForAddress(
+    address: string,
+    opts?: { limit?: number }
+  ): Promise<{ signature: string; err: unknown }[]>;
+  /** Unix seconds of the latest finalized slot; throws when the RPC has no block time. */
+  getFinalizedBlockTime(): Promise<number>;
 };
 
 export type SolanaAccountMeta = {

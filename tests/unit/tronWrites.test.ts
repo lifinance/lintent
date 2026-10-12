@@ -8,7 +8,16 @@ import {
   invalidateNetworkGuardCache,
   waitForTronTransaction
 } from "../../src/lib/tron/signer";
-import { fillOutputs, finalise, openEscrow, submitReceiveMessage } from "../../src/lib/tron/writes";
+import {
+  emitNotFilled,
+  fillOutputs,
+  finalise,
+  openEscrow,
+  refund,
+  refundOnNonFill,
+  submitReceiveMessage
+} from "../../src/lib/tron/writes";
+import { readReverseChainIdMap } from "../../src/lib/tron/reads";
 import type { TronTxInfo, TronWebLike } from "../../src/lib/tron/types";
 
 const USDT = "0xa614f803b6fd780986a42c78ec9c7f77e6ded13c" as const;
@@ -22,6 +31,7 @@ function makeMock(opts: {
   allowance?: bigint;
   defaultAddress?: { base58: string; hex: string };
   txInfoScript?: (id: string, attempt: number) => TronTxInfo;
+  callResult?: unknown;
 }): { tw: TronWebLike; calls: Call[] } {
   const calls: Call[] = [];
   const attempts = new Map<string, number>();
@@ -63,7 +73,7 @@ function makeMock(opts: {
               call: async () => {
                 calls.push({ contract: address, method, args });
                 if (method === "allowance") return opts.allowance ?? 0n;
-                return 0n;
+                return opts.callResult ?? 0n;
               }
             });
           }
@@ -393,5 +403,78 @@ describe("finalise ownership check", () => {
     const fin = calls.find((c) => c.method === "finalise")!;
     expect(fin.args[1]).toEqual([[1234, addressToBytes32(SOLVER)]]);
     expect(fin.args[3]).toBe("0x");
+  });
+});
+
+describe("refunds", () => {
+  const INPUT_SETTLER = "0xaa2e58aa1a4107dc8cc7ef41b97be90b25b5b842" as const;
+  const ORACLE = "0x94b0c01e26aff5a6a0fd767afe0e3ca0f8b34e3d" as const;
+  // Refunds are permissionless: the signer differs from order.user.
+  const signer = { base58: "TOther", hex: `41${"33".repeat(20)}` };
+  const order: EVMOrder = {
+    user: SOLVER,
+    nonce: 1n,
+    originChainId: 728126428n,
+    expires: 2_000_000_000,
+    fillDeadline: 1_999_999_000,
+    inputOracle: ORACLE,
+    inputs: [[BigInt(USDT), 4n]],
+    outputs: [makeOutput({ chainId: 137n }), makeOutput({ chainId: 8453n })]
+  };
+
+  it("refund sends the order tuple with Tron-form address fields to the input settler", async () => {
+    invalidateNetworkGuardCache();
+    const { tw, calls } = makeMock({ defaultAddress: signer });
+    const txId = await refund({ reads: tw, signer: tw }, { inputSettler: INPUT_SETTLER, order });
+    const call = calls.find((c) => c.method === "refund")!;
+    expect(txId).toBe("tx1");
+    expect(call.contract).toBe(`b58:41${INPUT_SETTLER.slice(2)}`);
+    expect(call.args).toHaveLength(1);
+    const tuple = call.args[0] as unknown[];
+    expect(tuple[0]).toBe(`b58:41${SOLVER.slice(2)}`);
+    expect(tuple).toContain(`b58:41${ORACLE.slice(2)}`);
+    expect(call.opts?.feeLimit).toBe(300_000_000);
+  });
+
+  it("refundOnNonFill passes the outputIndex after the order tuple", async () => {
+    invalidateNetworkGuardCache();
+    const { tw, calls } = makeMock({ defaultAddress: signer });
+    await refundOnNonFill(
+      { reads: tw, signer: tw },
+      { inputSettler: INPUT_SETTLER, order, outputIndex: 1 }
+    );
+    const call = calls.find((c) => c.method === "refundOnNonFill")!;
+    expect(call.contract).toBe(`b58:41${INPUT_SETTLER.slice(2)}`);
+    expect((call.args[0] as unknown[])[0]).toBe(`b58:41${SOLVER.slice(2)}`);
+    expect(call.args[1]).toBe(1);
+    expect(call.opts?.feeLimit).toBe(300_000_000);
+  });
+
+  it("emitNotFilled targets the output settler with (orderId, output tuple, fillDeadline)", async () => {
+    invalidateNetworkGuardCache();
+    const { tw, calls } = makeMock({ defaultAddress: signer });
+    const output = makeOutput();
+    const orderId = `0x${"ab".repeat(32)}` as const;
+    await emitNotFilled(
+      { reads: tw, signer: tw },
+      { outputSettlerBytes32: output.settler, orderId, output, fillDeadline: 1_999_999_000 }
+    );
+    const call = calls.find((c) => c.method === "emitNotFilled")!;
+    expect(call.contract).toBe(`b58:41${SETTLER.slice(2)}`);
+    expect(call.args[0]).toBe(orderId);
+    const tuple = call.args[1] as unknown[];
+    expect(tuple[0]).toBe(output.oracle);
+    expect(tuple[1]).toBe(output.settler);
+    expect(call.args[2]).toBe(1_999_999_000);
+    expect(call.opts?.feeLimit).toBe(300_000_000);
+  });
+
+  it("readReverseChainIdMap passes the chain id as a decimal string and returns a bigint", async () => {
+    const { tw, calls } = makeMock({ callResult: "137" });
+    const mapped = await readReverseChainIdMap(tw, ORACLE, 137n);
+    expect(mapped).toBe(137n);
+    const call = calls.find((c) => c.method === "reverseChainIdMap")!;
+    expect(call.contract).toBe(`b58:41${ORACLE.slice(2)}`);
+    expect(call.args).toEqual(["137"]);
   });
 });

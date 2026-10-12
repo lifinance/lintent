@@ -26,7 +26,8 @@ export const SOLANA_PDA_SEEDS = {
   outputSettlerSimple: "output_settler_simple",
   // NOTE: the polymer oracle's singleton seed is "polymer", not the IDL name
   // "oracle_polymer" — see POLYMER_ORACLE_SEED.
-  polymerOracle: "polymer"
+  polymerOracle: "polymer",
+  localConsumer: "local_consumer"
 } as const;
 
 const utf8 = new TextEncoder();
@@ -135,6 +136,14 @@ export function orderContextPda(
   programId: string = INPUT_SETTLER_ESCROW_PROGRAM_ID
 ): PublicKey {
   return derive([SOLANA_PDA_SEEDS.orderContext, bytes32Seed(orderId, "orderId")], programId);
+}
+
+/**
+ * A program's `["local_consumer"]` PDA: the signer it uses when CPI-consuming a
+ * LocalAttestation whose committed consumer is that program's id.
+ */
+export function localConsumerPda(programId: string): PublicKey {
+  return derive([SOLANA_PDA_SEEDS.localConsumer], programId);
 }
 
 /** Replay marker: `open` creates it, so a second open of the same order id fails. */

@@ -121,7 +121,18 @@ export function getSolanaReads(chainId: number | bigint): Promise<SolanaConnecti
         const balance = await connection.getTokenAccountBalance(new PublicKey(address));
         return BigInt(balance.value.amount);
       },
-      getLatestBlockhash: () => connection.getLatestBlockhash()
+      getLatestBlockhash: () => connection.getLatestBlockhash(),
+      getSignaturesForAddress: async (address, opts) => {
+        const sigs = await connection.getSignaturesForAddress(new PublicKey(address), {
+          limit: opts?.limit
+        });
+        return sigs.map(({ signature, err }) => ({ signature, err }));
+      },
+      getFinalizedBlockTime: async () => {
+        const time = await connection.getBlockTime(await connection.getSlot("finalized"));
+        if (time === null) throw new Error("Solana finalized block time unavailable");
+        return time;
+      }
     };
     return adapter;
   });

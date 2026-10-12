@@ -208,6 +208,7 @@
     <h1 class="mb-1 flex-1 text-center align-middle text-xl font-medium text-gray-900">
       Resource lock intents using OIF
     </h1>
+    <a href="/refund" class="mr-2 text-xs text-sky-700 hover:underline">Refund an order</a>
     {#if store.anyWalletConnected}
       <WalletStatus />
     {/if}

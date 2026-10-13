@@ -301,9 +301,9 @@ const CONSUMED_OFFSET = 45;
  * the known shapes throws: guessing would either double-spend rent or submit a
  * record that cannot be consumed.
  */
-export function classifyNotFilledLocalAttestation(
+export function classifyLocalAttestation(
   account: SolanaAccountInfoLike,
-  fillDeadline: number
+  expectedTimestamp: number
 ): NotFilledLocalAttestation {
   if (!account || (account.owner === SYSTEM_PROGRAM_ID && account.data.length === 0)) {
     return { kind: "absent" };
@@ -319,8 +319,10 @@ export function classifyNotFilledLocalAttestation(
     throw new Error("local attestation has the wrong discriminator");
   }
   const timestamp = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(8, true);
-  if (timestamp !== fillDeadline) {
-    throw new Error(`local attestation timestamp ${timestamp} != fillDeadline ${fillDeadline}`);
+  if (timestamp !== expectedTimestamp) {
+    throw new Error(
+      `local attestation timestamp ${timestamp} != expected timestamp ${expectedTimestamp}`
+    );
   }
   if (data.length === LEGACY_LOCAL_ATTESTATION_LENGTH) return { kind: "legacy" };
   const rentRefund = data.subarray(RENT_REFUND_OFFSET, CONSUMED_OFFSET);

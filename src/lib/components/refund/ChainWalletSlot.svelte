@@ -15,7 +15,11 @@
     chainId,
     role,
     sameAsOrigin = false
-  }: { chainId: bigint; role: "Origin" | "Destination"; sameAsOrigin?: boolean } = $props();
+  }: {
+    chainId: bigint;
+    role: "Origin" | "Destination" | "Publication" | "Proof / refund";
+    sameAsOrigin?: boolean;
+  } = $props();
 
   const vm = $derived(getChainType(chainId));
   const connected = $derived(store.accountDisplayForChain(chainId));

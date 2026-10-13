@@ -20,6 +20,8 @@ import { getFillDetails } from "./fillEvent";
 import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import { isValidTxRef, type TxRef } from "$lib/utils/txRef";
 import { polymerOraclesFor, polymerReceiveFunction } from "./polymerReceive";
+import { oracleProviderFor } from "./oracleRoute";
+import { validateWormholeFill } from "./wormholeFill";
 import { getSolanaReads } from "$lib/solana/client";
 import { createSolanaPrograms } from "$lib/solana/program";
 import { getSolanaSigner } from "$lib/solana/wallet";
@@ -255,6 +257,7 @@ export class Solver {
       preHook?: (chainId: number) => Promise<any>;
       postHook?: () => Promise<any>;
       account: () => `0x${string}`;
+      onProgress?: (stage: string) => void;
     }
   ) {
     return async () => {
@@ -271,7 +274,8 @@ export class Solver {
         primaryType: "MandateOutput",
         data: output
       });
-      const validationKey = `${Number(sourceChainId)}:${fillTransactionHash}:${expectedOutputHash}`;
+      const orderId = containerToIntent(args.orderContainer).orderId();
+      const validationKey = `${Number(sourceChainId)}:${order.inputOracle.toLowerCase()}:${orderId}:${fillTransactionHash}:${expectedOutputHash}`;
       const existingValidation = Solver.validationInflight.get(validationKey);
       if (existingValidation) return existingValidation;
 
@@ -282,7 +286,41 @@ export class Solver {
           throw new Error(`Invalid fill transaction hash: ${fillTransactionHash}`);
         }
 
-        const orderId = containerToIntent(args.orderContainer).orderId();
+        const remote = output.chainId !== BigInt(sourceChainId);
+        const provider = oracleProviderFor(sourceChainId, order.inputOracle);
+        if (remote && !provider) {
+          throw new Error(
+            `Unsupported input oracle ${order.inputOracle} for source chain ${Number(sourceChainId)}.`
+          );
+        }
+        if (remote && provider === "wormhole") {
+          return validateWormholeFill(
+            {
+              orderContainer: args.orderContainer,
+              orderId,
+              output,
+              fillTransactionHash,
+              sourceChainId: BigInt(sourceChainId)
+            },
+            {
+              walletClient,
+              inputAccount: account,
+              // A Solana-origin account is bytes32, not the destination EVM
+              // signer. Publication always uses the output wallet namespace.
+              outputAccount: async () => {
+                const connected = store.accountForChain(output.chainId);
+                const outputAccount = connected ?? (await walletClient.getAddresses())[0];
+                if (!outputAccount)
+                  throw new Error("Connect the output-chain EVM wallet to publish the fill.");
+                return outputAccount;
+              },
+              solanaDeps,
+              preHook,
+              postHook,
+              onProgress: opts.onProgress
+            }
+          );
+        }
 
         // A Solana OUTPUT is proven by submitting the fill to Polymer, which
         // reads the `Prove:` log the submit instruction writes. A same-chain
@@ -370,9 +408,7 @@ export class Solver {
         const sameChainAttestation =
           order.inputOracle.toLowerCase() === bytes32ToAddress(output.settler).toLowerCase() ||
           order.inputOracle === COIN_FILLER;
-        const isPolymerPath =
-          !sameChainAttestation &&
-          polymerOraclesFor(sourceChainId).has(order.inputOracle.toLowerCase());
+        const isPolymerPath = !sameChainAttestation && provider === "polymer";
 
         if (sameChainAttestation) {
           // Same-chain fills: the output settler doubles as the oracle, but the

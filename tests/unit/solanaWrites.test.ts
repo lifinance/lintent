@@ -3,15 +3,19 @@ import { SOLANA_DEVNET_CHAIN_ID, getOutputHash } from "@lifi/intent";
 import type { MandateOutput, StandardSolana } from "@lifi/intent";
 import {
   INPUT_SETTLER_ESCROW_PROGRAM_ID,
+  INPUT_SETTLER_ESCROW_IDL,
   INTENTS_PROTOCOL_PROGRAM_ID,
   OUTPUT_SETTLER_SIMPLE_PROGRAM_ID,
-  POLYMER_PROGRAM_ID
+  POLYMER_PROGRAM_ID,
+  WORMHOLE_PROGRAM_ID
 } from "../../src/lib/idl";
 import { SOLANA_GENESIS_HASHES, invalidateSolanaClusterGuard } from "../../src/lib/solana/client";
-import { localAttestationDataHash } from "../../src/lib/solana/encode";
+import { fillPayloadHash, localAttestationDataHash } from "../../src/lib/solana/encode";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+  associatedTokenAddress,
   attestationPda,
   bytes32ToPubkey,
   polymerOraclePda,
@@ -26,6 +30,7 @@ import type {
   SolanaAccountInfoLike,
   SolanaAccountMeta,
   SolanaDeps,
+  SolanaInstructionBuilder,
   SolanaInstructionLike,
   SolanaProgramLike,
   SolanaProgramsLike
@@ -48,7 +53,9 @@ import {
   REFUND_ON_NON_FILL_DISCRIMINATOR,
   SUBMIT_CONSUME_DISCRIMINATOR
 } from "../../src/lib/solana/nonFill";
-import { PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { AnchorProvider, BorshInstructionCoder, Program } from "@coral-xyz/anchor";
+import type { Idl } from "@coral-xyz/anchor";
 
 const CHAIN_ID = SOLANA_DEVNET_CHAIN_ID;
 const DEVNET_GENESIS = SOLANA_GENESIS_HASHES[CHAIN_ID.toString()]!;
@@ -109,6 +116,7 @@ function makePrograms(calls: RecordedCall[]): SolanaProgramsLike {
     inputSettlerEscrow: make("inputSettlerEscrow", INPUT_SETTLER_ESCROW_PROGRAM_ID),
     outputSettlerSimple: make("outputSettlerSimple", OUTPUT_SETTLER_SIMPLE_PROGRAM_ID),
     polymer: make("polymer", POLYMER_PROGRAM_ID),
+    wormhole: make("wormhole", WORMHOLE_PROGRAM_ID),
     intentsProtocol: make("intentsProtocol", INTENTS_PROTOCOL_PROGRAM_ID)
   };
 }
@@ -464,107 +472,259 @@ describe("submitFillProof", () => {
 describe("finalise", () => {
   const solver = pubkeyToBytes32(bytes32ToPubkey(b32("5")));
   const solverBase58 = bytes32ToPubkey(solver).toBase58();
+  const timestamp = 1_700_000_000;
+  const sponsor = bytes32ToPubkey(b32("7")).toBase58();
+  const rentRecipient = bytes32ToPubkey(b32("9")).toBase58();
+  const ownOutput = () =>
+    makeOutput({
+      oracle: pubkeyToBytes32(new PublicKey(INPUT_SETTLER_ESCROW_PROGRAM_ID))
+    });
 
-  test("refuses when the connected wallet is not the first solver", async () => {
-    const order = makeOrder();
-    const { deps, sent } = makeDeps({ signerPublicKey: USER });
+  function localAccount(
+    output: MandateOutput,
+    opts: {
+      timestamp?: number;
+      consumed?: number;
+      owner?: string;
+      length?: number;
+    } = {}
+  ) {
+    const address = localAttestationPda(
+      outputSettlerSimplePda(),
+      output.oracle,
+      localAttestationDataHash({ solver, orderId: ORDER_ID, output })
+    ).toBase58();
+    const data = new Uint8Array(opts.length ?? 46);
+    data.set(LOCAL_ATTESTATION_DISCRIMINATOR);
+    new DataView(data.buffer).setUint32(8, opts.timestamp ?? timestamp, true);
+    if (data.length === 46) {
+      data.set(new PublicKey(rentRecipient).toBytes(), 13);
+      data[45] = opts.consumed ?? 0;
+    }
+    return { [address]: { owner: opts.owner ?? INTENTS_PROTOCOL_PROGRAM_ID, data } };
+  }
+
+  function fixture(
+    order: StandardSolana,
+    extra: {
+      accounts?: Record<string, { owner: string; data?: Uint8Array }>;
+      wallet?: string;
+      tokenProgram?: string;
+    } = {}
+  ) {
+    const user = bytes32ToPubkey(order.user as `0x${string}`).toBase58();
+    const result = makeDeps({
+      signerPublicKey: extra.wallet ?? solverBase58,
+      accounts: {
+        [MINT]: { owner: extra.tokenProgram ?? TOKEN_PROGRAM_ID },
+        [orderContextPda(ORDER_ID).toBase58()]: {
+          owner: INPUT_SETTLER_ESCROW_PROGRAM_ID,
+          data: orderContextData({ inputToken: MINT, user, sponsor })
+        },
+        ...extra.accounts
+      }
+    });
+    // Build with the real upgraded IDL: assertions below observe the actual
+    // serialized instruction that would be sent, not mocked builder echoes.
+    // No app read factory here: its browser-only guard is deliberately retained.
+    // Anchor only builds fully supplied accounts against this inert connection.
+    const provider = new AnchorProvider(
+      new Connection("https://finalise-tests.invalid"),
+      {
+        publicKey: new PublicKey(extra.wallet ?? solverBase58),
+        signTransaction: async () => {
+          throw new Error("Fixture provider must not sign");
+        },
+        signAllTransactions: async () => {
+          throw new Error("Fixture provider must not sign");
+        }
+      },
+      { commitment: "confirmed" }
+    );
+    const program = new Program(INPUT_SETTLER_ESCROW_IDL as Idl, provider);
+    result.deps.programs.inputSettlerEscrow = {
+      programId: program.programId.toBase58(),
+      methods: {
+        finalise(...params: unknown[]) {
+          const builder = program.methods.finalise!(...params);
+          const facade: SolanaInstructionBuilder = {
+            accounts(accounts) {
+              builder.accountsStrict(
+                Object.fromEntries(
+                  Object.entries(accounts).map(([name, address]) => [name, new PublicKey(address)])
+                )
+              );
+              return facade;
+            },
+            remainingAccounts(accounts) {
+              builder.remainingAccounts(
+                accounts.map((account) => ({
+                  ...account,
+                  pubkey: new PublicKey(account.pubkey)
+                }))
+              );
+              return facade;
+            },
+            async instruction() {
+              const instruction = await builder.instruction();
+              return {
+                programId: instruction.programId.toBase58(),
+                keys: instruction.keys.map((key) => ({
+                  pubkey: key.pubkey.toBase58(),
+                  isSigner: key.isSigner,
+                  isWritable: key.isWritable
+                })),
+                data: new Uint8Array(instruction.data)
+              };
+            }
+          };
+          return facade;
+        }
+      }
+    };
+    return result;
+  }
+
+  function args(order: StandardSolana) {
+    return {
+      order,
+      orderId: ORDER_ID,
+      solveParams: order.outputs.map(() => ({ solver, timestamp })),
+      destinationBytes32: solver
+    };
+  }
+
+  test.each([0, 1, 3])("rejects %i solves for two outputs before sending", async (count) => {
+    const order = makeOrder({ outputs: [makeOutput(), makeOutput({ amount: 2n })] });
+    const { deps, sent } = await fixture(order);
     await expect(
       finalise(deps, {
-        order,
-        orderId: ORDER_ID,
-        solveParams: [{ solver, timestamp: 1_700_000_000 }],
-        destinationBytes32: solver
+        ...args(order),
+        solveParams: Array.from({ length: count }, () => ({ solver, timestamp }))
       })
-    ).rejects.toThrow(/must be signed by the first solver/);
+    ).rejects.toThrow("exactly one solve param per output");
     expect(sent).toHaveLength(0);
   });
 
-  test("refuses when the escrow is already settled", async () => {
+  test("refuses a wallet that is not the original first solver", async () => {
     const order = makeOrder();
-    const { deps } = makeDeps({ signerPublicKey: solverBase58 });
-    await expect(
-      finalise(deps, {
-        order,
-        orderId: ORDER_ID,
-        solveParams: [{ solver, timestamp: 1_700_000_000 }],
-        destinationBytes32: solver
-      })
-    ).rejects.toThrow(/no open escrow/);
+    const { deps, sent } = await fixture(order, { wallet: USER });
+    await expect(finalise(deps, args(order))).rejects.toThrow("must be signed by the first solver");
+    expect(sent).toHaveLength(0);
   });
 
-  test("passes one attestation per output, in order.outputs order", async () => {
-    // The program indexes remainingAccounts positionally, so a reordering
-    // settles the wrong output.
-    const outputs = [makeOutput(), makeOutput({ amount: 2_000_000n })];
-    const order = makeOrder({ outputs });
-    const context = orderContextPda(ORDER_ID).toBase58();
-    const { deps, calls } = makeDeps({
-      signerPublicKey: solverBase58,
-      accounts: {
-        [MINT]: { owner: TOKEN_PROGRAM_ID },
-        [context]: { owner: INPUT_SETTLER_ESCROW_PROGRAM_ID, data: new Uint8Array(40) }
-      }
-    });
+  test("refuses a missing escrow before sending", async () => {
+    const order = makeOrder();
+    const { deps, sent } = makeDeps({ signerPublicKey: solverBase58 });
+    await expect(finalise(deps, args(order))).rejects.toThrow("no open escrow");
+    expect(sent).toHaveLength(0);
+  });
 
-    await finalise(deps, {
-      order,
-      orderId: ORDER_ID,
-      solveParams: [
-        { solver, timestamp: 1_700_000_000 },
-        { solver, timestamp: 1_700_000_001 }
-      ],
-      destinationBytes32: solver
-    });
+  test.each([
+    ["consumed", { consumed: 1 }],
+    ["timestamp", { timestamp: timestamp + 1 }],
+    ["owned", { owner: INPUT_SETTLER_ESCROW_PROGRAM_ID }],
+    ["legacy", { length: 13 }]
+  ] as const)("rejects an invalid consumable local account: %s", async (reason, options) => {
+    const output = ownOutput();
+    const order = makeOrder({ outputs: [output] });
+    const { deps, sent } = await fixture(order, { accounts: localAccount(output, options) });
+    await expect(finalise(deps, args(order))).rejects.toThrow(reason);
+    expect(sent).toHaveLength(0);
+  });
 
-    const call = calls.find((c) => c.method === "finalise")!;
-    expect(call.remaining).toHaveLength(2);
-    // Both outputs are same-chain here, so both are LocalAttestations.
-    expect(call.remaining?.[0]?.pubkey).toBe(
-      localAttestationPda(
-        outputSettlerSimplePda(),
-        outputs[0]!.oracle,
-        localAttestationDataHash({ solver, orderId: ORDER_ID, output: outputs[0]! })
+  test("rejects an absent consumable local account before sending", async () => {
+    const order = makeOrder({ outputs: [ownOutput()] });
+    const { deps, sent } = await fixture(order);
+    await expect(finalise(deps, args(order))).rejects.toThrow("absent");
+    expect(sent).toHaveLength(0);
+  });
+
+  test("consumes only escrow-owned local fills and preserves ordered remote/foreign proof slots", async () => {
+    const local = ownOutput();
+    const remote = makeOutput({ chainId: 8453n, amount: 2n });
+    const foreign = makeOutput({ amount: 3n });
+    const order = makeOrder({ outputs: [remote, local, foreign] });
+    const { deps, sent } = await fixture(order, { accounts: localAccount(local) });
+    await finalise(deps, args(order));
+    const instruction = sent[0]![0]!;
+    const remaining = instruction.keys.slice(-6);
+    expect(remaining[0]!.pubkey).toBe(
+      attestationPda(
+        bytes32ToPubkey(order.inputOracle),
+        remote.chainId,
+        remote.oracle,
+        remote.settler,
+        fillPayloadHash({ solver, orderId: ORDER_ID, timestamp, output: remote })
       ).toBase58()
     );
-    expect(call.remaining?.[1]?.pubkey).not.toBe(call.remaining?.[0]?.pubkey);
+    expect(remaining[1]!.pubkey).toBe(Object.keys(localAccount(local))[0]!);
+    expect(remaining[2]!.pubkey).toBe(
+      localAttestationPda(
+        outputSettlerSimplePda(),
+        foreign.oracle,
+        localAttestationDataHash({ solver, orderId: ORDER_ID, output: foreign })
+      ).toBase58()
+    );
+    expect(remaining.map((key) => key.isWritable)).toEqual([
+      false,
+      true,
+      false,
+      false,
+      true,
+      false
+    ]);
+    expect(remaining.slice(3).map((key) => key.pubkey)).toEqual([
+      solverBase58,
+      rentRecipient,
+      solverBase58
+    ]);
   });
-});
 
-describe("finalise sponsor resolution", () => {
-  const solver = pubkeyToBytes32(bytes32ToPubkey(b32("5")));
-  const solverBase58 = bytes32ToPubkey(solver).toBase58();
-  const SPONSOR = "49zLKETMq34CUC2E2wL1xvv6uN2AUgyhjVX221mjE3Rw";
-
-  test("reads sponsor from byte 72, not from the discriminator", async () => {
-    // The bug this pins: reading bytes 8..40 yields `input_token` (the mint).
-    // finalise has `has_one = sponsor`, so passing the mint there makes every
-    // claim fail on chain — invisible to a zero-filled fixture.
-    const order = makeOrder();
-    const context = orderContextPda(ORDER_ID).toBase58();
-    const user = bytes32ToPubkey(order.user as `0x${string}`).toBase58();
-    const { deps, calls } = makeDeps({
-      signerPublicKey: solverBase58,
-      accounts: {
-        [MINT]: { owner: TOKEN_PROGRAM_ID },
-        [context]: {
-          owner: INPUT_SETTLER_ESCROW_PROGRAM_ID,
-          data: orderContextData({ inputToken: MINT, user, sponsor: SPONSOR })
-        }
-      }
-    });
-
-    await finalise(deps, {
-      order,
-      orderId: ORDER_ID,
-      solveParams: [{ solver, timestamp: 1_700_000_000 }],
-      destinationBytes32: solver
-    });
-
-    const call = calls.find((c) => c.method === "finalise")!;
-    expect(call.accounts?.sponsor).toBe(SPONSOR);
-    expect(call.accounts?.sponsor).not.toBe(MINT);
-    expect(call.accounts?.user).toBe(user);
-  });
+  test.each([TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID])(
+    "preserves signed input mint, original solvers and designated payout using %s",
+    async (tokenProgram) => {
+      const order = makeOrder({ outputs: [makeOutput(), makeOutput({ chainId: 8453n })] });
+      const destination = bytes32ToPubkey(b32("a")).toBase58();
+      const secondSolver = b32("b");
+      const { deps, sent } = await fixture(order, { tokenProgram });
+      await finalise(deps, {
+        ...args(order),
+        destinationBytes32: pubkeyToBytes32(new PublicKey(destination)),
+        solveParams: [
+          { solver, timestamp },
+          { solver: secondSolver, timestamp: timestamp + 1 }
+        ]
+      });
+      const instruction = sent[0]![0]!;
+      // These are protocol payout roles, not a snapshot of incidental account order.
+      expect(instruction.keys[0]!.pubkey).toBe(solverBase58);
+      expect(instruction.keys[2]!.pubkey).toBe(
+        bytes32ToPubkey(order.user as `0x${string}`).toBase58()
+      );
+      expect(instruction.keys[3]!.pubkey).toBe(sponsor);
+      expect(instruction.keys[4]!.pubkey).toBe(destination);
+      expect(instruction.keys[5]!.pubkey).toBe(
+        associatedTokenAddress(MINT, destination, tokenProgram).toBase58()
+      );
+      expect(instruction.keys[8]!.pubkey).toBe(MINT);
+      expect(instruction.keys.some((key) => key.pubkey === tokenProgram)).toBe(true);
+      const decoded = new BorshInstructionCoder(INPUT_SETTLER_ESCROW_IDL as Idl).decode(
+        Buffer.from(instruction.data)
+      )!;
+      const data = decoded.data as {
+        order: { input: { token: PublicKey; amount: { toString(): string } } };
+        solve_params: { solver: number[]; timestamp: number }[];
+      };
+      expect(data.order.input.token.toBase58()).toBe(MINT);
+      expect(data.order.input.amount.toString()).toBe("1000000");
+      expect(data.solve_params.map((param) => Buffer.from(param.solver).toString("hex"))).toEqual([
+        solver.slice(2),
+        secondSolver.slice(2)
+      ]);
+      expect(data.solve_params.map((param) => param.timestamp)).toEqual([timestamp, timestamp + 1]);
+    }
+  );
 });
 
 describe("fillOutputs batching", () => {

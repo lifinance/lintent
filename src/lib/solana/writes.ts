@@ -8,7 +8,11 @@
 
 import { getOutputHash } from "@lifi/intent";
 import type { MandateOutput, StandardSolana } from "@lifi/intent";
-import { INTENTS_PROTOCOL_PROGRAM_ID, POLYMER_PROGRAM_ID } from "$lib/idl";
+import {
+  INPUT_SETTLER_ESCROW_PROGRAM_ID,
+  INTENTS_PROTOCOL_PROGRAM_ID,
+  POLYMER_PROGRAM_ID
+} from "$lib/idl";
 import { assertSolanaCluster } from "./client";
 import {
   assertSolanaAmountFitsU64,
@@ -30,6 +34,7 @@ import {
   fillIdPda,
   inputSettlerEscrowPda,
   localAttestationPda,
+  localConsumerPda,
   orderContextPda,
   outputSettlerSimplePda,
   polymerOraclePda
@@ -40,7 +45,8 @@ import {
   buildAttestNotFilledInstruction,
   buildCreateAtaIdempotentInstruction,
   buildRefundOnNonFillInstruction,
-  buildSubmitConsumeNotFilledInstruction
+  buildSubmitConsumeNotFilledInstruction,
+  classifyLocalAttestation
 } from "./nonFill";
 import { readIsOutputFilled, readNotFilledLocalAttestation } from "./reads";
 import type { SolanaConnectionLike, SolanaDeps, SolanaInstructionLike } from "./types";
@@ -489,10 +495,11 @@ export async function receiveProof(
 /**
  * Finalises a Solana-input order, releasing the escrow to the solver.
  *
- * `remainingAccounts` carries one attestation per output IN `order.outputs`
- * ORDER — the program indexes them positionally, so a reordering settles the
- * wrong output. Same-chain outputs use a LocalAttestation, remote ones the
- * oracle-written Attestation.
+ * `remainingAccounts` carries N attestations followed by N rent-refund slots,
+ * both in `order.outputs` order. Only same-chain fills committed to this escrow
+ * program are consumed: their current local accounts and recorded recipients
+ * are writable. Remote and foreign-consumer slots use the signing wallet as an
+ * ignored rent placeholder. Each proof uses its own original solve parameters.
  */
 export async function finalise(
   deps: SolanaDeps,
@@ -507,8 +514,11 @@ export async function finalise(
   const c = await codecs();
   const { order, orderId, solveParams, destinationBytes32 } = args;
 
+  if (solveParams.length !== order.outputs.length) {
+    throw new Error("finalise requires exactly one solve param per output");
+  }
   const first = solveParams[0];
-  if (!first) throw new Error("finalise requires at least one solve param");
+  if (!first) throw new Error("finalise requires at least one output");
 
   // The program requires solve_params[0].solver to sign. Check before building
   // the transaction so the wrong wallet gets a sentence, not a program error.
@@ -535,8 +545,10 @@ export async function finalise(
   const destination = bytes32ToPubkey(destinationBytes32).toBase58();
   const user = bytes32ToPubkey(order.user as `0x${string}`).toBase58();
 
-  const remaining = order.outputs.map((output, index) => {
-    const params = solveParams[index] ?? first;
+  const attestations = [];
+  const rentRefunds = [];
+  for (const [index, output] of order.outputs.entries()) {
+    const params = solveParams[index]!;
     // Compared as bigints, not with `===`: a container reloaded from the local
     // DB carries these as decimal strings (see `toBytes32`), and a string/bigint
     // pair is never `===`. That silently classified a same-chain output as
@@ -560,8 +572,22 @@ export async function finalise(
             output
           })
         );
-    return { pubkey: pubkey.toBase58(), isSigner: false, isWritable: false };
-  });
+    const consumable =
+      sameChain && bytes32ToPubkey(output.oracle).toBase58() === INPUT_SETTLER_ESCROW_PROGRAM_ID;
+    let rentRefund = deps.signer.publicKey;
+    if (consumable) {
+      const local = classifyLocalAttestation(
+        await deps.reads.getAccountInfo(pubkey.toBase58()),
+        params.timestamp
+      );
+      if (local.kind !== "current") {
+        throw new Error(`Cannot finalise a ${local.kind} locally consumable attestation`);
+      }
+      rentRefund = local.rentRefund;
+    }
+    attestations.push({ pubkey: pubkey.toBase58(), isSigner: false, isWritable: consumable });
+    rentRefunds.push({ pubkey: rentRefund, isSigner: false, isWritable: consumable });
+  }
 
   const instruction = await deps.programs.inputSettlerEscrow.methods
     .finalise(
@@ -589,12 +615,13 @@ export async function finalise(
         tokenProgram
       ).toBase58(),
       mint: mint.toBase58(),
+      localConsumer: localConsumerPda(INPUT_SETTLER_ESCROW_PROGRAM_ID).toBase58(),
       intentsProtocolProgram: INTENTS_PROTOCOL_PROGRAM_ID,
       tokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SYSTEM_PROGRAM_ID
     })
-    .remainingAccounts(remaining)
+    .remainingAccounts([...attestations, ...rentRefunds])
     .instruction();
 
   return deps.signer.signAndSend([instruction]);

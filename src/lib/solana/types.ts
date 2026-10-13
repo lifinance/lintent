@@ -14,6 +14,8 @@ export type SolanaCommitment = "processed" | "confirmed" | "finalized";
 
 export type SolanaAccountInfoLike = {
   owner: string;
+  /** Present on RPC account reads; protocol readiness requires true for programs. */
+  executable?: boolean;
   lamports: number;
   data: Uint8Array;
 } | null;
@@ -89,6 +91,7 @@ export type SolanaProgramsLike = {
   inputSettlerEscrow: SolanaProgramLike;
   outputSettlerSimple: SolanaProgramLike;
   polymer: SolanaProgramLike;
+  wormhole: SolanaProgramLike;
   intentsProtocol: SolanaProgramLike;
 };
 
@@ -107,7 +110,11 @@ export type SolanaSignerLike = {
    */
   signAndSend(
     instructions: SolanaInstructionLike[],
-    opts?: { computeUnitLimit?: number }
+    opts?: {
+      computeUnitLimit?: number;
+      additionalSigners?: readonly { secretKey: Uint8Array }[];
+      beforeSign?: () => Promise<void>;
+    }
   ): Promise<string>;
 };
 

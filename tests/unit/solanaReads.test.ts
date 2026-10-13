@@ -341,16 +341,35 @@ describe("readChainMappingCanonicalId", () => {
     const { reads } = makeReads({
       [pda]: { owner: INTENTS_PROTOCOL_PROGRAM_ID, data: mapping(value) }
     });
-    expect(await readChainMappingCanonicalId(reads, polymerId)).toBe(value);
+    expect(await readChainMappingCanonicalId(reads, polymerOraclePda().toBase58(), polymerId)).toBe(
+      value
+    );
   });
 
   test("null when absent, foreign-owned or mis-tagged", async () => {
-    expect(await readChainMappingCanonicalId(makeReads().reads, polymerId)).toBeNull();
+    expect(
+      await readChainMappingCanonicalId(makeReads().reads, polymerOraclePda().toBase58(), polymerId)
+    ).toBeNull();
     const foreign = makeReads({ [pda]: { owner: SYSTEM_PROGRAM, data: mapping(8453n) } });
-    expect(await readChainMappingCanonicalId(foreign.reads, polymerId)).toBeNull();
+    expect(
+      await readChainMappingCanonicalId(foreign.reads, polymerOraclePda().toBase58(), polymerId)
+    ).toBeNull();
     const badDisc = makeReads({
       [pda]: { owner: INTENTS_PROTOCOL_PROGRAM_ID, data: mapping(8453n, new Uint8Array(8)) }
     });
-    expect(await readChainMappingCanonicalId(badDisc.reads, polymerId)).toBeNull();
+    expect(
+      await readChainMappingCanonicalId(badDisc.reads, polymerOraclePda().toBase58(), polymerId)
+    ).toBeNull();
+  });
+
+  test("rejects short and oversized mapping layouts", async () => {
+    for (const length of [24, 26]) {
+      const data = new Uint8Array(length);
+      data.set(mapping(8453n).subarray(0, length));
+      const { reads } = makeReads({ [pda]: { owner: INTENTS_PROTOCOL_PROGRAM_ID, data } });
+      expect(
+        await readChainMappingCanonicalId(reads, polymerOraclePda().toBase58(), polymerId)
+      ).toBeNull();
+    }
   });
 });

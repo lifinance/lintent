@@ -11,6 +11,7 @@ import {
 import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
 import { TRON_LEGACY_OUTPUT_SETTLERS, TRON_LEGACY_POLYMER_ORACLES } from "@lifi/intent";
+import { oracleProviderFor } from "./oracleRoute";
 
 function isNonZeroAddress(value: string | undefined): value is `0x${string}` {
   return !!value && value.toLowerCase() !== "0x0000000000000000000000000000000000000000";
@@ -75,11 +76,15 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
       }
       return isSolanaChain(outputChainId) ? [SOLANA_OUTPUT_SETTLER] : [COIN_FILLER];
     }
+    const provider = oracleProviderFor(inputChainId, inputOracle);
+    if (provider === "wormhole") {
+      // Wormhole authenticates the destination emitter. On Solana this is the
+      // oracle state PDA, not the oracle program or the origin's oracle.
+      return isNonZeroAddress(outWormhole) ? [outWormhole] : [];
+    }
+    if (provider !== "polymer") return [];
     // A Solana OUTPUT is identified to Polymer by the oracle PROGRAM ID, not
-    // by the input chain's oracle. The rule below only holds because
-    // PolymerOracle is CREATE2-identical across EVM chains; on Solana,
-    // oracle_polymer::submit compares against its own program id, so an order
-    // built the EVM way fills and can then never be proven.
+    // its state PDA or the input chain's oracle.
     if (isSolanaChain(outputChainId)) {
       return [SOLANA_POLYMER_OUTPUT_ORACLE];
     }
@@ -100,7 +105,6 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
       if (inLegacy && inLegacy.toLowerCase() === inputOracle.toLowerCase()) {
         allowed.push(inLegacy);
       }
-      if (isNonZeroAddress(outWormhole)) allowed.push(outWormhole);
       return allowed;
     }
     // Polymer stores proofs under the INPUT chain's oracle, so output.oracle
@@ -114,7 +118,6 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     for (const legacy of legacyOracles) {
       if (legacy.toLowerCase() === inputOracle.toLowerCase()) allowed.push(legacy);
     }
-    if (isNonZeroAddress(outWormhole)) allowed.push(outWormhole);
     return allowed;
   },
   allowedOutputSettlers(chainId) {

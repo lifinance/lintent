@@ -1,5 +1,5 @@
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
-import type { HttpTransport } from "viem";
+import type { Hex, HttpTransport } from "viem";
 import {
   arbitrum,
   arbitrumSepolia,
@@ -64,11 +64,38 @@ export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
 export const COIN_FILLER = "0x75220B7600c300005038432a0000f308e0000068" as const;
 export { TRON_MAINNET_INPUT_SETTLER, TRON_MAINNET_OUTPUT_SETTLER };
-export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
-  [ethereum.id]: "0x0000000000000000000000000000000000000000",
-  [arbitrum.id]: "0x0000000000000000000000000000000000000000",
-  [base.id]: "0x0000000000000000000000000000000000000000"
+// Deployment candidates; oracleRoute verifies executable code, Core and mappings.
+export const WORMHOLE_ORACLE: Partial<Record<number, Hex>> = {
+  [ethereum.id]: "0x940a87f18ceb24e58c447851cbb3a57c6fa8d52c",
+  [bsc.id]: "0x940a87f18ceb24e58c447851cbb3a57c6fa8d52c",
+  [polygon.id]: "0x6941d83e74d3da1c056e34eed97d1fc580ed7f5c",
+  [avalanche.id]: "0x04b92cc1d51e80621aba749ab526a47b6edff84a",
+  [arbitrum.id]: "0xe1718d27c1abdaa009aa8f4d3bef3afce7d81f80",
+  [base.id]: "0x935a2dd6ae8153f2c71fa8c1942e1fe0b5a82e72",
+  [hyperEvm.id]: "0x3e81fdc6afd40a08d867c7d74ce31876f0dde590",
+  [monad.id]: "0x719ef3abf326ac84ffd653311b0376cfb28faef1",
+  [sepolia.id]: "0xd91864c51f581216f0b5c38a2185de70ac629692",
+  [arbitrumSepolia.id]: "0x0d802d18700743fd38512bdd0981f43eed5166bb",
+  [baseSepolia.id]: "0xb01143e379c5576113451baa130da530edc96340",
+  [optimismSepolia.id]: "0x81ec3c6167d741f3b6ee16f8c5f3a4d15379259d",
+  [Number(SOLANA_MAINNET_CHAIN_ID)]:
+    "0x8c6b8fb85e2df10766846e755b85acd5605a6a1d27e19dfbee2942d4c7a53f2a"
 };
+export const WORMHOLE_CORE: Partial<Record<number, Hex>> = {
+  [ethereum.id]: "0x98f3c9e6e3face36baad05fe09d375ef1464288b",
+  [bsc.id]: "0x98f3c9e6e3face36baad05fe09d375ef1464288b",
+  [polygon.id]: "0x7a4b5a56256163f07b2c80a7ca55abe66c4ec4d7",
+  [avalanche.id]: "0x54a8e5f9c4cba08f9943965859f6c34eaf03e26c",
+  [arbitrum.id]: "0xa5f208e072434bc67592e4c49c1b991ba79bca46",
+  [base.id]: "0xbebdb6c8ddc678ffa9f8748f85c815c556dd8ac6",
+  [hyperEvm.id]: "0x7c0fafc4384551f063e05aee704ab943b8b53ab3",
+  [monad.id]: "0x194b123c5e96b9b2e49763619985790dc241cac0",
+  [sepolia.id]: "0x4a8bc80ed5a4067f1ccf107057b8270e0cc11a78",
+  [arbitrumSepolia.id]: "0x6b9c8671cddc8deab9c719bb87cbd3e782ba6a35",
+  [baseSepolia.id]: "0x79a1027a6a159502049f10906d333ec57e95f083",
+  [optimismSepolia.id]: "0x31377888146f3253211efef5c676d41ece7d58fe"
+};
+export const SOLANA_WORMHOLE_CORE = "worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth";
 // The mainnet bucket points at `PolymerOracleMapped`
 // (0x008C3800F3Ad9b3B662d002E90Cc00000000eE17). It inherits `ChainMap`: `_getMappedChainId`
 // reverts with `ZeroValue()` for any protocol chain id that has not been mapped, so a route
@@ -526,12 +553,21 @@ export function getIndexOf(token: Token) {
 
 export type coin = ReturnType<typeof coinList>[number]["address"];
 
-export const wormholeChainIds = {
-  sepolia: 10002,
-  arbitrumSepolia: 10003,
-  baseSepolia: 10004,
-  optimismSepolia: 10005
-} as const;
+export const WORMHOLE_CHAIN_IDS: Partial<Record<number, number>> = {
+  [ethereum.id]: 2,
+  [bsc.id]: 4,
+  [polygon.id]: 5,
+  [avalanche.id]: 6,
+  [arbitrum.id]: 23,
+  [base.id]: 30,
+  [hyperEvm.id]: 47,
+  [monad.id]: 48,
+  [sepolia.id]: 10002,
+  [arbitrumSepolia.id]: 10003,
+  [baseSepolia.id]: 10004,
+  [optimismSepolia.id]: 10005,
+  [Number(SOLANA_MAINNET_CHAIN_ID)]: 1
+};
 export const polymerChainIds = {
   ethereum: ethereum.id,
   base: base.id,

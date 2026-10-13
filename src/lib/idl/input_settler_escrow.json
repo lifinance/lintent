@@ -12,9 +12,21 @@
         "Finalise a filled order and send the order's input funds to the order's solver.",
         "`order` is the open order to be finalised.",
         "`solve_params` are the solver parameters that filled each output (one per output). The first solver must be",
-        "the signer."
+        "the signer.",
+        "Remaining accounts: exactly 2*N accounts, where N is order.outputs.length: [attestation_0, ..., attestation_N-1, rent_refund_0, ..., rent_refund_N-1], in output order.",
+        "For local attestations committed to this input settler program, both the attestation and its stored rent-refund recipient must be writable. Executable recipients defer reclamation; keep both writable.",
+        "For remote or foreign-consumer attestations, the refund slot is required but ignored; those slots and attestations can be read-only. Remaining accounts require no additional signers. The named solver must sign and match the first output's solver."
       ],
-      "discriminator": [197, 63, 114, 249, 245, 72, 39, 132],
+      "discriminator": [
+        197,
+        63,
+        114,
+        249,
+        245,
+        72,
+        39,
+        132
+      ],
       "accounts": [
         {
           "name": "solver",
@@ -28,8 +40,26 @@
               {
                 "kind": "const",
                 "value": [
-                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
-                  114, 111, 119
+                  105,
+                  110,
+                  112,
+                  117,
+                  116,
+                  95,
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  114,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
                 ]
               }
             ]
@@ -40,9 +70,14 @@
         },
         {
           "name": "sponsor",
-          "docs": ["via the `has_one = sponsor` constraint on `order_context`."],
+          "docs": [
+            "via the `has_one = sponsor` constraint on `order_context`.",
+            "Receives both rent refunds unless executable, in which case they go to `solver`."
+          ],
           "writable": true,
-          "relations": ["order_context"]
+          "relations": [
+            "order_context"
+          ]
         },
         {
           "name": "destination"
@@ -68,8 +103,38 @@
             "program": {
               "kind": "const",
               "value": [
-                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
-                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
               ]
             }
           }
@@ -77,18 +142,9 @@
         {
           "name": "order_context",
           "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [111, 114, 100, 101, 114, 95, 99, 111, 110, 116, 101, 120, 116]
-              },
-              {
-                "kind": "arg",
-                "path": "order"
-              }
-            ]
-          }
+          "docs": [
+            "Supply this PDA explicitly. Anchor cannot represent the existing hashed seed expression. Use the canonical order/output hash and original program seeds; see this bundle's README.md. Runtime constraints are unchanged."
+          ]
         },
         {
           "name": "order_pda_token_account",
@@ -111,8 +167,38 @@
             "program": {
               "kind": "const",
               "value": [
-                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
-                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
               ]
             }
           }
@@ -120,6 +206,36 @@
         {
           "name": "mint",
           "writable": true
+        },
+        {
+          "name": "local_consumer",
+          "docs": [
+            "no data). It signs the consumption of local attestations whose",
+            "committed consumer is this PROGRAM ID."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  99,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  115,
+                  117,
+                  109,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "intents_protocol_program",
@@ -159,12 +275,267 @@
       ]
     },
     {
+      "name": "finalise_with_prefill",
+      "docs": [
+        "Atomically release an open order's input before its compact same-chain fill executes.",
+        "The exact later fill is pinned through the Instructions sysvar."
+      ],
+      "discriminator": [
+        168,
+        65,
+        122,
+        15,
+        125,
+        60,
+        136,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "solver",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "input_settler_escrow",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  112,
+                  117,
+                  116,
+                  95,
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  114,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user"
+        },
+        {
+          "name": "sponsor",
+          "docs": [
+            "executable, in which case they go to `solver`."
+          ],
+          "writable": true,
+          "relations": [
+            "order_context"
+          ]
+        },
+        {
+          "name": "destination"
+        },
+        {
+          "name": "destination_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "destination"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "order_context",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  116,
+                  101,
+                  120,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "order_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order_pda_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "order_context"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true
+        },
+        {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "order_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "initialize",
       "docs": [
         "Creates `input settler escrow` PDA.",
         "`input settler escrow` PDA is used to store the chain identifier."
       ],
-      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
       "accounts": [
         {
           "name": "deployer",
@@ -182,8 +553,26 @@
               {
                 "kind": "const",
                 "value": [
-                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
-                  114, 111, 119
+                  105,
+                  110,
+                  112,
+                  117,
+                  116,
+                  95,
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  114,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
                 ]
               }
             ]
@@ -206,7 +595,16 @@
         "Open the given `StandardOrder`. The order input funds will be pulled from the provided",
         "user signer account, and will be escrowed until the order is finalised or expired."
       ],
-      "discriminator": [228, 220, 155, 71, 199, 189, 60, 45],
+      "discriminator": [
+        228,
+        220,
+        155,
+        71,
+        199,
+        189,
+        60,
+        45
+      ],
       "accounts": [
         {
           "name": "sponsor",
@@ -224,8 +622,26 @@
               {
                 "kind": "const",
                 "value": [
-                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
-                  114, 111, 119
+                  105,
+                  110,
+                  112,
+                  117,
+                  116,
+                  95,
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  114,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
                 ]
               }
             ]
@@ -252,8 +668,38 @@
             "program": {
               "kind": "const",
               "value": [
-                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
-                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
               ]
             }
           }
@@ -261,34 +707,16 @@
         {
           "name": "order_context",
           "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [111, 114, 100, 101, 114, 95, 99, 111, 110, 116, 101, 120, 116]
-              },
-              {
-                "kind": "arg",
-                "path": "order"
-              }
-            ]
-          }
+          "docs": [
+            "Supply this PDA explicitly. Anchor cannot represent the existing hashed seed expression. Use the canonical order/output hash and original program seeds; see this bundle's README.md. Runtime constraints are unchanged."
+          ]
         },
         {
           "name": "consumed_order",
           "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [99, 111, 110, 115, 117, 109, 101, 100, 95, 111, 114, 100, 101, 114]
-              },
-              {
-                "kind": "arg",
-                "path": "order"
-              }
-            ]
-          }
+          "docs": [
+            "Supply this PDA explicitly. Anchor cannot represent the existing hashed seed expression. Use the canonical order/output hash and original program seeds; see this bundle's README.md. Runtime constraints are unchanged."
+          ]
         },
         {
           "name": "order_pda_token_account",
@@ -311,8 +739,38 @@
             "program": {
               "kind": "const",
               "value": [
-                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
-                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
               ]
             }
           }
@@ -345,8 +803,19 @@
     },
     {
       "name": "refund",
-      "docs": ["Refund an order and send the order's input funds back to the user."],
-      "discriminator": [2, 96, 183, 251, 63, 208, 46, 46],
+      "docs": [
+        "Refund an order and send the order's input funds back to the user."
+      ],
+      "discriminator": [
+        2,
+        96,
+        183,
+        251,
+        63,
+        208,
+        46,
+        46
+      ],
       "accounts": [
         {
           "name": "signer",
@@ -358,9 +827,14 @@
         },
         {
           "name": "sponsor",
-          "docs": ["via the `has_one = sponsor` constraint on `order_context`."],
+          "docs": [
+            "via the `has_one = sponsor` constraint on `order_context`.",
+            "Receives both rent refunds unless executable, in which case they go to `signer`."
+          ],
           "writable": true,
-          "relations": ["order_context"]
+          "relations": [
+            "order_context"
+          ]
         },
         {
           "name": "input_settler_escrow",
@@ -369,8 +843,26 @@
               {
                 "kind": "const",
                 "value": [
-                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
-                  114, 111, 119
+                  105,
+                  110,
+                  112,
+                  117,
+                  116,
+                  95,
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  114,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
                 ]
               }
             ]
@@ -379,18 +871,9 @@
         {
           "name": "order_context",
           "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [111, 114, 100, 101, 114, 95, 99, 111, 110, 116, 101, 120, 116]
-              },
-              {
-                "kind": "arg",
-                "path": "order"
-              }
-            ]
-          }
+          "docs": [
+            "Supply this PDA explicitly. Anchor cannot represent the existing hashed seed expression. Use the canonical order/output hash and original program seeds; see this bundle's README.md. Runtime constraints are unchanged."
+          ]
         },
         {
           "name": "order_pda_token_account",
@@ -413,8 +896,38 @@
             "program": {
               "kind": "const",
               "value": [
-                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
-                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
               ]
             }
           }
@@ -440,8 +953,38 @@
             "program": {
               "kind": "const",
               "value": [
-                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
-                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
               ]
             }
           }
@@ -479,9 +1022,21 @@
         "Refund an order as soon as one of its outputs is proven not filled before the fill deadline,",
         "sending the order's input funds back to the user. Does not require `expires` to have passed.",
         "`order` is the open order to be refunded.",
-        "`output_index` is the index of the output proven not filled."
+        "`output_index` is the index of the output proven not filled.",
+        "Remaining accounts: exactly [attestation, rent_refund] for order.outputs[output_index].",
+        "For a local attestation committed to this input settler program, both accounts must be writable and rent_refund must be the stored recipient; executable recipients defer reclamation. Otherwise the refund slot is required but ignored and both accounts can be read-only.",
+        "Remaining accounts require no additional signers. The named signer must sign; the refund remains permissionless and goes to the order user."
       ],
-      "discriminator": [53, 164, 197, 243, 243, 43, 185, 108],
+      "discriminator": [
+        53,
+        164,
+        197,
+        243,
+        243,
+        43,
+        185,
+        108
+      ],
       "accounts": [
         {
           "name": "signer",
@@ -493,9 +1048,14 @@
         },
         {
           "name": "sponsor",
-          "docs": ["via the `has_one = sponsor` constraint on `order_context`."],
+          "docs": [
+            "via the `has_one = sponsor` constraint on `order_context`.",
+            "Receives both rent refunds unless executable, in which case they go to `signer`."
+          ],
           "writable": true,
-          "relations": ["order_context"]
+          "relations": [
+            "order_context"
+          ]
         },
         {
           "name": "input_settler_escrow",
@@ -504,8 +1064,26 @@
               {
                 "kind": "const",
                 "value": [
-                  105, 110, 112, 117, 116, 95, 115, 101, 116, 116, 108, 101, 114, 95, 101, 115, 99,
-                  114, 111, 119
+                  105,
+                  110,
+                  112,
+                  117,
+                  116,
+                  95,
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  114,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
                 ]
               }
             ]
@@ -514,18 +1092,9 @@
         {
           "name": "order_context",
           "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [111, 114, 100, 101, 114, 95, 99, 111, 110, 116, 101, 120, 116]
-              },
-              {
-                "kind": "arg",
-                "path": "order"
-              }
-            ]
-          }
+          "docs": [
+            "Supply this PDA explicitly. Anchor cannot represent the existing hashed seed expression. Use the canonical order/output hash and original program seeds; see this bundle's README.md. Runtime constraints are unchanged."
+          ]
         },
         {
           "name": "order_pda_token_account",
@@ -548,8 +1117,38 @@
             "program": {
               "kind": "const",
               "value": [
-                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
-                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
               ]
             }
           }
@@ -575,8 +1174,38 @@
             "program": {
               "kind": "const",
               "value": [
-                140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19,
-                153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
               ]
             }
           }
@@ -584,6 +1213,40 @@
         {
           "name": "mint",
           "writable": true
+        },
+        {
+          "name": "local_consumer",
+          "docs": [
+            "no data). It signs the consumption of local attestations whose",
+            "committed consumer is this PROGRAM ID."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  99,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  115,
+                  117,
+                  109,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "intents_protocol_program",
+          "address": "LiFixdGLT5CMdLsHBvaijTXpPy4Uux9Y53SXkuR4HaK"
         },
         {
           "name": "token_program"
@@ -616,58 +1279,166 @@
   "accounts": [
     {
       "name": "ChainId",
-      "discriminator": [203, 146, 201, 161, 230, 71, 157, 218]
+      "discriminator": [
+        203,
+        146,
+        201,
+        161,
+        230,
+        71,
+        157,
+        218
+      ]
     },
     {
       "name": "ConsumedOrder",
-      "discriminator": [149, 74, 117, 35, 63, 65, 71, 140]
+      "discriminator": [
+        149,
+        74,
+        117,
+        35,
+        63,
+        65,
+        71,
+        140
+      ]
     },
     {
       "name": "InputSettlerEscrowAccount",
-      "discriminator": [85, 112, 162, 215, 22, 13, 16, 72]
+      "discriminator": [
+        85,
+        112,
+        162,
+        215,
+        22,
+        13,
+        16,
+        72
+      ]
     },
     {
       "name": "OrderContext",
-      "discriminator": [240, 83, 159, 216, 26, 11, 225, 229]
+      "discriminator": [
+        240,
+        83,
+        159,
+        216,
+        26,
+        11,
+        225,
+        229
+      ]
     }
   ],
   "events": [
     {
+      "name": "FinalisedEvent",
+      "discriminator": [
+        226,
+        131,
+        196,
+        252,
+        105,
+        222,
+        23,
+        210
+      ]
+    },
+    {
+      "name": "OpenEvent",
+      "discriminator": [
+        13,
+        191,
+        79,
+        145,
+        65,
+        183,
+        42,
+        90
+      ]
+    },
+    {
       "name": "RefundedEvent",
-      "discriminator": [220, 3, 153, 244, 133, 189, 73, 119]
+      "discriminator": [
+        220,
+        3,
+        153,
+        244,
+        133,
+        189,
+        73,
+        119
+      ]
     }
   ],
   "errors": [
     {
-      "code": 6000,
+      "code": 6300,
       "name": "SolversLengthMismatch",
       "msg": "Solvers length mismatch."
     },
     {
-      "code": 6001,
+      "code": 6301,
       "name": "FirstSolverNotInSolvers",
       "msg": "First solver not in solvers."
     },
     {
-      "code": 6002,
+      "code": 6302,
       "name": "FinaliseTxTooLarge",
       "msg": "Finalise transaction would exceed Solana's max packet size."
     },
     {
-      "code": 6003,
+      "code": 6303,
       "name": "OutputIndexOutOfBounds",
       "msg": "Output index is out of bounds."
     },
     {
-      "code": 6004,
+      "code": 6304,
       "name": "WrongAttestationCount",
       "msg": "Exactly one attestation account is required."
+    },
+    {
+      "code": 6305,
+      "name": "NotTopLevel",
+      "msg": "Input-first finalisation must be invoked as a top-level instruction."
+    },
+    {
+      "code": 6306,
+      "name": "MissingSamechainFillInstruction",
+      "msg": "A matching future compact same-chain fill instruction is required."
+    },
+    {
+      "code": 6307,
+      "name": "AmbiguousSamechainFillInstruction",
+      "msg": "More than one matching compact same-chain fill instruction was found."
+    },
+    {
+      "code": 6308,
+      "name": "InvalidSamechainFillInstruction",
+      "msg": "The compact same-chain fill instruction is malformed or has invalid accounts."
+    },
+    {
+      "code": 6309,
+      "name": "InvalidSamechainOrder",
+      "msg": "The compact same-chain order does not hash to the supplied order id."
+    },
+    {
+      "code": 6310,
+      "name": "InvalidSamechainOrderContext",
+      "msg": "The order context does not match the compact same-chain order."
+    },
+    {
+      "code": 6311,
+      "name": "ExecutableRentRefundAccount",
+      "msg": "The selected rent refund recipient must not be executable."
     }
   ],
   "types": [
     {
       "name": "ChainId",
-      "docs": ["Type used to store the chain id of the chain."],
+      "docs": [
+        "Type used to store the chain id of the chain."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -693,6 +1464,50 @@
       "type": {
         "kind": "struct",
         "fields": []
+      }
+    },
+    {
+      "name": "FinalisedEvent",
+      "docs": [
+        "Emitted by both `finalise` and `finalise_with_prefill`, mirroring the EVM",
+        "`Finalised(orderId, solver, destination)` event. Settled amounts are intentionally not",
+        "emitted."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "settler",
+            "type": "pubkey"
+          },
+          {
+            "name": "order_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "solver",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "destination",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -747,37 +1562,55 @@
           {
             "name": "oracle",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
             "name": "settler",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
             "name": "chain_id",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
             "name": "token",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
             "name": "amount",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
             "name": "recipient",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
@@ -792,13 +1625,44 @@
       }
     },
     {
+      "name": "OpenEvent",
+      "docs": [
+        "Events must be defined directly in the program crate: Anchor's IDL",
+        "generator only collects `#[event]` structs from the crate that owns the",
+        "`#[program]` module."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "order",
+            "type": {
+              "defined": {
+                "name": "StandardOrder"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "OrderContext",
       "docs": [
         "The context to opened as an account after opening an order.",
         "`input_token` is the token account of the input \"Mint\".",
         "`user` is the user who opened the order.",
         "`sponsor` is the account that paid for the tx and the rent for this account.",
-        "The order_context rent refund is sent back to this account on finalise/refund.",
+        "Both escrow rent refunds go here on settlement unless it is executable, in which case",
+        "they go to the solver (finalisation) or signer (refund).",
         "It can be the user itself or a third party that paid on the user's behalf.",
         "`bump` is the bump of this account to be reused during finalisation."
       ],
@@ -832,7 +1696,10 @@
           {
             "name": "order_id",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           }
         ]
@@ -846,7 +1713,10 @@
           {
             "name": "solver",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {

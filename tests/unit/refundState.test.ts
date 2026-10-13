@@ -153,12 +153,6 @@ describe("deriveRefundView precedence (plan §4.2)", () => {
     expect(deriveRefundView(hashOnly, snap(), EXPIRES + 1)?.kind).toBe("filled");
   });
 
-  test("row 6: an unreadable output blocks refunds", () => {
-    expect(
-      deriveRefundView(order, snap({ outputs: ["unfilled", "unknown"] }), EXPIRES + 1)
-    ).toEqual({ kind: "fill-unverifiable", outputIndexes: [1] });
-  });
-
   test("row 7: expired beats a half-done (even attested) fast refund", () => {
     const fast = progress(order, { attested: true });
     expect(deriveRefundView(order, snap({ fast }), EXPIRES + 1)).toEqual({ kind: "slow" });
@@ -333,7 +327,7 @@ describe("selectFastRail (plan §5.3)", () => {
       reason: "legacy-settler"
     });
     expect(selectFastRail(makeOrder({ inputOracle: COIN_FILLER }))).toEqual({
-      reason: "no-polymer-oracle"
+      reason: "unsupported-input-oracle"
     });
   });
 

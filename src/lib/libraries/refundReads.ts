@@ -6,7 +6,7 @@
 import {
   bytes32ToAddress,
   bytes32ToSolanaBase58,
-  SOLANA_MAINNET_CHAIN_ID,
+  encodeNotFilledDescription,
   type StandardSolana
 } from "@lifi/intent";
 import { getAbiItem, numberToHex, parseEventLogs, type Log } from "viem";
@@ -14,6 +14,7 @@ import { getClient } from "$lib/config";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
+import { WORMHOLE_ORACLE_ABI } from "$lib/abi/wormholeoracle";
 import { getChainType } from "$lib/utils/chainType";
 import { getSolanaReads } from "$lib/solana/client";
 import {
@@ -30,12 +31,20 @@ import {
   buildRefundOnNonFillInstruction,
   estimateLegacyTxSize
 } from "$lib/solana/nonFill";
-import { attestationPda, bytes32ToPubkey, TOKEN_PROGRAM_ID } from "$lib/solana/pda";
+import {
+  attestationPda,
+  bytes32ToPubkey,
+  polymerOraclePda,
+  TOKEN_PROGRAM_ID
+} from "$lib/solana/pda";
 import { getTronReads } from "$lib/tron/client";
 import { readIsProven, readOrderStatus, readReverseChainIdMap } from "$lib/tron/reads";
 import { isOutputFilled } from "./fillStatus";
 import { loadBreadcrumb, saveBreadcrumb } from "./refundBreadcrumbs";
 import { REFUND_CHAIN_IDS, type EscrowRefundOrder } from "./refundLookup";
+import { checkWormholeRoute } from "./oracleRoute";
+import { findWormholePublication } from "./wormholeProof";
+import { MINT_WINDOW_MARGIN_SECS, NOT_FILLED_WINDOW_SECS } from "$lib/solana/nonFill";
 import {
   chainLabel,
   FAST_MIN_REMAINING_SECS,
@@ -162,7 +171,7 @@ export function readAttested(order: EscrowRefundOrder, rail: FastRail): Promise<
       case "evm":
         return getClient(origin).readContract({
           address: inputOracle,
-          abi: POLYMER_ORACLE_ABI,
+          abi: rail.provider === "wormhole" ? WORMHOLE_ORACLE_ABI : POLYMER_ORACLE_ABI,
           functionName: "isProven",
           args: [output.chainId, output.oracle, output.settler, notFilledHash]
         });
@@ -173,7 +182,8 @@ export function readAttested(order: EscrowRefundOrder, rail: FastRail): Promise<
 /** Largest legacy transaction Solana accepts. */
 const SOLANA_TX_LIMIT_BYTES = 1232;
 
-// Configuration doesn't change within a session; one read per order and rail.
+// Retain immutable Polymer successes only; Wormhole's shared route checker
+// scopes its own success cache to the complete deployment and RPC identities.
 const railCheckCache = new Map<string, Promise<true | { reason: FastUnavailableReason }>>();
 
 /**
@@ -184,12 +194,18 @@ export function checkFastRailOnChain(
   order: EscrowRefundOrder,
   rail: FastRail
 ): Promise<true | { reason: FastUnavailableReason }> {
-  const key = `${order.orderId}:${rail.outputIndex}`;
+  if (rail.provider === "wormhole") return runRailCheck(order, rail);
+  const key = `${order.orderId}:${order.order.originChainId}:${order.order.inputOracle}:${rail.outputIndex}:${rail.output.chainId}:${rail.output.oracle}:${rail.output.settler}`;
   let pending = railCheckCache.get(key);
   if (!pending) {
     pending = runRailCheck(order, rail);
     railCheckCache.set(key, pending);
-    pending.catch(() => railCheckCache.delete(key));
+    pending.then(
+      (result) => {
+        if (result !== true) railCheckCache.delete(key);
+      },
+      () => railCheckCache.delete(key)
+    );
   }
   return pending;
 }
@@ -200,6 +216,17 @@ async function runRailCheck(
 ): Promise<true | { reason: FastUnavailableReason }> {
   const { originChainId: origin, inputOracle } = order.order;
   const { output } = rail;
+  if (rail.provider === "wormhole") {
+    const readiness = await checkWormholeRoute(origin, inputOracle, output);
+    if (!readiness.ready) return { reason: "wormhole-route-unavailable" };
+    if (
+      getChainType(origin) === "solana" &&
+      (await estimateSolanaRefundSize(order, rail)) > SOLANA_TX_LIMIT_BYTES
+    ) {
+      return { reason: "solana-refund-too-large" };
+    }
+    return true;
+  }
   const originCheck = await readOn(origin, async () => {
     switch (getChainType(origin)) {
       case "evm": {
@@ -232,7 +259,13 @@ async function runRailCheck(
         const reads = await getSolanaReads(origin);
         // The Polymer protocol id is the identity for EVM destinations — the
         // same assumption `receiveProof` makes.
-        return (await readChainMappingCanonicalId(reads, output.chainId)) === output.chainId;
+        return (
+          (await readChainMappingCanonicalId(
+            reads,
+            polymerOraclePda().toBase58(),
+            output.chainId
+          )) === output.chainId
+        );
       }
     }
   });
@@ -393,8 +426,8 @@ export async function locateSolanaRecord(
     output: rail.output,
     fillDeadline: order.order.fillDeadline
   };
-  return readOn(SOLANA_MAINNET_CHAIN_ID, async () => {
-    const reads = await getSolanaReads(SOLANA_MAINNET_CHAIN_ID);
+  return readOn(rail.output.chainId, async () => {
+    const reads = await getSolanaReads(rail.output.chainId);
     // The hint comes from localStorage: a malformed or stale value must fall
     // through to history discovery, not fail every refresh.
     if (
@@ -421,13 +454,39 @@ async function readFastProgress(
 ): Promise<RefundSnapshot["fast"]> {
   const rail = selectFastRail(order);
   if ("reason" in rail) return { unavailable: rail.reason };
-  const viable = await checkFastRailOnChain(order, rail);
-  if (viable !== true) return { unavailable: viable.reason };
-
+  // A proof delivered by anyone is sufficient to finish; an unavailable
+  // destination RPC or consumed publication must not send us back to publish.
   const attested = await readAttested(order, rail);
   const progress: FastProgress = { rail, attested, source: null };
   const { fillDeadline, expires } = order.order;
   if (attested || nowSecs <= fillDeadline || expires - nowSecs <= FAST_MIN_REMAINING_SECS) {
+    return progress;
+  }
+  const viable = await checkFastRailOnChain(order, rail);
+  if (viable !== true) return { unavailable: viable.reason };
+
+  if (rail.provider === "wormhole") {
+    try {
+      const publication = await findWormholePublication(rail.output, {
+        application: rail.output.settler,
+        payload: encodeNotFilledDescription({
+          orderId: order.orderId,
+          output: rail.output,
+          fillDeadline
+        })
+      });
+      if (publication) {
+        progress.source = { kind: "wormhole", publication };
+        return progress;
+      }
+    } catch {
+      // Failed discovery/Scan is not proof that publication never happened.
+      return { unavailable: "wormhole-publication-unavailable" };
+    }
+    if (rail.destKind === "solana") {
+      const unavailable = await readSolanaLocalProgress(order, progress, nowSecs);
+      if (unavailable) return { unavailable };
+    }
     return progress;
   }
 
@@ -435,18 +494,47 @@ async function readFastProgress(
   if (rail.destKind === "solana") {
     progress.source = await locateSolanaRecord(order, rail, crumb?.recordSignature);
     if (!progress.source) {
-      progress.solanaLocal = await readOn(SOLANA_MAINNET_CHAIN_ID, async () =>
-        readNotFilledLocalAttestation(await getSolanaReads(SOLANA_MAINNET_CHAIN_ID), {
-          orderId: order.orderId,
-          output: rail.output,
-          fillDeadline
-        })
-      );
+      const unavailable = await readSolanaLocalProgress(order, progress, nowSecs);
+      if (unavailable) return { unavailable };
     }
   } else {
     progress.source = await locateNotFilledLog(order, rail, crumb?.emitTxHash);
   }
   return progress;
+}
+
+/** Generic output.oracle consumer; use the destination's fresh finalized clock. */
+async function readSolanaLocalProgress(
+  order: EscrowRefundOrder,
+  progress: FastProgress,
+  nowSecs: number
+): Promise<FastUnavailableReason | undefined> {
+  return readOn(progress.rail.output.chainId, async () => {
+    const reads = await getSolanaReads(progress.rail.output.chainId);
+    const fillDeadline = order.order.fillDeadline;
+    const local = await readNotFilledLocalAttestation(reads, {
+      orderId: order.orderId,
+      output: progress.rail.output,
+      fillDeadline
+    });
+    progress.solanaLocal = local;
+    if (local.kind === "consumed") return "solana-attestation-consumed";
+    if (local.kind === "legacy") return "solana-attestation-legacy";
+    const chainTime = await reads.getFinalizedBlockTime();
+    if (!Number.isFinite(chainTime) || nowSecs - chainTime > MINT_WINDOW_MARGIN_SECS) {
+      throw new Error("Solana finalized time is unavailable. Retry.");
+    }
+    if (chainTime <= fillDeadline) {
+      throw new Error("Solana hasn't passed the fill deadline yet. Retry in a minute.");
+    }
+    if (
+      local.kind === "absent" &&
+      Math.max(chainTime, nowSecs) + MINT_WINDOW_MARGIN_SECS > fillDeadline + NOT_FILLED_WINDOW_SECS
+    ) {
+      return "solana-window-elapsed";
+    }
+    return undefined;
+  });
 }
 
 /** Everything `deriveRefundView` needs, read fresh from chain. */
@@ -458,7 +546,17 @@ export async function readRefundSnapshot(
   if (escrow !== "deposited") return { escrow, outputs: [], fast: null };
   const outputs = await readOutputFills(order);
   // Any filled or unreadable output blocks refunds outright; no point in fast reads.
-  if (outputs.some((fill) => fill !== "unfilled")) return { escrow, outputs, fast: null };
+  if (
+    outputs.length !== order.order.outputs.length ||
+    outputs.some((fill) => fill !== "unfilled") ||
+    order.meta.orderDeliveredTxHash ||
+    order.meta.orderSettledTxHash ||
+    order.meta.orderStatus === "Delivered" ||
+    order.meta.orderStatus === "Settled" ||
+    nowSecs > order.order.expires
+  ) {
+    return { escrow, outputs, fast: null };
+  }
   return { escrow, outputs, fast: await readFastProgress(order, nowSecs) };
 }
 
@@ -479,7 +577,7 @@ export async function assertStillRefundable(
   const [escrow, outputs, attested] = await Promise.all([
     readEscrowState(order),
     readOutputFills(order),
-    rail ? readAttested(order, rail) : Promise.resolve(false)
+    mode !== "slow" && rail ? readAttested(order, rail) : Promise.resolve(false)
   ]);
   const verdict = preSpendVerdict(
     order,
@@ -488,5 +586,29 @@ export async function assertStillRefundable(
     Math.floor(Date.now() / 1000)
   );
   if (typeof verdict === "object") throw new RefundActionError(verdict.blocked);
+  if (
+    verdict === "go" &&
+    rail?.provider === "wormhole" &&
+    (mode === "record" || mode === "prove")
+  ) {
+    const viable = await checkFastRailOnChain(order, rail);
+    if (viable !== true)
+      throw new RefundActionError(
+        "Wormhole route is unavailable. Refresh or use the regular refund after expiry."
+      );
+    if (mode === "record" && rail.destKind === "solana") {
+      const unavailable = await readSolanaLocalProgress(
+        order,
+        { rail, attested: false, source: null },
+        Math.floor(Date.now() / 1000)
+      );
+      if (unavailable)
+        throw new RefundActionError(
+          unavailable === "solana-window-elapsed"
+            ? "Solana non-fill proofs must be created within 48h of the fill deadline."
+            : "A non-fill record for this output already exists in an unusable state."
+        );
+    }
+  }
   return verdict;
 }

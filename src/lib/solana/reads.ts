@@ -6,6 +6,7 @@
 // present" is the fact, and the account's owner is what makes it trustworthy:
 // anyone can fund an address, only the program can own it.
 
+import { PublicKey } from "@solana/web3.js";
 import { getNotFilledDescriptionHash, getOutputHash } from "@lifi/intent";
 import type { MandateOutput } from "@lifi/intent";
 import {
@@ -31,7 +32,7 @@ import {
 } from "./pda";
 import {
   CHAIN_MAPPING_DISCRIMINATOR,
-  classifyNotFilledLocalAttestation,
+  classifyLocalAttestation,
   expectedNotFilledProveLog,
   type NotFilledLocalAttestation
 } from "./nonFill";
@@ -260,25 +261,26 @@ export async function readNotFilledLocalAttestation(
   a: NotFilledRecordArgs
 ): Promise<NotFilledLocalAttestation> {
   const info = await reads.getAccountInfo(notFilledLocalAttestationAddress(a), "confirmed");
-  return classifyNotFilledLocalAttestation(info, a.fillDeadline);
+  return classifyLocalAttestation(info, a.fillDeadline);
 }
 
 /**
- * The protocol chain id the Polymer oracle maps `polymerChainId` to, or null
- * when no well-formed mapping exists (receive_attest would then fail).
+ * The canonical chain id the oracle state PDA maps `protocolChainId` to, or
+ * null when no well-formed protocol-owned mapping exists.
  *
  * `ChainMapping` layout: disc(8) ‖ chain_id u128 LE(16) ‖ bump(1).
  */
 export async function readChainMappingCanonicalId(
   reads: SolanaConnectionLike,
-  polymerChainId: bigint
+  oracleAddress: string,
+  protocolChainId: bigint
 ): Promise<bigint | null> {
   const info = await reads.getAccountInfo(
-    chainMappingPda(polymerOraclePda(), polymerChainId).toBase58()
+    chainMappingPda(new PublicKey(oracleAddress), protocolChainId).toBase58()
   );
   if (
     info?.owner !== INTENTS_PROTOCOL_PROGRAM_ID ||
-    info.data.length < 25 ||
+    info.data.length !== 25 ||
     !CHAIN_MAPPING_DISCRIMINATOR.every((byte, i) => info.data[i] === byte)
   ) {
     return null;

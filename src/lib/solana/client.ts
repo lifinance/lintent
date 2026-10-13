@@ -79,6 +79,7 @@ export function getSolanaReads(chainId: number | bigint): Promise<SolanaConnecti
         if (!info) return null;
         return {
           owner: info.owner.toBase58(),
+          executable: info.executable,
           lamports: info.lamports,
           data: new Uint8Array(info.data)
         };
@@ -91,6 +92,7 @@ export function getSolanaReads(chainId: number | bigint): Promise<SolanaConnecti
           info
             ? {
                 owner: info.owner.toBase58(),
+                executable: info.executable,
                 lamports: info.lamports,
                 data: new Uint8Array(info.data)
               }

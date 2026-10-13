@@ -81,7 +81,7 @@
         return "Same-chain order: refundable after expiry.";
       case "solana-to-solana":
         return "Solana → Solana orders can only be refunded after expiry.";
-      case "no-polymer-oracle":
+      case "unsupported-input-oracle":
       case "no-provable-output":
         return "This order's oracle can't prove a non-fill.";
       case "legacy-settler":
@@ -90,6 +90,10 @@
         return `The origin oracle can't accept proofs from ${dest} yet.`;
       case "settler-no-code":
         return `No output settler is deployed on ${dest}.`;
+      case "wormhole-route-unavailable":
+        return "The Wormhole deployment, Core or chain mapping is unavailable. Retry the route check; slow refund remains available after expiry.";
+      case "wormhole-publication-unavailable":
+        return "Wormhole publication history is unavailable. Retry with an archival RPC or the publication transaction; do not publish again.";
       case "solana-refund-too-large":
         return "This order is too large for a Solana fast refund.";
       case "solana-window-elapsed":

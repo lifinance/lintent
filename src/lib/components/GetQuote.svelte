@@ -1,12 +1,17 @@
 <script lang="ts">
   import { IntentApi } from "@lifi/intent";
   import type { AppTokenContext } from "$lib/appTypes";
+  import type { Verifier } from "$lib/config";
+  import { getVerifierQuotes, type QuoteEligibility } from "$lib/libraries/verifierQuote";
+  import { untrack } from "svelte";
   import { resolveDemoQuoteParams } from "$lib/libraries/demoQuote";
   import { getChainType, namespaceForChain } from "$lib/utils/chainType";
   import { interval } from "rxjs";
 
   let {
     exclusiveFor = $bindable(),
+    verifier,
+    quoteEligibility = $bindable(),
     useExclusiveForQuoteRequest = false,
     use11Demo = false,
     integratorKey = "",
@@ -18,6 +23,8 @@
     useProductionApi
   }: {
     exclusiveFor: string;
+    verifier: Verifier;
+    quoteEligibility?: QuoteEligibility;
     useExclusiveForQuoteRequest?: boolean;
     use11Demo?: boolean;
     integratorKey?: string;
@@ -60,9 +67,21 @@
   // without this the slower response wins and the displayed output amount stops
   // matching what issuance would encode.
   let requestSeq = 0;
+  let lastAppliedSolver: string | undefined;
+
+  function clearQuote() {
+    quoteEligibility = undefined;
+    quoteExpires = 0;
+    width = 0;
+    for (const output of outputTokens) output.amount = 0n;
+    if (lastAppliedSolver !== undefined && exclusiveFor === lastAppliedSolver) exclusiveFor = "";
+    lastAppliedSolver = undefined;
+  }
 
   async function getQuoteAndSet() {
     const seq = ++requestSeq;
+    const requestedIdentity = quoteInputs;
+    const requestedVerifier = verifier;
     try {
       const { exclusiveFor: requestedExclusiveFor, integratorKey: requestedIntegratorKey } =
         resolveDemoQuoteParams({
@@ -79,52 +98,70 @@
       // `@lifi/intent` re-encodes the address fields to match the namespace it
       // is given, so the internal hex form is passed through unchanged here and
       // a Solana mint reaches the API as base58.
-      const response = await intentApi.getQuotes({
-        user: requireAccount(userChainId),
-        userChainId,
-        userNamespace: namespaceForChain(userChainId),
-        exclusiveFor: requestedExclusiveFor,
-        integratorKey: requestedIntegratorKey,
-        inputs: inputTokens.map(({ token, amount }) => {
-          return {
-            sender: requireAccount(token.chainId),
-            asset: token.address,
-            chainId: token.chainId,
-            namespace: namespaceForChain(token.chainId),
-            amount: amount
-          };
-        }),
-        outputs: outputTokens.map(({ token }) => {
-          return {
-            // The recipient override wins when set, matching what issuance will
-            // actually encode; otherwise the destination chain's own wallet.
-            receiver: outputRecipient ?? requireAccount(token.chainId),
-            asset: token.address,
-            chainId: token.chainId,
-            namespace: namespaceForChain(token.chainId),
-            amount: 0n
-          };
-        })
-      });
-      if (seq !== requestSeq) return;
+      const response = await getVerifierQuotes(
+        intentApi,
+        {
+          user: requireAccount(userChainId),
+          userChainId,
+          userNamespace: namespaceForChain(userChainId),
+          exclusiveFor: requestedExclusiveFor,
+          integratorKey: requestedIntegratorKey,
+          inputs: inputTokens.map(({ token, amount }) => {
+            return {
+              sender: requireAccount(token.chainId),
+              asset: token.address,
+              chainId: token.chainId,
+              namespace: namespaceForChain(token.chainId),
+              amount: amount
+            };
+          }),
+          outputs: outputTokens.map(({ token }) => {
+            return {
+              // The recipient override wins when set, matching what issuance will
+              // actually encode; otherwise the destination chain's own wallet.
+              receiver: outputRecipient ?? requireAccount(token.chainId),
+              asset: token.address,
+              chainId: token.chainId,
+              namespace: namespaceForChain(token.chainId),
+              amount: 0n
+            };
+          })
+        },
+        requestedVerifier
+      );
+      if (seq !== requestSeq || requestedIdentity !== quoteInputs || requestedVerifier !== verifier)
+        return;
       if (response?.quotes?.length ?? 0) {
         const quote = response.quotes[0];
         quoteExpires = new Date().getTime() + 30 * 1000;
         quoteDuration = quoteExpires - new Date().getTime();
-        outputTokens[0].amount = BigInt(quote.preview.outputs[0].amount);
+        const quotedAmount = BigInt(quote.preview.outputs[0].amount);
+        outputTokens[0].amount = quotedAmount;
         exclusiveFor = Array.isArray(quote.metadata.exclusiveFor)
           ? (quote.metadata.exclusiveFor[0] ?? "")
           : (quote.metadata.exclusiveFor ?? "");
+        lastAppliedSolver = exclusiveFor;
+        const quotedSolver = exclusiveFor;
+        quoteEligibility = {
+          verifier: requestedVerifier,
+          isCurrent: () =>
+            requestedVerifier === verifier &&
+            requestedIdentity === quoteInputs &&
+            quoteExpires > Date.now() &&
+            outputTokens[0]?.amount === quotedAmount &&
+            exclusiveFor === quotedSolver
+        };
         updater();
       } else {
-        quoteExpires = 0;
+        clearQuote();
       }
     } catch (e) {
-      if (seq !== requestSeq) return;
+      if (seq !== requestSeq || requestedIdentity !== quoteInputs || requestedVerifier !== verifier)
+        return;
       // A missing counterparty wallet is an ordinary UI state, not a failure:
       // show "No Quote" and stop, rather than leaving the previous quote's
       // countdown running against a request that was never sent.
-      quoteExpires = 0;
+      clearQuote();
       if (e instanceof MissingQuoteAddress) return;
       console.log("Could not fetch a quote", e);
       return;
@@ -169,6 +206,7 @@
   const quoteInputs = $derived(
     JSON.stringify({
       mainnet,
+      verifier,
       useProductionApi,
       use11Demo,
       integratorKey,
@@ -188,8 +226,23 @@
     })
   );
 
+  let quoteDuration = 30 * 1000;
+  let counter = interval(1000).subscribe(updater);
+
+  let quoteExpires = $state(0);
+  let width = $state(0);
+  let quoteRequest: Promise<void> = $state(Promise.resolve());
+  $effect.pre(() => {
+    void quoteInputs;
+    // Invalidate before the debounce, and before a late response can write back.
+    untrack(() => {
+      ++requestSeq;
+      clearQuote();
+    });
+  });
+
   $effect(() => {
-    quoteInputs;
+    void quoteInputs;
     // Debounced, and cancelled on change, so typing an amount or a recipient
     // sends one request rather than one per keystroke.
     const handle = setTimeout(() => updateQuote(), 1000);
@@ -204,7 +257,6 @@
   });
 
   $effect(() => {
-    quoteExpires;
     if (quoteExpires === 0) {
       width = 0;
       counter.unsubscribe();
@@ -213,12 +265,6 @@
     counter.unsubscribe();
     counter = interval(1000).subscribe(updater);
   });
-  let quoteDuration = 30 * 1000;
-  let counter = interval(1000).subscribe(updater);
-
-  let quoteExpires = $state(new Date().getTime() + 5 * 1000);
-  let width = $state(0);
-  let quoteRequest: Promise<void> = $state(Promise.resolve());
 </script>
 
 <div class="relative flex w-full items-center justify-center text-center align-middle">
@@ -229,7 +275,7 @@
     >
       Quote
     </div>
-  {:then _}
+  {:then}
     <!-- Button gradually shows how long until it is expired by fill background -->
     {#if quoteExpires !== 0}
       <div

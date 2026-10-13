@@ -7,6 +7,8 @@
   import { chainLabel, type FastStep } from "$lib/libraries/refundState";
   import { formatAddressForChain, getChainType } from "$lib/utils/chainType";
   import { copyToClipboard } from "$lib/utils/clipboard";
+  import { getChain } from "$lib/config";
+  import { oracleProviderFor } from "$lib/libraries/oracleRoute";
 
   let { flow }: { flow: RefundFlow } = $props();
 
@@ -15,6 +17,7 @@
   const origin = $derived(order.originChainId);
   const dest = $derived(view.kind === "fast" ? view.rail.output.chainId : null);
   const user = $derived(formatAddressForChain(order.user, origin));
+  const wormhole = $derived(oracleProviderFor(origin, order.inputOracle) === "wormhole");
 
   const VM_NAME = { evm: "EVM", tron: "Tron", solana: "Solana" } as const;
 
@@ -33,28 +36,48 @@
     label: (chain: string) => string;
     button: string;
     busy: string;
-  }[] = [
+  }[] = $derived([
     {
       step: "record",
-      label: (c) => `Prove "not filled" on ${c}`,
-      button: "Emit",
-      busy: "Emitting…"
+      label: (c) => (wormhole ? `Publish non-fill on ${c}` : `Prove "not filled" on ${c}`),
+      button: wormhole ? "Publish" : "Emit",
+      busy: wormhole ? "Publishing…" : "Emitting…"
     },
     {
       step: "prove",
-      label: (c) => `Deliver proof to ${c}`,
-      button: "Get proof & submit",
-      busy: "Proving…"
+      label: (c) => (wormhole ? `Verify/post VAA and register on ${c}` : `Deliver proof to ${c}`),
+      button: wormhole ? "Get VAA & register" : "Get proof & submit",
+      busy: "Working…"
     },
     { step: "refund", label: (c) => `Refund on ${c}`, button: "Refund", busy: "Refunding…" }
-  ];
+  ]);
   const ORDER: Record<FastStep, number> = { record: 0, prove: 1, refund: 2 };
 
   const source = $derived.by(() => {
     const fast = flow.snapshot?.fast;
     if (!fast || !("rail" in fast) || !fast.source) return null;
+    if (fast.source.kind === "wormhole") return fast.source.publication.txRef ?? null;
     return fast.source.kind === "evm" ? fast.source.txHash : fast.source.signature;
   });
+  const publication = $derived.by(() => {
+    const fast = flow.snapshot?.fast;
+    return fast && "rail" in fast && fast.source?.kind === "wormhole"
+      ? fast.source.publication
+      : null;
+  });
+  const vaaHref = $derived(
+    publication
+      ? `${publication.id.network === "mainnet" ? "https://api.wormholescan.io" : "https://api.testnet.wormholescan.io"}/v1/signed_vaa/${publication.id.emitterChain}/${publication.id.emitter.slice(2).toLowerCase()}/${publication.id.sequence}`
+      : null
+  );
+
+  function transactionHref(tx: string, chainId: bigint): string | undefined {
+    const vm = getChainType(chainId);
+    if (vm === "solana") return `https://solscan.io/tx/${encodeURIComponent(tx)}`;
+    if (vm === "tron") return `https://tronscan.org/#/transaction/${tx.replace(/^0x/, "")}`;
+    const explorer = getChain(chainId).blockExplorers?.default.url;
+    return explorer ? `${explorer}/tx/${tx}` : undefined;
+  }
 
   function doneTx(step: FastStep): string | null {
     if (step === "record") return flow.lastTx.record ?? source;
@@ -98,13 +121,22 @@
   {/snippet}
 
   <div class="space-y-1 border-b border-gray-100 pb-2">
-    <ChainWalletSlot chainId={origin} role="Origin" />
-    {#if dest !== null}
+    {#if wormhole && dest !== null}
       <ChainWalletSlot
         chainId={dest}
-        role="Destination"
+        role="Publication"
         sameAsOrigin={getChainType(dest) === "evm" && getChainType(origin) === "evm"}
       />
+      <ChainWalletSlot chainId={origin} role="Proof / refund" />
+    {:else}
+      <ChainWalletSlot chainId={origin} role="Origin" />
+      {#if dest !== null}
+        <ChainWalletSlot
+          chainId={dest}
+          role="Destination"
+          sameAsOrigin={getChainType(dest) === "evm" && getChainType(origin) === "evm"}
+        />
+      {/if}
     {/if}
   </div>
 
@@ -114,7 +146,10 @@
       <button
         type="button"
         class={[primary, "w-full"]}
-        disabled={flow.busy !== null || blocker !== null}
+        disabled={flow.busy !== null ||
+          flow.refreshing ||
+          flow.readError !== null ||
+          blocker !== null}
         title={blocker ?? undefined}
         onclick={() => flow.runSlowRefund()}
       >
@@ -146,38 +181,66 @@
               <span class="mr-1 font-semibold">{done ? "✓" : i + 1}</span>
               {s.label(chainLabel(chain))}
               {#if tx}
-                <button
-                  class="ml-1 cursor-pointer font-mono text-xs text-gray-500 hover:text-sky-700"
-                  title="Copy"
-                  onclick={() => copyToClipboard(tx)}>{short(tx)}</button
-                >
+                {@const href = transactionHref(tx, chain)}
+                {#if href}
+                  <a
+                    class="ml-1 font-mono text-xs text-sky-700 hover:underline"
+                    {href}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={tx}>{short(tx)}</a
+                  >
+                {:else}
+                  <button
+                    class="ml-1 cursor-pointer font-mono text-xs text-gray-500 hover:text-sky-700"
+                    title="Copy"
+                    onclick={() => copyToClipboard(tx)}>{short(tx)}</button
+                  >
+                {/if}
               {/if}
             </span>
             {#if current}
               <button
                 type="button"
                 class={primary}
-                disabled={flow.busy !== null || blocker !== null}
+                disabled={flow.busy !== null ||
+                  flow.refreshing ||
+                  flow.readError !== null ||
+                  blocker !== null}
                 title={blocker ?? undefined}
                 onclick={() => run(s.step)}
               >
-                {flow.busy === s.step ? s.busy : s.button}
+                {flow.busy === s.step
+                  ? s.busy
+                  : s.step === "prove" && flow.proofStatus === "not-ready"
+                    ? "Check again"
+                    : s.button}
               </button>
             {/if}
           </li>
         {/each}
       </ol>
       {#if view.step === "prove"}
-        {#if flow.busy === "prove" && flow.proofStatus && flow.proofStatus !== "not-ready"}
+        {#if flow.busy === "prove" && flow.proofStage}
           <p class="text-xs text-gray-600">
-            Waiting for Polymer proof… ({flow.proofStatus.attempt}/{flow.proofStatus.total})
+            {flow.proofStage}{#if flow.proofStatus && flow.proofStatus !== "not-ready"}
+              ({flow.proofStatus.attempt}/{flow.proofStatus.total}){/if}
           </p>
         {:else if flow.proofStatus === "not-ready"}
           <p class="text-xs text-amber-700">
-            Polymer hasn't produced the proof yet. It usually takes a few minutes after the
-            transaction finalizes. Press "Get proof & submit" to check again.
+            {wormhole
+              ? "Waiting for Wormhole guardians. Check again resumes the same publication; it does not publish or consume another record."
+              : "Polymer hasn't produced the proof yet. Check again resumes the same proof request."}
           </p>
         {/if}
+      {/if}
+      {#if publication && vaaHref}
+        <p class="text-xs text-gray-500">
+          Message {publication.id.emitterChain} / {publication.id.sequence} ·
+          <a class="text-sky-700 hover:underline" href={vaaHref} target="_blank" rel="noreferrer"
+            >Signed VAA</a
+          >
+        </p>
       {/if}
       <p class="text-xs text-gray-500">Slow refund unlocks {at(view.slowAt)}.</p>
     {/if}

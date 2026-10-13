@@ -3,6 +3,9 @@
 // snapshot — actions never advance it directly, they refresh.
 
 import type { TxRef } from "$lib/utils/txRef";
+import { encodeNotFilledDescription } from "@lifi/intent";
+import { clearWormholeHint } from "./wormholeProof";
+import { oracleProviderFor } from "./oracleRoute";
 import {
   describeActionError,
   fetchNonFillProof,
@@ -46,6 +49,7 @@ export class RefundFlow {
   refreshing = $state(false);
   actionError = $state<string | null>(null);
   proofStatus = $state<ProofStatus>(null);
+  proofStage = $state<string | null>(null);
   lastTx = $state<Partial<Record<RefundAction, TxRef>>>({});
 
   view = $derived(this.order ? deriveRefundView(this.order, this.snapshot, this.now) : null);
@@ -67,6 +71,8 @@ export class RefundFlow {
     this.input = raw.trim();
     this.lookupError = null;
     this.busy = "lookup";
+    ++this.#refreshSeq;
+    this.refreshing = false;
     try {
       const order = await lookupRefundOrder(this.input);
       this.order = order;
@@ -74,6 +80,7 @@ export class RefundFlow {
       this.readError = null;
       this.actionError = null;
       this.proofStatus = null;
+      this.proofStage = null;
       this.lastTx = {};
       this.#onInput?.(this.input);
     } catch (error) {
@@ -97,9 +104,32 @@ export class RefundFlow {
       this.snapshot = snapshot;
       this.readError = null;
       const kind = this.view?.kind;
-      if (kind === "refunded" || kind === "claimed") clearBreadcrumb(order.orderId);
+      if (
+        kind === "refunded" ||
+        kind === "claimed" ||
+        order.meta.orderStatus === "Delivered" ||
+        order.meta.orderStatus === "Settled" ||
+        order.meta.orderDeliveredTxHash ||
+        order.meta.orderSettledTxHash
+      ) {
+        clearBreadcrumb(order.orderId);
+        this.proofStatus = null;
+        this.proofStage = null;
+        if (oracleProviderFor(order.order.originChainId, order.order.inputOracle) === "wormhole") {
+          for (const output of order.order.outputs) {
+            clearWormholeHint(output, {
+              application: output.settler,
+              payload: encodeNotFilledDescription({
+                orderId: order.orderId,
+                output,
+                fillDeadline: order.order.fillDeadline
+              })
+            });
+          }
+        }
+      }
     } catch (error) {
-      if (seq !== this.#refreshSeq) return;
+      if (seq !== this.#refreshSeq || this.order !== order) return;
       console.warn("refund refresh failed", error);
       this.readError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -116,12 +146,16 @@ export class RefundFlow {
     body: (order: EscrowRefundOrder) => Promise<TxRef | null | void>
   ) {
     const order = this.order;
-    if (this.busy || !order || !isEscrowRefundOrder(order)) return;
+    if (this.busy || this.refreshing || this.readError || !order || !isEscrowRefundOrder(order))
+      return;
     this.busy = action;
     this.actionError = null;
+    this.proofStage = null;
+    if (action !== "prove") this.proofStatus = null;
     try {
       const tx = await body(order);
       if (tx) this.lastTx = { ...this.lastTx, [action]: tx };
+      if (this.proofStatus !== "not-ready") this.proofStage = null;
     } catch (error) {
       this.actionError = describeActionError(error);
     } finally {
@@ -147,6 +181,7 @@ export class RefundFlow {
     if (!rail || !source) return;
     return this.#run("prove", async (order) => {
       this.proofStatus = null;
+      if (rail.provider === "wormhole") this.proofStage = "Waiting for Wormhole guardians";
       const result = await fetchNonFillProof(order, rail, source, (attempt, total) => {
         this.proofStatus = { attempt, total };
       });
@@ -156,7 +191,9 @@ export class RefundFlow {
       }
       this.proofStatus = null;
       if (result.status === "attested") return;
-      return submitNonFillProof(order, rail, result.proof);
+      return submitNonFillProof(order, rail, result.proof, source, (stage) => {
+        this.proofStage = stage;
+      });
     });
   }
 

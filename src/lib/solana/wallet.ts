@@ -43,6 +43,12 @@ type Adapter = {
   off(event: string, handler: () => void): void;
 };
 
+/** Wallet signing capability, separate from connection/adapter discovery. */
+export type SolanaSigningWallet = {
+  publicKey: string;
+  signTransaction<T>(transaction: T): Promise<T>;
+};
+
 let adapters: Promise<Adapter[]> | undefined;
 let active: Adapter | undefined;
 
@@ -363,13 +369,33 @@ export async function getSolanaSigner(chainId: number | bigint): Promise<SolanaS
 
   const reads = await getSolanaReads(chainId);
 
+  return createSolanaSigner(chainId, reads, {
+    publicKey: address,
+    signTransaction: (transaction) => adapter.signTransaction(transaction)
+  });
+}
+
+/** Creates the transaction signer with the same cluster and confirmation guards. */
+export function createSolanaSigner(
+  chainId: number | bigint,
+  reads: SolanaConnectionLike,
+  wallet: SolanaSigningWallet
+): SolanaSignerLike {
+  const address = wallet.publicKey;
   return {
     publicKey: address,
     async signAndSend(instructions: SolanaInstructionLike[], opts) {
       await assertSolanaCluster(chainId, reads);
 
-      const { ComputeBudgetProgram, Connection, PublicKey, Transaction, TransactionInstruction } =
-        await import("@solana/web3.js");
+      // Load web3 only at the Solana wallet boundary, not in the SSR/main app bundle.
+      const {
+        ComputeBudgetProgram,
+        Connection,
+        Keypair,
+        PublicKey,
+        Transaction,
+        TransactionInstruction
+      } = await import("@solana/web3.js");
 
       const transaction = new Transaction();
       if (opts?.computeUnitLimit) {
@@ -399,7 +425,41 @@ export async function getSolanaSigner(chainId: number | bigint): Promise<SolanaS
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = new PublicKey(address);
 
-      const signed = await adapter.signTransaction(transaction);
+      // serializeMessage compiles the actual signer list, including instruction
+      // signers that the wallet has not signed yet. Each signature occupies 64
+      // bytes even while absent; the count uses Solana's compact-u16 encoding.
+      const message = transaction.serializeMessage();
+      const signatureCount = transaction.signatures.length;
+      let signatureCountBytes = 1;
+      for (let count = signatureCount; count >= 128; count = Math.floor(count / 128)) {
+        signatureCountBytes++;
+      }
+      const size = signatureCountBytes + signatureCount * 64 + message.length;
+      if (size > 1232) {
+        throw new Error(`Solana transaction is ${size} bytes; the maximum is 1232 bytes`);
+      }
+
+      const localSigners =
+        opts?.additionalSigners?.map(({ secretKey }) => Keypair.fromSecretKey(secretKey)) ?? [];
+      if (localSigners.length) transaction.partialSign(...localSigners);
+      const localSignatures = localSigners.map(({ publicKey }) => {
+        const signature = transaction.signatures.find(({ publicKey: key }) =>
+          key.equals(publicKey)
+        )?.signature;
+        if (!signature) throw new Error("Additional Solana signer did not sign the transaction");
+        return { publicKey, signature };
+      });
+
+      await opts?.beforeSign?.();
+      const signed = await wallet.signTransaction(transaction);
+      if (!signed.serializeMessage().equals(message)) {
+        throw new Error("Solana wallet changed the prepared transaction");
+      }
+      // Some wallets return a fresh transaction containing only their own
+      // signature. Restore the already-produced local signatures, never secrets.
+      for (const { publicKey, signature } of localSignatures) {
+        signed.addSignature(publicKey, signature);
+      }
       // Attach the program logs to the thrown error — see `failureLogs` for why
       // three sources are needed and which one answers for a preflight
       // rejection. Without this an Anchor failure reaches the console as a bare

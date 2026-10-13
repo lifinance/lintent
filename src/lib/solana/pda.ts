@@ -4,7 +4,8 @@ import {
   INPUT_SETTLER_ESCROW_PROGRAM_ID,
   INTENTS_PROTOCOL_PROGRAM_ID,
   OUTPUT_SETTLER_SIMPLE_PROGRAM_ID,
-  POLYMER_PROGRAM_ID
+  POLYMER_PROGRAM_ID,
+  WORMHOLE_PROGRAM_ID
 } from "$lib/idl";
 
 // PDA seeds, transcribed from the Rust `constants.rs` of each program. Kept as
@@ -27,6 +28,7 @@ export const SOLANA_PDA_SEEDS = {
   // NOTE: the polymer oracle's singleton seed is "polymer", not the IDL name
   // "oracle_polymer" — see POLYMER_ORACLE_SEED.
   polymerOracle: "polymer",
+  wormholeOracle: "wormhole",
   localConsumer: "local_consumer"
 } as const;
 
@@ -128,6 +130,11 @@ export function outputSettlerSimplePda(
  */
 export function polymerOraclePda(programId: string = POLYMER_PROGRAM_ID): PublicKey {
   return derive([SOLANA_PDA_SEEDS.polymerOracle], programId);
+}
+
+/** Wormhole commits its state PDA as both emitter and local-attestation consumer. */
+export function wormholeOraclePda(programId: string = WORMHOLE_PROGRAM_ID): PublicKey {
+  return derive([SOLANA_PDA_SEEDS.wormholeOracle], programId);
 }
 
 /** Per-order escrow bookkeeping, and the authority owning the escrowed ATAs. */

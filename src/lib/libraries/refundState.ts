@@ -11,9 +11,17 @@ import {
   SOLANA_POLYMER_ORACLE_PROGRAM
 } from "@lifi/intent";
 import type { MandateOutput } from "@lifi/intent";
-import { chainMetaById } from "$lib/config";
+import {
+  chainMetaById,
+  COIN_FILLER,
+  WORMHOLE_CHAIN_IDS,
+  WORMHOLE_ORACLE,
+  type Verifier
+} from "$lib/config";
 import { getChainType, isSolanaChain, type ChainType } from "$lib/utils/chainType";
 import { polymerOraclesFor } from "./polymerReceive";
+import { oracleProviderFor } from "./oracleRoute";
+import type { WormholePublication } from "./wormholeProof";
 import {
   REFUND_CHAIN_IDS,
   type EscrowRefundOrder,
@@ -44,8 +52,10 @@ export type ProofSource =
       logIndex: number;
       txHash: `0x${string}`;
     }
-  | { kind: "solana"; signature: string };
+  | { kind: "solana"; signature: string }
+  | { kind: "wormhole"; publication: WormholePublication };
 export type FastRail = {
+  provider: Verifier;
   outputIndex: number;
   output: MandateOutput;
   destKind: ChainType;
@@ -54,7 +64,9 @@ export type FastRail = {
 export type FastUnavailableReason =
   | "same-chain"
   | "solana-to-solana"
-  | "no-polymer-oracle"
+  | "unsupported-input-oracle"
+  | "wormhole-route-unavailable"
+  | "wormhole-publication-unavailable"
   | "no-provable-output"
   | "legacy-settler"
   | "chain-map-missing"
@@ -118,19 +130,42 @@ export function selectFastRail(
   const origin = o.originChainId;
   const originKind = getChainType(origin);
   if (order.legacySettler) return { reason: "legacy-settler" };
-  if (o.outputs.every((output) => output.chainId === origin)) return { reason: "same-chain" };
+  if (o.outputs.every((output) => BigInt(output.chainId) === BigInt(origin)))
+    return { reason: "same-chain" };
   if (originKind === "solana" && o.outputs.some((output) => isSolanaChain(output.chainId))) {
     return { reason: "solana-to-solana" };
   }
-  if (!polymerOraclesFor(origin).has(lower(o.inputOracle))) {
-    return { reason: "no-polymer-oracle" };
-  }
+  const provider = oracleProviderFor(origin, o.inputOracle);
+  if (!provider) return { reason: "unsupported-input-oracle" };
   const inputOracleBytes32 = lower(addressToBytes32(o.inputOracle));
-  const outputIndex = o.outputs.findIndex((output) => {
-    if (output.chainId === origin || !REFUND_CHAIN_IDS.includes(Number(output.chainId))) {
+  const matchesProvider = (output: MandateOutput) => {
+    if (
+      BigInt(output.chainId) === BigInt(origin) ||
+      !REFUND_CHAIN_IDS.includes(Number(output.chainId))
+    ) {
       return false;
     }
     const oracle = lower(output.oracle);
+    if (provider === "wormhole") {
+      const candidate = WORMHOLE_ORACLE[Number(output.chainId)];
+      const nativeId = WORMHOLE_CHAIN_IDS[Number(output.chainId)];
+      const originMeta = chainMetaById[Number(origin)];
+      const outputMeta = chainMetaById[Number(output.chainId)];
+      if (
+        !candidate ||
+        !nativeId ||
+        !originMeta ||
+        !outputMeta ||
+        originMeta.testnet !== outputMeta.testnet
+      )
+        return false;
+      const settler = isSolanaChain(output.chainId)
+        ? SOLANA_OUTPUT_SETTLER_PDA
+        : addressToBytes32(COIN_FILLER);
+      return (
+        oracle === lower(addressToBytes32(candidate)) && lower(output.settler) === lower(settler)
+      );
+    }
     if (isSolanaChain(output.chainId)) {
       return (
         oracle === lower(SOLANA_POLYMER_ORACLE_PROGRAM) &&
@@ -143,10 +178,20 @@ export function selectFastRail(
       );
     }
     return oracle === inputOracleBytes32;
-  });
+  };
+  if (
+    provider === "wormhole" &&
+    o.outputs.some(
+      (output) => BigInt(output.chainId) !== BigInt(origin) && !matchesProvider(output)
+    )
+  ) {
+    return { reason: "no-provable-output" };
+  }
+  const outputIndex = o.outputs.findIndex(matchesProvider);
   if (outputIndex === -1) return { reason: "no-provable-output" };
   const output = o.outputs[outputIndex]!;
   return {
+    provider,
     outputIndex,
     output,
     destKind: getChainType(output.chainId),
@@ -188,12 +233,24 @@ export function deriveRefundView(
   if (
     filled.length > 0 ||
     meta.orderDeliveredTxHash ||
+    meta.orderSettledTxHash ||
     (meta.orderStatus !== null && API_DELIVERED_STATUSES.has(meta.orderStatus))
   ) {
     return { kind: "filled", outputIndexes: filled };
   }
   const unknown = indexesWhere("unknown");
-  if (unknown.length > 0) return { kind: "fill-unverifiable", outputIndexes: unknown };
+  if (outputs.length !== escrowOrder.order.outputs.length) {
+    return {
+      kind: "fill-unverifiable",
+      outputIndexes: escrowOrder.order.outputs.map((_, index) => index)
+    };
+  }
+  const incomplete = escrowOrder.order.outputs.flatMap((_, index) =>
+    outputs[index] === "unfilled" || outputs[index] === "filled" ? [] : [index]
+  );
+  if (unknown.length > 0 || incomplete.length > 0) {
+    return { kind: "fill-unverifiable", outputIndexes: [...new Set([...unknown, ...incomplete])] };
+  }
 
   const grace = slowRefundGraceSecs(escrowOrder);
   const slowAt = expires + grace;
@@ -288,13 +345,32 @@ export function preSpendVerdict(
   if (state.escrow !== "deposited") {
     return { blocked: "The order is no longer open. Refreshing…" };
   }
+  if (
+    order.meta.orderDeliveredTxHash ||
+    order.meta.orderSettledTxHash ||
+    order.meta.orderStatus === "Delivered" ||
+    order.meta.orderStatus === "Settled"
+  ) {
+    return { blocked: "The order service reports this order as delivered. Refund isn't possible." };
+  }
   if (state.outputs.includes("filled")) {
     return { blocked: "An output was filled. Refund isn't possible." };
   }
   if (state.outputs.includes("unknown")) {
     return { blocked: "Can't verify every output from this page. Refund isn't possible here." };
   }
-  if (mode === "slow") return "go";
+  if (
+    state.outputs.length !== order.order.outputs.length ||
+    order.order.outputs.some((_, index) => state.outputs[index] !== "unfilled")
+  ) {
+    return { blocked: "Can't verify every output from this page. Refund isn't possible here." };
+  }
+  if (mode === "slow") {
+    if (nowSecs <= expires + slowRefundGraceSecs(order)) {
+      return { blocked: "The order hasn't passed its refund expiry and grace period yet." };
+    }
+    return "go";
+  }
   if (mode === "fast") {
     if (!state.attested) return { blocked: "The origin oracle has no non-fill proof yet." };
     if (nowSecs >= expires) {

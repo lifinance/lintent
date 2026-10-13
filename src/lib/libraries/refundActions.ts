@@ -10,11 +10,17 @@ import {
   type ContractFunctionName,
   type PublicClient
 } from "viem";
-import { bytes32ToAddress, type EVMOrder, type StandardSolana } from "@lifi/intent";
+import {
+  bytes32ToAddress,
+  encodeNotFilledDescription,
+  type EVMOrder,
+  type StandardSolana
+} from "@lifi/intent";
 import { getChain, getClient, type WC } from "$lib/config";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
+import { WORMHOLE_ORACLE_ABI } from "$lib/abi/wormholeoracle";
 import store from "$lib/state.svelte";
 import { getChainType } from "$lib/utils/chainType";
 import { extractRevertReason } from "$lib/utils/revert";
@@ -38,9 +44,21 @@ import { PolymerJobFailedError, pollPolymerProof, type PolymerProofBody } from "
 import { polymerReceiveFunction } from "./polymerReceive";
 import { saveBreadcrumb } from "./refundBreadcrumbs";
 import type { EscrowRefundOrder } from "./refundLookup";
-import { assertStillRefundable, RefundActionError } from "./refundReads";
+import { assertStillRefundable, readAttested, RefundActionError } from "./refundReads";
 import { chainLabel, type FastRail, type ProofSource } from "./refundState";
 import { solanaDeps, tronDeps } from "./solver";
+import type { SolanaDeps } from "$lib/solana/types";
+import { oracleProviderFor } from "./oracleRoute";
+import {
+  assertWormholeVaa,
+  findWormholePublication,
+  pollWormholeVaa,
+  publishEvmWormhole,
+  saveWormholeHint,
+  verifyWormholePublication,
+  type WormholeExpectedMessage,
+  type WormholePublication
+} from "./wormholeProof";
 
 export { RefundActionError };
 
@@ -50,7 +68,13 @@ const REVERT_COPY: Record<string, string> = {
   InvalidOrderStatus: "The order is no longer open. Refreshing…",
   TimestampNotPassed: "The chain clock hasn't reached the deadline yet.",
   NotProven: "The origin oracle has no non-fill proof yet.",
-  ZeroValue: "The origin oracle can't accept proofs from this destination."
+  ZeroValue: "The origin oracle can't accept proofs from this destination.",
+  NotAllPayloadsValid: "The destination has not attested every payload in this publication.",
+  RefundFailed: "The Wormhole publication's excess-fee refund failed.",
+  VMSignatureInvalid: "Wormhole rejected the VAA guardian signature.",
+  InvalidGuardianSet: "Wormhole rejected the VAA guardian set.",
+  GuardianSetExpired: "The VAA guardian set has expired.",
+  NoQuorum: "The VAA does not contain enough guardian signatures."
 };
 
 /** User-facing text for a failed action. */
@@ -100,7 +124,8 @@ async function sendEvm<
     functionName: functionName;
     args: ContractFunctionArgs<abi, "nonpayable" | "payable", functionName>;
   },
-  simFailure?: string
+  simFailure?: string,
+  beforeSpend?: () => Promise<void>
 ): Promise<`0x${string}`> {
   const { walletClient, account } = await ensureEvmWallet(chainId);
   // Narrowed from the per-chain client union, which viem's generic
@@ -114,6 +139,7 @@ async function sendEvm<
     if (simFailure) throw new RefundActionError(simFailure);
     throw new RefundActionError(describeActionError(error));
   }
+  await beforeSpend?.();
   const hash = await walletClient.writeContract({
     ...request,
     chain: getChain(chainId)
@@ -131,16 +157,88 @@ async function sendEvm<
 
 const tronRef = (txId: string): TxRef => `0x${txId.replace(/^0x/, "")}`;
 
+/** A third party registering the proof during wallet preparation is a no-op. */
+class AlreadyProven extends Error {}
+
+function nonFillExpected(order: EscrowRefundOrder, rail: FastRail): WormholeExpectedMessage {
+  return {
+    application: rail.output.settler,
+    payload: encodeNotFilledDescription({
+      orderId: order.orderId,
+      output: rail.output,
+      fillDeadline: order.order.fillDeadline
+    })
+  };
+}
+
+function wormholeGuard(
+  order: EscrowRefundOrder,
+  mode: "record" | "prove" | "fast" | "slow",
+  rail?: FastRail
+) {
+  return async () => {
+    if ((await assertStillRefundable(order, mode, rail)) === "already-proven")
+      throw new AlreadyProven();
+  };
+}
+
+/** Compose at the real signing boundary, after the executor has prepared its wallet transaction. */
+function guardedSolanaDeps(deps: SolanaDeps, beforeSpend: () => Promise<void>): SolanaDeps {
+  return {
+    ...deps,
+    signer: {
+      ...deps.signer,
+      signAndSend: (instructions, opts) =>
+        deps.signer.signAndSend(instructions, {
+          ...opts,
+          beforeSign: async () => {
+            await opts?.beforeSign?.();
+            await beforeSpend();
+          }
+        })
+    }
+  };
+}
+
+async function verifiedSource(
+  order: EscrowRefundOrder,
+  rail: FastRail,
+  source: ProofSource
+): Promise<WormholePublication> {
+  if (source.kind !== "wormhole")
+    throw new RefundActionError("Expected a verified Wormhole publication.");
+  const publication = await verifyWormholePublication(
+    rail.output,
+    nonFillExpected(order, rail),
+    source.publication
+  );
+  if (!publication)
+    throw new RefundActionError(
+      "Wormhole publication history unavailable. Retry with an archival RPC or the publication transaction."
+    );
+  saveWormholeHint(rail.output, nonFillExpected(order, rail), publication);
+  return publication;
+}
+
 /** `refund(order)` after expiry. */
 export async function submitSlowRefund(order: EscrowRefundOrder): Promise<TxRef> {
   await assertStillRefundable(order, "slow");
   const origin = order.order.originChainId;
+  const beforeSpend =
+    oracleProviderFor(order.order.originChainId, order.order.inputOracle) === "wormhole"
+      ? wormholeGuard(order, "slow")
+      : undefined;
   switch (getChainType(origin)) {
     case "solana":
-      return refundSolana(await solanaDeps(origin), {
-        order: order.order as StandardSolana,
-        orderId: order.orderId
-      });
+      return refundSolana(
+        beforeSpend
+          ? guardedSolanaDeps(await solanaDeps(origin), beforeSpend)
+          : await solanaDeps(origin),
+        {
+          order: order.order as StandardSolana,
+          orderId: order.orderId
+        }
+      );
     case "tron":
       return tronRef(
         await refundTron(await tronDeps(), {
@@ -149,12 +247,17 @@ export async function submitSlowRefund(order: EscrowRefundOrder): Promise<TxRef>
         })
       );
     case "evm":
-      return sendEvm(origin, {
-        address: order.container.inputSettler,
-        abi: SETTLER_ESCROW_ABI,
-        functionName: "refund",
-        args: [order.order as EVMOrder]
-      });
+      return sendEvm(
+        origin,
+        {
+          address: order.container.inputSettler,
+          abi: SETTLER_ESCROW_ABI,
+          functionName: "refund",
+          args: [order.order as EVMOrder]
+        },
+        undefined,
+        beforeSpend
+      );
   }
 }
 
@@ -172,6 +275,42 @@ export async function submitNonFillRecord(
   const { output, outputIndex } = rail;
   const { orderId } = order;
   const fillDeadline = order.order.fillDeadline;
+  if (rail.provider === "wormhole") {
+    const expected = nonFillExpected(order, rail);
+    const existing = await findWormholePublication(output, expected);
+    if (existing) {
+      saveWormholeHint(output, expected, existing);
+      return existing.txRef ?? null;
+    }
+    const beforeSpend = wormholeGuard(order, "record", rail);
+    try {
+      let publication: WormholePublication;
+      if (rail.destKind === "solana") {
+        // Platform code stays lazy: Core/Anchor dependencies are not SSR state.
+        const { publishSolanaWormhole } = await import("$lib/solana/wormhole");
+        publication = await publishSolanaWormhole(await solanaDeps(output.chainId), {
+          kind: "non-fill",
+          orderId,
+          output,
+          payload: expected.payload,
+          timestamp: fillDeadline,
+          beforeSpend
+        });
+      } else if (rail.destKind === "evm") {
+        const { walletClient, account } = await ensureEvmWallet(output.chainId);
+        publication = await publishEvmWormhole(output, expected.payload, walletClient, account, {
+          beforeSpend
+        });
+      } else {
+        throw new RefundActionError("Wormhole publication is unavailable on this destination.");
+      }
+      saveWormholeHint(output, expected, publication);
+      return publication.txRef ?? null;
+    } catch (error) {
+      if (error instanceof AlreadyProven) return null;
+      throw error;
+    }
+  }
   switch (rail.destKind) {
     case "solana": {
       const signature = await recordSolanaNotFilled(await solanaDeps(output.chainId), {
@@ -233,6 +372,12 @@ export async function fetchNonFillProof(
   if ((await assertStillRefundable(order, "prove", rail)) === "already-proven") {
     return { status: "attested" };
   }
+  if (rail.provider === "wormhole") {
+    const publication = await verifiedSource(order, rail, source);
+    return pollWormholeVaa(publication, nonFillExpected(order, rail), { onProgress });
+  }
+  if (source.kind === "wormhole")
+    throw new RefundActionError("A Wormhole publication cannot prove a Polymer refund.");
   const body: PolymerProofBody =
     source.kind === "evm"
       ? {
@@ -283,7 +428,9 @@ export async function fetchNonFillProof(
 export async function submitNonFillProof(
   order: EscrowRefundOrder,
   rail: FastRail,
-  proof: `0x${string}`
+  proof: `0x${string}`,
+  source?: ProofSource,
+  onProgress?: (stage: string) => void
 ): Promise<TxRef | null> {
   // Re-checked here, not trusted from before the poll: polling Polymer can
   // outlast a fill, an expiry, the expiry buffer, or a third party delivering
@@ -291,6 +438,61 @@ export async function submitNonFillProof(
   if ((await assertStillRefundable(order, "prove", rail)) === "already-proven") return null;
   const { originChainId: origin, inputOracle } = order.order;
   const { output } = rail;
+  if (rail.provider === "wormhole") {
+    const expected = nonFillExpected(order, rail);
+    const recovered =
+      source ??
+      (await findWormholePublication(output, expected).then((publication) =>
+        publication ? { kind: "wormhole" as const, publication } : null
+      ));
+    if (!recovered)
+      throw new RefundActionError(
+        "Wormhole publication history unavailable. Retry with an archival RPC or the publication transaction."
+      );
+    const publication = await verifiedSource(order, rail, recovered);
+    // Bind the actual bytes before wallet preparation, not just the order id.
+    assertWormholeVaa(hexToBytes(proof), publication, expected);
+    const beforeSpend = wormholeGuard(order, "prove", rail);
+    try {
+      let tx: TxRef | null;
+      if (getChainType(origin) === "solana") {
+        // Solana Core/Anchor are platform-specific and cannot initialize during SSR.
+        const { receiveWormholeVaa } = await import("$lib/solana/wormhole");
+        const result = await receiveWormholeVaa(await solanaDeps(origin), {
+          proof,
+          output,
+          payloadHash: rail.notFilledHash,
+          beforeSpend,
+          onProgress
+        });
+        tx = result.attestSignature ?? null;
+      } else if (getChainType(origin) === "evm") {
+        onProgress?.("Register proof");
+        tx = await sendEvm(
+          origin,
+          {
+            address: inputOracle,
+            abi: WORMHOLE_ORACLE_ABI,
+            functionName: "receiveMessage",
+            args: [proof]
+          },
+          undefined,
+          beforeSpend
+        );
+      } else {
+        throw new RefundActionError("Wormhole proof registration is unavailable on this origin.");
+      }
+      if (!(await readAttested(order, rail))) {
+        throw new RefundActionError(
+          "The transaction confirmed, but the origin non-fill proof is not registered. Retry to resume."
+        );
+      }
+      return tx;
+    } catch (error) {
+      if (error instanceof AlreadyProven) return null;
+      throw error;
+    }
+  }
   // Chosen by the chain the proof came FROM (the destination).
   const entryPoint = polymerReceiveFunction(output.chainId);
   switch (getChainType(origin)) {
@@ -325,15 +527,21 @@ export async function submitNonFillProof(
 export async function submitFastRefund(order: EscrowRefundOrder, rail: FastRail): Promise<TxRef> {
   await assertStillRefundable(order, "fast", rail);
   const origin = order.order.originChainId;
+  const beforeSpend = rail.provider === "wormhole" ? wormholeGuard(order, "fast", rail) : undefined;
   switch (getChainType(origin)) {
     case "solana":
-      return refundOnNonFillSolana(await solanaDeps(origin), {
-        order: order.order as StandardSolana,
-        orderId: order.orderId,
-        outputIndex: rail.outputIndex,
-        output: rail.output,
-        notFilledHash: rail.notFilledHash
-      });
+      return refundOnNonFillSolana(
+        beforeSpend
+          ? guardedSolanaDeps(await solanaDeps(origin), beforeSpend)
+          : await solanaDeps(origin),
+        {
+          order: order.order as StandardSolana,
+          orderId: order.orderId,
+          outputIndex: rail.outputIndex,
+          output: rail.output,
+          notFilledHash: rail.notFilledHash
+        }
+      );
     case "tron":
       return tronRef(
         await refundOnNonFillTron(await tronDeps(), {
@@ -353,7 +561,10 @@ export async function submitFastRefund(order: EscrowRefundOrder, rail: FastRail)
         },
         // Escrow is open and the attestation exists (just re-checked), so a
         // revert here is not something the user can fix.
-        "Proof is on-chain but the refund reverts. Contact support with the order id."
+        rail.provider === "wormhole"
+          ? undefined
+          : "Proof is on-chain but the refund reverts. Contact support with the order id.",
+        beforeSpend
       );
   }
 }

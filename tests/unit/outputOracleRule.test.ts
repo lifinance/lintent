@@ -13,7 +13,7 @@ import {
   type StandardOrder
 } from "@lifi/intent";
 import { arbitrum, base, tron } from "viem/chains";
-import { POLYMER_ORACLE } from "../../src/lib/config";
+import { POLYMER_ORACLE, WORMHOLE_ORACLE } from "../../src/lib/config";
 import { intentDeps, orderValidationDeps } from "../../src/lib/libraries/coreDeps";
 import { namespaceForChain } from "../../src/lib/utils/chainType";
 import { TEST_USER, b32 } from "../fixtures/orderFixtures";
@@ -43,12 +43,16 @@ const ARBITRUM = token(EVM_USDC, BigInt(arbitrum.id));
 const SOLANA = token(SOLANA_USDC, SOLANA_MAINNET_CHAIN_ID, 9);
 const TRON = token(TRON_USDC, BigInt(tron.id));
 
-function build(input: CoreToken, output: CoreToken): StandardOrder {
+function build(
+  input: CoreToken,
+  output: CoreToken,
+  verifier: "polymer" | "wormhole" = "polymer"
+): StandardOrder {
   const intent = new Intent(
     {
       inputTokens: [{ token: input, amount: 1_000_000n }],
       outputTokens: [{ token: output, amount: 1_000_000n }],
-      verifier: "polymer",
+      verifier,
       account: TEST_USER,
       // Required whenever the output namespace differs from the input's.
       outputRecipient: b32("c"),
@@ -155,4 +159,44 @@ describe("MandateOutput.oracle per route", () => {
   test("the solana input oracle itself is dirty, which is why it cannot be reused", () => {
     expect(SOLANA_POLYMER_ORACLE_PDA.slice(0, 26)).not.toBe(`0x${"00".repeat(12)}`);
   });
+});
+
+describe("Wormhole MandateOutput.oracle per route", () => {
+  for (const [name, input, output, settler] of [
+    ["Base -> Arbitrum", BASE, ARBITRUM, addressToBytes32(COIN_FILLER)],
+    ["Arbitrum -> Base", ARBITRUM, BASE, addressToBytes32(COIN_FILLER)],
+    ["Base -> Solana", BASE, SOLANA, SOLANA_OUTPUT_SETTLER_PDA],
+    ["Solana -> Base", SOLANA, BASE, addressToBytes32(COIN_FILLER)]
+  ] as const) {
+    test(`${name} constructs and validates destination-specific Wormhole identities`, () => {
+      const order = build(input, output, "wormhole");
+      const inputOracle = WORMHOLE_ORACLE[Number(input.chainId)]!;
+      const outputOracle = WORMHOLE_ORACLE[Number(output.chainId)]!;
+
+      expect(order.inputOracle).toBe(inputOracle);
+      expect(order.outputs[0]!.oracle).toBe(addressToBytes32(outputOracle));
+      expect(order.outputs[0]!.oracle).not.toBe(addressToBytes32(inputOracle));
+      expect(order.outputs[0]!.settler).toBe(settler);
+      expect(validateOrderWithReason({ order, deps: orderValidationDeps }).passed).toBe(true);
+
+      if (output === SOLANA) {
+        expect(order.outputs[0]!.oracle).not.toBe(SOLANA_POLYMER_ORACLE_PROGRAM);
+        expect(order.outputs[0]!.oracle).toBe(
+          "0x8c6b8fb85e2df10766846e755b85acd5605a6a1d27e19dfbee2942d4c7a53f2a"
+        );
+      } else {
+        expect(order.outputs[0]!.oracle.slice(0, 26)).toBe(`0x${"00".repeat(12)}`);
+      }
+    });
+  }
+
+  for (const input of [BASE, SOLANA]) {
+    test(`same-chain Wormhole selection preserves the ${input.chainNamespace} settler path`, () => {
+      const order = build(input, input, "wormhole");
+      const settler = input === SOLANA ? SOLANA_OUTPUT_SETTLER_PDA : addressToBytes32(COIN_FILLER);
+      expect(order.outputs[0]!.oracle).toBe(settler);
+      expect(order.outputs[0]!.settler).toBe(settler);
+      expect(validateOrderWithReason({ order, deps: orderValidationDeps }).passed).toBe(true);
+    });
+  }
 });

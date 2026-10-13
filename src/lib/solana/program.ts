@@ -9,7 +9,8 @@ import {
   INPUT_SETTLER_ESCROW_IDL,
   INTENTS_PROTOCOL_IDL,
   OUTPUT_SETTLER_SIMPLE_IDL,
-  POLYMER_IDL
+  POLYMER_IDL,
+  WORMHOLE_IDL
 } from "$lib/idl";
 import { getSolanaReads, solanaRpcUrl } from "./client";
 import type {
@@ -97,7 +98,7 @@ function adaptProgram(
 const programCache = new Map<string, Promise<SolanaProgramsLike>>();
 
 /**
- * The four programs, bound to `chainId`'s connection.
+ * The protocol programs, bound to `chainId`'s connection.
  *
  * The provider is deliberately read-only: it carries a public key so Anchor
  * can populate `signer`-flagged accounts, but its signing methods reject.
@@ -154,6 +155,7 @@ export function createSolanaPrograms(args: {
       inputSettlerEscrow: build(INPUT_SETTLER_ESCROW_IDL),
       outputSettlerSimple: build(OUTPUT_SETTLER_SIMPLE_IDL),
       polymer: build(POLYMER_IDL),
+      wormhole: build(WORMHOLE_IDL),
       intentsProtocol: build(INTENTS_PROTOCOL_IDL)
     } satisfies SolanaProgramsLike;
   })();

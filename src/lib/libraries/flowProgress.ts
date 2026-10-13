@@ -9,6 +9,8 @@ import {
 } from "$lib/config";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
+import { WORMHOLE_ORACLE_ABI } from "$lib/abi/wormholeoracle";
+import { oracleProviderFor } from "./oracleRoute";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COMPACT_ABI } from "$lib/abi/compact";
 import { hashStruct, keccak256 } from "viem";
@@ -106,6 +108,9 @@ async function isOutputValidatedOnChain(
   const outputHash = keccak256(encodedOutput);
 
   const provenCacheKey = `progress:proven:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`;
+  const sameChain = BigInt(output.chainId) === BigInt(inputChain);
+  const provider = oracleProviderFor(inputChain, orderContainer.order.inputOracle);
+  if (!sameChain && !provider) throw new Error("Unsupported recorded input oracle.");
   if (isSolanaChain(inputChain)) {
     // On Solana "proven" is not a mapping lookup — the oracle CREATES an
     // attestation account, so its existence is the proof. Same-chain fills
@@ -113,7 +118,6 @@ async function isOutputValidatedOnChain(
     // BigInt() on both sides: a DB-rehydrated container carries chain ids as
     // decimal strings, and a string/bigint pair is never strictly equal — which
     // silently classified a same-chain fill as remote.
-    const sameChain = BigInt(output.chainId) === BigInt(inputChain);
     return getOrFetchRpc(
       provenCacheKey,
       async () => {
@@ -152,7 +156,11 @@ async function isOutputValidatedOnChain(
       const sourceChainClient = getClient(inputChain);
       return sourceChainClient.readContract({
         address: orderContainer.order.inputOracle,
-        abi: POLYMER_ORACLE_ABI,
+        abi: sameChain
+          ? COIN_FILLER_ABI
+          : provider === "wormhole"
+            ? WORMHOLE_ORACLE_ABI
+            : POLYMER_ORACLE_ABI,
         functionName: "isProven",
         args: [output.chainId, output.oracle, output.settler, outputHash]
       });

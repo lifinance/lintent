@@ -35,6 +35,7 @@ import { getTronReads, getTronSigner } from "$lib/tron/client";
 import { getTrc20Allowance } from "$lib/tron/reads";
 import { approveToken } from "$lib/tron/writes";
 import { intentDeps } from "./coreDeps";
+import { assertWormholeOrderReady, assertWormholeSelectionReady } from "./oracleRoute";
 
 const FILL_DEADLINE_SECONDS = 10 * 60; // 10 minutes
 // Must stay strictly greater than FILL_DEADLINE_SECONDS: the Solana input
@@ -176,6 +177,13 @@ export class IntentFactory {
 
     if (ordersPointer) this.orders = ordersPointer;
   }
+  private async assertWormholeReady(opts: AppCreateIntentOptions): Promise<void> {
+    await assertWormholeSelectionReady(
+      opts.inputTokens.map(({ token }) => token.chainId),
+      opts.outputTokens.map(({ token }) => token.chainId),
+      opts.verifier
+    );
+  }
 
   private async saveOrder(options: {
     order: StandardOrder | MultichainOrder;
@@ -210,7 +218,7 @@ export class IntentFactory {
           "Compact intents are not supported for Tron — pending protocol decision on signing scheme"
         );
       }
-      if (this.preHook) await this.preHook(inputChain);
+      await this.assertWormholeReady(opts);
       const intentInstance = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
       applyIntentTimings(intentInstance);
       const sameChain = intentInstance.isSameChain();
@@ -218,6 +226,13 @@ export class IntentFactory {
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Compact signing is not supported for Solana intents.");
       applyExclusivityOverride(intent, opts.exclusiveFor, sameChain, getChainType(inputChain));
+      await assertWormholeOrderReady({
+        order: intent.asOrder(),
+        inputSettler: intent.inputSettler,
+        sponsorSignature: { type: "None", payload: "0x" },
+        allocatorSignature: { type: "None", payload: "0x" }
+      });
+      if (this.preHook) await this.preHook(inputChain);
 
       const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
 
@@ -260,6 +275,7 @@ export class IntentFactory {
           "Compact intents are not supported for Tron — pending protocol decision on signing scheme"
         );
       }
+      await this.assertWormholeReady(opts);
       const intentInstance2 = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
       applyIntentTimings(intentInstance2);
       const sameChain2 = intentInstance2.isSameChain();
@@ -272,6 +288,12 @@ export class IntentFactory {
         sameChain2,
         getChainType(inputTokens[0].token.chainId)
       );
+      await assertWormholeOrderReady({
+        order: intent.asOrder(),
+        inputSettler: intent.inputSettler,
+        sponsorSignature: { type: "None", payload: "0x" },
+        allocatorSignature: { type: "None", payload: "0x" }
+      });
 
       if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
@@ -306,6 +328,7 @@ export class IntentFactory {
   openIntent(opts: AppCreateIntentOptions) {
     return async () => {
       const { inputTokens, account } = opts;
+      await this.assertWormholeReady(opts);
       const intentInstance3 = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
       applyIntentTimings(intentInstance3);
       const sameChain3 = intentInstance3.isSameChain();
@@ -316,6 +339,12 @@ export class IntentFactory {
         sameChain3,
         getChainType(inputTokens[0].token.chainId)
       );
+      await assertWormholeOrderReady({
+        order: intent.asOrder(),
+        inputSettler: intent.inputSettler,
+        sponsorSignature: { type: "None", payload: "0x" },
+        allocatorSignature: { type: "None", payload: "0x" }
+      });
 
       const inputChain = inputTokens[0].token.chainId;
       if (this.preHook) await this.preHook(inputChain);

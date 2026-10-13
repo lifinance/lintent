@@ -14,6 +14,8 @@
   import type { AppCreateIntentOptions } from "$lib/appTypes";
   import { resolveAddressForChainType } from "$lib/utils/address";
   import { formatAddressForChain, getChainType } from "$lib/utils/chainType";
+  import { assertWormholeSelectionReady } from "$lib/libraries/oracleRoute";
+  import type { QuoteEligibility } from "$lib/libraries/verifierQuote";
 
   const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
   const REQUIRED_INPUT_USDC_RAW = 100n;
@@ -32,7 +34,23 @@
 
   let inputTokenSelectorActive = $state<boolean>(false);
   let outputTokenSelectorActive = $state<boolean>(false);
+  let quoteEligibility = $state<QuoteEligibility>();
 
+  const numInputChains = $derived.by(() => {
+    const tokenChains = store.inputTokens.map(({ token }) => token.chainId);
+    const uniqueChains = [...new Set(tokenChains)];
+    return uniqueChains.length;
+  });
+
+  const sameChain = $derived.by(() => {
+    if (numInputChains > 1) return false;
+    const inputChain = store.inputTokens[0].token.chainId;
+    const outputChains = store.outputTokens.map((o) => o.token.chainId);
+    const numOutputChains = [...new Set(outputChains)].length;
+    if (numOutputChains > 1) return false;
+    const outputChain = outputChains[0];
+    return inputChain === outputChain;
+  });
   // The exclusive solver is resolved against the INPUT chain's namespace, never
   // chain-agnostically: it is the input settler that pays the solver out, so it
   // is the input chain that has to recognise the identity. A 0x address padded
@@ -128,13 +146,81 @@
     return [...perChain.values()].some((count) => count > 1);
   });
 
-  const issueBlocker = $derived(
+  const formBlocker = $derived(
     recipientProblem ??
       exclusiveForProblem ??
       (solanaOutputOverflow
         ? "Solana orders support a single output: all outputs must be filled in one Solana transaction, and more than one exceeds the 1232-byte transaction size — the order would open but could never be filled."
         : undefined)
   );
+  const routeSelection = $derived({
+    inputs: store.inputTokens.map(({ token }) => token.chainId),
+    outputs: store.outputTokens.map(({ token }) => token.chainId),
+    verifier: store.verifier
+  });
+  const routeSelectionKey = $derived(
+    JSON.stringify({
+      ...routeSelection,
+      mainnet: store.mainnet,
+      inputAssets: store.inputTokens.map(({ token }) => token.address),
+      outputAssets: store.outputTokens.map(({ token }) => token.address)
+    })
+  );
+  let routeReadiness = $state<{ key: string; reason?: string }>();
+  let routeReadSequence = 0;
+  $effect.pre(() => {
+    const selection = routeSelection;
+    const key = routeSelectionKey;
+    const sequence = ++routeReadSequence;
+    let active = true;
+    routeReadiness = undefined;
+    void assertWormholeSelectionReady(selection.inputs, selection.outputs, selection.verifier)
+      .then(() => {
+        if (active && sequence === routeReadSequence && key === routeSelectionKey) {
+          routeReadiness = { key };
+        }
+      })
+      .catch((error: unknown) => {
+        if (active && sequence === routeReadSequence && key === routeSelectionKey) {
+          routeReadiness = {
+            key,
+            reason: error instanceof Error ? error.message : String(error)
+          };
+        }
+      });
+    return () => {
+      active = false;
+    };
+  });
+  const wormholeRemote = $derived(store.verifier === "wormhole" && !sameChain);
+  const quoteCurrent = $derived(
+    quoteEligibility?.verifier === store.verifier && quoteEligibility.isCurrent()
+  );
+  const quoteBlocker = $derived(
+    wormholeRemote && !quoteCurrent ? "Fetch a current Wormhole quote before issuing." : undefined
+  );
+  // The identity mismatch blocks immediately, before the async effect can run.
+  const routeBlocker = $derived(
+    wormholeRemote
+      ? routeReadiness?.key !== routeSelectionKey
+        ? "Checking Wormhole route availability..."
+        : routeReadiness?.reason
+      : undefined
+  );
+  const issueBlocker = $derived(formBlocker ?? routeBlocker ?? quoteBlocker);
+
+  async function assertCurrentIssueReady(): Promise<void> {
+    if (formBlocker !== undefined) throw new Error(formBlocker);
+    if (quoteBlocker !== undefined) throw new Error(quoteBlocker);
+    const key = routeSelectionKey;
+    const selection = routeSelection;
+    // Approval must use a fresh action-time read, not an earlier green UI state.
+    await assertWormholeSelectionReady(selection.inputs, selection.outputs, selection.verifier);
+    if (key !== routeSelectionKey)
+      throw new Error("Intent selection changed. Retry with the current selection.");
+    if (formBlocker !== undefined) throw new Error(formBlocker);
+    if (quoteBlocker !== undefined) throw new Error(quoteBlocker);
+  }
 
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({
@@ -182,11 +268,22 @@
     })
   );
 
-  const approveFunction = $derived(
-    store.intentType === "compact"
-      ? CompactLib.compactApprove(store.walletClient, approvalOptions)
-      : escrowApprove(store.walletClient, approvalOptions)
-  );
+  const approveFunction = async () => {
+    await assertCurrentIssueReady();
+    const key = routeSelectionKey;
+    const options = {
+      ...approvalOptions,
+      preHook: async (chainId: number) => {
+        if (preHook) await preHook(chainId);
+        if (key !== routeSelectionKey)
+          throw new Error("Intent selection changed. Retry with the current selection.");
+        await assertCurrentIssueReady();
+      }
+    };
+    return store.intentType === "compact"
+      ? CompactLib.compactApprove(store.walletClient, options)()
+      : escrowApprove(store.walletClient, options)();
+  };
 
   let allowanceCheck = $state(true);
   $effect(() => {
@@ -278,22 +375,6 @@
     return inputs;
   });
 
-  const numInputChains = $derived.by(() => {
-    const tokenChains = store.inputTokens.map(({ token }) => token.chainId);
-    const uniqueChains = [...new Set(tokenChains)];
-    return uniqueChains.length;
-  });
-
-  const sameChain = $derived.by(() => {
-    if (numInputChains > 1) return false;
-    const inputChain = store.inputTokens[0].token.chainId;
-    const outputChains = store.outputTokens.map((o) => o.token.chainId);
-    const numOutputChains = [...new Set(outputChains)].length;
-    if (numOutputChains > 1) return false;
-    const outputChain = outputChains[0];
-    return inputChain === outputChain;
-  });
-
   // const inputSecurityCheck = $derived.by(() => {
   // 	if (store.inputTokens.length === 0) return false;
   // 	const usdcOnly = store.inputTokens.every(({ token }) => token.name.toLowerCase() === "usdc");
@@ -337,6 +418,8 @@
             bind:outputTokens={store.outputTokens}
             accountForChain={(chainId) => store.accountForChain(chainId)}
             outputRecipient={resolvedRecipient}
+            verifier={store.verifier}
+            bind:quoteEligibility
           ></GetQuote>
         </div>
       {/snippet}
@@ -432,9 +515,9 @@
               <option selected disabled>Settler</option>
             </FormControl>
           {:else}
-            <FormControl as="select" id="verified-by" size="sm">
-              <option value="polymer" selected>Polymer</option>
-              <option value="wormhole" disabled>Wormhole</option>
+            <FormControl as="select" id="verified-by" size="sm" bind:value={store.verifier}>
+              <option value="polymer">Polymer</option>
+              <option value="wormhole">Wormhole</option>
             </FormControl>
           {/if}
         </div>
@@ -513,7 +596,12 @@
               Low Balance
             </button>
           {:else if store.intentType === "escrow"}
-            <AwaitButton buttonFunction={intentFactory.openIntent(intentOptions)}>
+            <AwaitButton
+              buttonFunction={async () => {
+                await assertCurrentIssueReady();
+                return intentFactory.openIntent(intentOptions)();
+              }}
+            >
               {#snippet name()}
                 Execute Open
               {/snippet}
@@ -532,7 +620,12 @@
                 Low Compact Balance
               </button>
             {:else}
-              <AwaitButton buttonFunction={intentFactory.compact(intentOptions)}>
+              <AwaitButton
+                buttonFunction={async () => {
+                  await assertCurrentIssueReady();
+                  return intentFactory.compact(intentOptions)();
+                }}
+              >
                 {#snippet name()}
                   Sign Order
                 {/snippet}

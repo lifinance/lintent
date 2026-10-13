@@ -25,7 +25,7 @@ import {
   buildCreateAtaIdempotentInstruction,
   buildRefundOnNonFillInstruction,
   buildSubmitConsumeNotFilledInstruction,
-  classifyNotFilledLocalAttestation,
+  classifyLocalAttestation,
   encodeBorshMandateOutput,
   estimateLegacyTxSize,
   expectedNotFilledProveLog
@@ -281,9 +281,9 @@ describe("classifyNotFilledLocalAttestation", () => {
   }
 
   test("absent for null or an empty system account", () => {
-    expect(classifyNotFilledLocalAttestation(null, FILL_DEADLINE)).toEqual({ kind: "absent" });
+    expect(classifyLocalAttestation(null, FILL_DEADLINE)).toEqual({ kind: "absent" });
     expect(
-      classifyNotFilledLocalAttestation(
+      classifyLocalAttestation(
         { owner: SYSTEM_PROGRAM_ID, lamports: 5, data: new Uint8Array() },
         FILL_DEADLINE
       )
@@ -291,17 +291,17 @@ describe("classifyNotFilledLocalAttestation", () => {
   });
 
   test("current carries the stored rent payer", () => {
-    expect(classifyNotFilledLocalAttestation(account(), FILL_DEADLINE)).toEqual({
+    expect(classifyLocalAttestation(account(), FILL_DEADLINE)).toEqual({
       kind: "current",
       rentRefund: rentRefund.toBase58()
     });
   });
 
   test("consumed and legacy", () => {
-    expect(classifyNotFilledLocalAttestation(account({ consumed: 1 }), FILL_DEADLINE)).toEqual({
+    expect(classifyLocalAttestation(account({ consumed: 1 }), FILL_DEADLINE)).toEqual({
       kind: "consumed"
     });
-    expect(classifyNotFilledLocalAttestation(account({ length: 13 }), FILL_DEADLINE)).toEqual({
+    expect(classifyLocalAttestation(account({ length: 13 }), FILL_DEADLINE)).toEqual({
       kind: "legacy"
     });
   });
@@ -314,7 +314,7 @@ describe("classifyNotFilledLocalAttestation", () => {
     ["zero rent refund", { zeroRefund: true }],
     ["invalid consumed flag", { consumed: 2 }]
   ])("throws on %s", (_label, opts) => {
-    expect(() => classifyNotFilledLocalAttestation(account(opts), FILL_DEADLINE)).toThrow();
+    expect(() => classifyLocalAttestation(account(opts), FILL_DEADLINE)).toThrow();
   });
 });
 

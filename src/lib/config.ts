@@ -82,15 +82,18 @@ export function isStellarChain(chainId: number | bigint | string) {
 // 32-byte contract id (CAVJORXN3EOHH5GGHOK66YTPBUFNICWGSAO3UBUG6SS75VSMGWIEQX4V).
 export const AXELAR_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [base.id]: "0xb7eA767b54aF5Dd8AD12Df648A399F9075D93FeE",
+  [arbitrum.id]: "0x86dd17B49ebcE5773b44490951BB80692D905BC9",
   [STELLAR_CHAIN_ID]: "0x2a9746edd91c73f4c63b95ef626f0d0ad40ac6901dba0686f4a5fed64c359048"
 };
 export const AXELAR_CHAIN_NAMES: Partial<Record<number, string>> = {
   [base.id]: "base",
+  [arbitrum.id]: "arbitrum",
   [STELLAR_CHAIN_ID]: "stellar"
 };
 // Minimum Axelar gas payment, in the SOURCE chain's base unit (wei / stroops).
 export const AXELAR_GAS_FLOOR: Partial<Record<number, bigint>> = {
   [base.id]: 500000000000000n,
+  [arbitrum.id]: 500000000000000n,
   [STELLAR_CHAIN_ID]: 50000000n
 };
 

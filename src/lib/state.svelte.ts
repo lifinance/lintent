@@ -13,12 +13,21 @@ import {
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
   isChainIdTestnet,
+  isStellarChain,
+  STELLAR_CHAIN_ID,
   type availableAllocators,
   type Token,
   type Verifier,
   type WC
 } from "./config";
 import { getAllowance, getBalance, getCompactBalance } from "./libraries/token";
+import { stellarTokenBalance } from "./libraries/stellar";
+import {
+  connectStellarWallet,
+  disconnectStellarWallet,
+  restoreStellarWallet
+} from "./utils/stellarWallet";
+import { maxUint256 } from "viem";
 import { browser } from "$app/environment";
 import { initDb, db } from "./db";
 import {
@@ -213,12 +222,35 @@ class Store {
     }
   }
 
+  /** Stellar transactions share the receipt cache, keyed by the Stellar chain id. */
+  async saveStellarTransaction(hash: `0x${string}`, data: { ledger: number; createdAt: number }) {
+    await this.saveTransactionReceipt(STELLAR_CHAIN_ID, hash, data);
+  }
+
+  getStellarTransaction(hash: `0x${string}`) {
+    const serialized = this.transactionReceipts[`${STELLAR_CHAIN_ID}:${hash}`];
+    if (!serialized) return undefined;
+    return JSON.parse(serialized) as { ledger: number; createdAt: number };
+  }
+
   walletConnection = $state<WalletConnection>(getCurrentConnection());
   connectedAccount = $derived(
     this.walletConnection.status === "connected"
       ? { address: this.walletConnection.address }
       : undefined
   );
+  /** Connected Stellar account (`G…`), used for every Stellar-side action. */
+  stellarAccount = $state<string | undefined>(undefined);
+
+  async connectStellar() {
+    this.stellarAccount = await connectStellarWallet();
+  }
+
+  async disconnectStellar() {
+    await disconnectStellarWallet();
+    this.stellarAccount = undefined;
+  }
+
   walletClient = $state<WC>(undefined as unknown as WC);
   _unwatchWalletConnection?: () => void;
 
@@ -236,12 +268,15 @@ class Store {
   balances = $derived.by(() => {
     this.refreshEpoch;
     const account = this.connectedAccount?.address;
+    const stellarAccount = this.stellarAccount;
     return this.mapOverCoinsCached({
       bucket: "balance",
       ttlMs: 30_000,
       isMainnet: this.mainnet,
-      scopeKey: account ?? "none",
-      fetcher: (asset, client) => getBalance(account, asset, client)
+      scopeKey: `${account ?? "none"}:${stellarAccount ?? "none"}`,
+      fetcher: (asset, client) => getBalance(account, asset, client),
+      stellarFetcher: (asset) =>
+        stellarAccount ? stellarTokenBalance(asset, stellarAccount) : Promise.resolve(0n)
     });
   });
 
@@ -258,7 +293,9 @@ class Store {
       ttlMs: 60_000,
       isMainnet: this.mainnet,
       scopeKey: `${account ?? "none"}:${spender}`,
-      fetcher: (asset, client) => getAllowance(spender)(account, asset, client)
+      fetcher: (asset, client) => getAllowance(spender)(account, asset, client),
+      // The Stellar escrow pulls inputs with an authorised transfer; no approval exists.
+      stellarFetcher: () => Promise.resolve(maxUint256)
     });
   });
 
@@ -271,7 +308,8 @@ class Store {
       ttlMs: 60_000,
       isMainnet: this.mainnet,
       scopeKey: `${account ?? "none"}:${allocatorId}`,
-      fetcher: (asset, client) => getCompactBalance(account, asset, client, allocatorId)
+      fetcher: (asset, client) => getCompactBalance(account, asset, client, allocatorId),
+      stellarFetcher: () => Promise.resolve(0n)
     });
   });
 
@@ -521,15 +559,19 @@ class Store {
       asset: `0x${string}`,
       client: (typeof clientsById)[keyof typeof clientsById]
     ) => Promise<T>;
+    stellarFetcher: (asset: `0x${string}`) => Promise<T>;
   }) {
-    const { bucket, ttlMs, isMainnet, scopeKey, fetcher } = opts;
+    const { bucket, ttlMs, isMainnet, scopeKey, fetcher, stellarFetcher } = opts;
     const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
     for (const token of this.availableTokens) {
       if (!resolved[token.chainId]) resolved[token.chainId] = {};
       const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${scopeKey}`;
       resolved[token.chainId][token.address] = getOrFetchRpc(
         key,
-        () => fetcher(token.address, clientsById[token.chainId]),
+        () =>
+          isStellarChain(token.chainId)
+            ? stellarFetcher(token.address)
+            : fetcher(token.address, clientsById[token.chainId]),
         { ttlMs }
       );
     }
@@ -555,6 +597,10 @@ class Store {
         this.walletConnection = connection;
         this.syncWalletClient().catch((error) => console.warn("syncWalletClient failed", error));
       });
+
+      restoreStellarWallet()
+        .then((address) => (this.stellarAccount = address))
+        .catch((error) => console.warn("restoreStellarWallet failed", error));
     }
 
     this.startRpcRefreshLoop();

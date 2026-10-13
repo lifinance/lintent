@@ -4,6 +4,12 @@ Lintent is LI.FI's interactive demo for the [Open Intents Framework (OIF)](https
 
 The app handles both sides of an intent: the user (intent issuer) and the solver. Each step maps to a dedicated screen so you can follow the entire flow in sequence.
 
+Axelar's mainnet oracle registry lives in `src/lib/config.ts`. Base uses
+`0xb7eA767b54aF5Dd8AD12Df648A399F9075D93FeE`; Arbitrum uses the
+[verified oracle](https://arbiscan.io/address/0x86dd17b49ebce5773b44490951bb80692d905bc9#code)
+at `0x86dd17B49ebcE5773b44490951BB80692D905BC9`. Both EVM chains use a minimum
+source-chain gas payment of 0.0005 ETH; the gas estimator may raise that amount.
+
 ## Architecture
 
 ```mermaid

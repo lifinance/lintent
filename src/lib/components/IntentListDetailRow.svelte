@@ -71,4 +71,9 @@
   >
     {row.validationPassed ? "Validation Pass" : `Invalid: ${row.validationReason}`}
   </span>
+  {#if row.unsupportedChains.length > 0}
+    <span class="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800"
+      >Unsupported chain {row.unsupportedChains.join(", ")}</span
+    >
+  {/if}
 </div>

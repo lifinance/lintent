@@ -1,10 +1,13 @@
 import {
+  AXELAR_ORACLE,
   COIN_FILLER,
   INPUT_SETTLER_COMPACT_LIFI,
+  isStellarChain,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   POLYMER_ORACLE,
   WORMHOLE_ORACLE
 } from "$lib/config";
+import { outputSettlerForStellar } from "@lifi/intent";
 import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
 
 function isNonZeroAddress(value: string | undefined): value is `0x${string}` {
@@ -19,6 +22,7 @@ export const intentDeps: IntentDeps = {
     if (verifier === "wormhole") {
       return WORMHOLE_ORACLE[key];
     }
+    if (verifier === "axelar") return AXELAR_ORACLE[key];
     return undefined;
   }
 };
@@ -30,25 +34,30 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     if (!Number.isFinite(key)) return undefined;
     const polymer = POLYMER_ORACLE[key];
     const wormhole = WORMHOLE_ORACLE[key];
+    const axelar = AXELAR_ORACLE[key];
     const allowed: `0x${string}`[] = [];
     if (polymer) allowed.push(polymer);
     if (isNonZeroAddress(wormhole)) allowed.push(wormhole);
+    if (axelar) allowed.push(axelar);
     if (allowed.length === 0) return undefined;
     if (sameChainFill) allowed.push(COIN_FILLER);
     return allowed;
   },
-  allowedOutputOracles(chainId) {
-    const key = Number(chainId);
+  allowedOutputOracles({ outputChainId, sameChainFill }) {
+    const key = Number(outputChainId);
     if (!Number.isFinite(key)) return undefined;
     const polymer = POLYMER_ORACLE[key];
     const wormhole = WORMHOLE_ORACLE[key];
+    const axelar = AXELAR_ORACLE[key];
     const allowed: `0x${string}`[] = [];
     if (polymer) allowed.push(polymer);
     if (isNonZeroAddress(wormhole)) allowed.push(wormhole);
+    if (axelar) allowed.push(axelar);
     if (allowed.length === 0) return undefined;
+    if (sameChainFill) allowed.push(COIN_FILLER);
     return allowed;
   },
-  allowedOutputSettlers() {
-    return [COIN_FILLER];
+  allowedOutputSettlers(chainId) {
+    return isStellarChain(chainId) ? [outputSettlerForStellar(BigInt(chainId))] : [COIN_FILLER];
   }
 };

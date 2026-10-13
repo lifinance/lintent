@@ -13,6 +13,7 @@
   import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
+  import { getUnsupportedChains } from "$lib/libraries/intentList";
 
   BigInt.prototype.toJSON = function () {
     return this.toString();
@@ -107,6 +108,10 @@
       (o) => containerToIntent(o).orderId() === importedOrderId
     );
     await store.saveOrderToDb(importedOrder);
+    const unsupported = getUnsupportedChains(importedOrder.order);
+    if (unsupported.length > 0) {
+      throw new Error(`Order saved, but chain ${unsupported.join(", ")} is not supported.`);
+    }
     selectedOrder =
       store.orders.find((o) => containerToIntent(o).orderId() === importedOrderId) ?? importedOrder;
     return existingIndex >= 0 ? "updated" : "inserted";

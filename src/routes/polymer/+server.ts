@@ -30,6 +30,12 @@ import { isSolanaChain } from "$lib/utils/chainType";
 const POLYMER_SOLANA_CHAIN_ID = 2;
 
 /**
+ * A request Polymer itself rejected. Its message is Polymer's own reason, safe to
+ * return to the caller, unlike transport errors, which stay in the logs.
+ */
+class PolymerRejectedError extends Error {}
+
+/**
  * Reads the request index out of a `polymer_requestProof` response.
  *
  * JSON-RPC reports failures in `error`, not by HTTP status, so axios resolves
@@ -42,14 +48,14 @@ const POLYMER_SOLANA_CHAIN_ID = 2;
 function assertRequestAccepted(data: unknown, source: "solana" | "evm"): number {
   const body = data as { result?: unknown; error?: { code?: number; message?: string } };
   if (body?.error) {
-    throw new Error(
+    throw new PolymerRejectedError(
       `Polymer rejected the ${source} proof request: ${body.error.message ?? "unknown error"}${
         body.error.code === undefined ? "" : ` (code ${body.error.code})`
       }`
     );
   }
   if (typeof body?.result !== "number") {
-    throw new Error(
+    throw new PolymerRejectedError(
       `Polymer returned no request index for the ${source} proof request: ${JSON.stringify(data)}`
     );
   }
@@ -309,7 +315,17 @@ export const POST: RequestHandler = async ({ request }) => {
     } = requestProofData.data;
 
     let proof: string | undefined;
-    if (dat.result.status === "complete") {
+    let failureReason: string | undefined;
+    if (dat.result.status === "error") {
+      // Polymer explains why the job failed; without it the caller sees a bare
+      // "error" and cannot tell a bad source log from a Polymer-side fault.
+      failureReason = dat.result.failureReason || undefined;
+      console.warn("polymer proof job failed", {
+        polymerIndex: polymerRequestIndex,
+        jobID: dat.result.jobID,
+        failureReason: failureReason ?? null
+      });
+    } else if (dat.result.status === "complete") {
       proof = dat.result.proof;
       const proofBytes = toByteArray(proof);
       proof = Array.from(proofBytes)
@@ -320,7 +336,8 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({
       proof,
       polymerIndex: polymerRequestIndex,
-      status: dat.result.status
+      status: dat.result.status,
+      ...(failureReason === undefined ? {} : { failureReason })
     });
   } catch (error) {
     console.error("polymer proof request failed", {
@@ -333,6 +350,12 @@ export const POST: RequestHandler = async ({ request }) => {
       polling: isPolling,
       error: error instanceof Error ? error.message : String(error)
     });
-    return json({ error: "Polymer proof request failed" }, { status: 502 });
+    return json(
+      {
+        error: "Polymer proof request failed",
+        ...(error instanceof PolymerRejectedError ? { reason: error.message } : {})
+      },
+      { status: 502 }
+    );
   }
 };

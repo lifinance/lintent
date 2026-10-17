@@ -149,6 +149,33 @@ describe("POST /polymer — poll by polymerIndex", () => {
     expect(await res.json()).toMatchObject({ proof: "abcd", status: "complete" });
   });
 
+  it("returns Polymer's failure reason for a failed job", async () => {
+    queryProofResult = {
+      jobID: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      status: "error",
+      failureReason: "failed to fetch source block"
+    };
+
+    const res = await post({ polymerIndex: 42 });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      polymerIndex: 42,
+      status: "error",
+      failureReason: "failed to fetch source block"
+    });
+  });
+
+  it("omits failureReason when a failed job gives none", async () => {
+    queryProofResult = { jobID: 1, createdAt: 0, updatedAt: 0, status: "error" };
+
+    const res = await post({ polymerIndex: 42 });
+
+    expect(await res.json()).toEqual({ polymerIndex: 42, status: "error" });
+  });
+
   it.each([0, -1, 1.5, "42", Number.MAX_SAFE_INTEGER + 2])(
     "rejects a non-positive-safe-integer polymerIndex: %p",
     async (v) => {
@@ -350,6 +377,11 @@ describe("POST /polymer — what the live Polymer API actually demands", () => {
     const res = await post(solanaBody);
 
     expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      error: "Polymer proof request failed",
+      reason:
+        "Polymer rejected the solana proof request: srcChainId is required for Solana and must be 2 (code -32000)"
+    });
     // The failure must stop here: querying an index we never got is what
     // produced the misleading "not_found".
     expect(methods()).toEqual(["polymer_requestProof"]);

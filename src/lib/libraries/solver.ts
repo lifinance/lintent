@@ -110,7 +110,8 @@ export class Solver {
       const dat = response.data as {
         proof: undefined | string;
         polymerIndex: number;
-        status?: "initialized" | "complete" | "error";
+        status?: "initialized" | "pending" | "not_found" | "complete" | "error";
+        failureReason?: string;
       };
       polymerIndex = dat.polymerIndex;
       if (polymerIndex !== undefined) {
@@ -123,7 +124,9 @@ export class Solver {
         // the next attempt then places a fresh request.
         Solver.polymerRequestIndexByLog.delete(cacheKey);
         throw new Error(
-          `Polymer could not generate a proof for request ${polymerIndex} (job failed). Retrying will start a new request.`
+          `Polymer could not generate a proof for request ${polymerIndex} (${
+            dat.failureReason ? `job failed: ${dat.failureReason}` : "job failed"
+          }). Retrying will start a new request.`
         );
       }
       await Solver.sleep(waitMs);

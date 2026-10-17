@@ -168,6 +168,23 @@ describe("POST /polymer — poll by polymerIndex", () => {
     });
   });
 
+  it("redacts URLs and caps the length of a failure reason", async () => {
+    queryProofResult = {
+      jobID: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      status: "error",
+      failureReason: `rpc failed: https://rpc.example/v1/secret-key\n${"x".repeat(400)}`
+    };
+
+    const res = await post({ polymerIndex: 42 });
+    const { failureReason } = (await res.json()) as { failureReason: string };
+
+    expect(failureReason).not.toContain("secret-key");
+    expect(failureReason.startsWith("rpc failed: [url] x")).toBe(true);
+    expect(failureReason.length).toBe(301);
+  });
+
   it("omits failureReason when a failed job gives none", async () => {
     queryProofResult = { jobID: 1, createdAt: 0, updatedAt: 0, status: "error" };
 
@@ -393,6 +410,8 @@ describe("POST /polymer — what the live Polymer API actually demands", () => {
     const res = await post(solanaBody);
 
     expect(res.status).toBe(502);
+    // The upstream payload stays in the logs, not in the public response.
+    expect(await res.json()).toEqual({ error: "Polymer proof request failed" });
     expect(methods()).toEqual(["polymer_requestProof"]);
   });
 

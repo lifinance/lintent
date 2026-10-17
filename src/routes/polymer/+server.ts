@@ -29,6 +29,35 @@ import { isSolanaChain } from "$lib/utils/chainType";
  */
 const POLYMER_SOLANA_CHAIN_ID = 2;
 
+/** A request Polymer itself rejected. Only its `publicReason` reaches the caller. */
+class PolymerRejectedError extends Error {
+  constructor(
+    message: string,
+    readonly publicReason: string
+  ) {
+    super(message);
+  }
+}
+
+const MAX_PUBLIC_REASON_LENGTH = 300;
+
+/**
+ * Makes a Polymer-supplied reason safe to return from this public endpoint.
+ *
+ * The text is upstream-controlled and may embed nested RPC errors, whose URLs can
+ * carry API keys, so URLs are replaced and the length is capped. The full text
+ * stays in the server logs.
+ */
+function toPublicReason(reason: string): string {
+  const redacted = reason
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[url]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return redacted.length > MAX_PUBLIC_REASON_LENGTH
+    ? `${redacted.slice(0, MAX_PUBLIC_REASON_LENGTH)}…`
+    : redacted;
+}
+
 /**
  * Reads the request index out of a `polymer_requestProof` response.
  *
@@ -42,11 +71,10 @@ const POLYMER_SOLANA_CHAIN_ID = 2;
 function assertRequestAccepted(data: unknown, source: "solana" | "evm"): number {
   const body = data as { result?: unknown; error?: { code?: number; message?: string } };
   if (body?.error) {
-    throw new Error(
-      `Polymer rejected the ${source} proof request: ${body.error.message ?? "unknown error"}${
-        body.error.code === undefined ? "" : ` (code ${body.error.code})`
-      }`
-    );
+    const reason = `Polymer rejected the ${source} proof request: ${body.error.message ?? "unknown error"}${
+      body.error.code === undefined ? "" : ` (code ${body.error.code})`
+    }`;
+    throw new PolymerRejectedError(reason, toPublicReason(reason));
   }
   if (typeof body?.result !== "number") {
     throw new Error(
@@ -309,7 +337,18 @@ export const POST: RequestHandler = async ({ request }) => {
     } = requestProofData.data;
 
     let proof: string | undefined;
-    if (dat.result.status === "complete") {
+    let failureReason: string | undefined;
+    if (dat.result.status === "error") {
+      // Polymer explains why the job failed; without it the caller sees a bare
+      // "error" and cannot tell a bad source log from a Polymer-side fault.
+      const rawReason = dat.result.failureReason || undefined;
+      failureReason = rawReason === undefined ? undefined : toPublicReason(rawReason);
+      console.warn("polymer proof job failed", {
+        polymerIndex: polymerRequestIndex,
+        jobID: dat.result.jobID,
+        failureReason: rawReason ?? null
+      });
+    } else if (dat.result.status === "complete") {
       proof = dat.result.proof;
       const proofBytes = toByteArray(proof);
       proof = Array.from(proofBytes)
@@ -320,7 +359,8 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({
       proof,
       polymerIndex: polymerRequestIndex,
-      status: dat.result.status
+      status: dat.result.status,
+      ...(failureReason === undefined ? {} : { failureReason })
     });
   } catch (error) {
     console.error("polymer proof request failed", {
@@ -333,6 +373,12 @@ export const POST: RequestHandler = async ({ request }) => {
       polling: isPolling,
       error: error instanceof Error ? error.message : String(error)
     });
-    return json({ error: "Polymer proof request failed" }, { status: 502 });
+    return json(
+      {
+        error: "Polymer proof request failed",
+        ...(error instanceof PolymerRejectedError ? { reason: error.publicReason } : {})
+      },
+      { status: 502 }
+    );
   }
 };

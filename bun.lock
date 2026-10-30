@@ -8,7 +8,7 @@
         "@base-org/account": "^2.5.1",
         "@coinbase/wallet-sdk": "^4.3.6",
         "@electric-sql/pglite": "^0.3.15",
-        "@lifi/intent": "^0.8.0",
+        "@lifi/intent": "git+https://github.com/lifinance/intent.ts.git#398f9730835cf869858d7e4dc6212e9c789827ce",
         "@metamask/sdk": "^0.34.0",
         "@safe-global/safe-apps-provider": "~0.18.6",
         "@safe-global/safe-apps-sdk": "^9.1.0",
@@ -54,6 +54,9 @@
       },
     },
   },
+  "trustedDependencies": [
+    "@lifi/intent",
+  ],
   "packages": {
     "@adraffy/ens-normalize": ["@adraffy/ens-normalize@1.11.0", "", {}, "sha512-/3DDPKHqqIqxUULp8yP4zODUY1i+2xvVWsv8A79xGWdCAG+8sb0hRh0Rk2QyOJUnnbyPUAZYcpBuRe3nS2OIUg=="],
 
@@ -235,7 +238,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.29", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-uw6guiW/gcAGPDhLmd77/6lW8QLeiV5RUTsAX46Db6oLhGaVj4lhnPwb184s1bkc8kdVg/+h988dro8GRDpmYQ=="],
 
-    "@lifi/intent": ["@lifi/intent@0.8.0", "", { "dependencies": { "@noble/curves": "^1.9.1", "@scure/base": "^2.2.0", "borsh": "^2.0.0", "ky": "^1.12.0", "viem": "~2.45.1" } }, "sha512-Jt9aQbsYFdT2pnQ/be29UEIZVMHKYPCvn9a3j6bUtEu0Yru2DbdKu6e8InaYPMLQGFE6qgf8zfFQIEK0zbQ/Zg=="],
+    "@lifi/intent": ["@lifi/intent@github:lifinance/intent.ts#398f973", { "dependencies": { "@noble/curves": "^1.9.1", "@scure/base": "^2.2.0", "borsh": "^2.0.0", "ky": "^1.12.0", "viem": "~2.45.1" } }, "lifinance-intent.ts-398f973", "sha512-vLsLJr/lanSw7NvKlWHIvyvr+9Jm/IkZteZZ7ZzR9n1PvEhDICnhFWuza+7PL7/8uke/C7Q/p+qeA4a88pE13A=="],
 
     "@lit-labs/ssr-dom-shim": ["@lit-labs/ssr-dom-shim@1.5.1", "", {}, "sha512-Aou5UdlSpr5whQe8AA/bZG0jMj96CoJIWbGfZ91qieWu5AWUMKw8VR/pAkQkJYvBNhmCcWnZlyyk5oze8JIqYA=="],
 

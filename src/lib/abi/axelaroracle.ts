@@ -14,27 +14,24 @@ export const AXELAR_ORACLE_ABI = [
   },
   {
     type: "function",
-    name: "route",
-    inputs: [{ name: "name", type: "string", internalType: "string" }],
-    outputs: [
-      {
-        name: "r",
-        type: "tuple",
-        internalType: "struct AxelarOracle.Route",
-        components: [
-          { name: "chainId", type: "uint256", internalType: "uint256" },
-          { name: "kind", type: "uint8", internalType: "enum OracleAddress.Kind" }
-        ]
-      }
-    ],
+    name: "chainIdMap",
+    inputs: [{ name: "key", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view"
+  },
+  {
+    type: "function",
+    name: "reverseChainIdMap",
+    inputs: [{ name: "chainId", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view"
   },
   {
     type: "function",
     name: "submit",
     inputs: [
-      { name: "destinationChain", type: "string", internalType: "string" },
-      { name: "recipientOracle", type: "bytes32", internalType: "bytes32" },
+      { name: "destinationChainId", type: "uint256", internalType: "uint256" },
+      { name: "recipientOracle", type: "string", internalType: "string" },
       { name: "source", type: "address", internalType: "address" },
       { name: "payloads", type: "bytes[]", internalType: "bytes[]" },
       { name: "destinationConfig", type: "bytes32", internalType: "bytes32" },

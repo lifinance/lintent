@@ -1,5 +1,11 @@
 import axios from "axios";
-import { AXELAR_CHAIN_NAMES, AXELAR_GAS_FLOOR, isStellarChain } from "$lib/config";
+import {
+  AXELAR_CHAIN_NAMES,
+  AXELAR_GAS_FLOOR,
+  isStellarChain,
+  isTestnetCorridor,
+  isChainIdTestnet
+} from "$lib/config";
 
 export function axelarChainName(chainId: number | bigint): string {
   const name = AXELAR_CHAIN_NAMES[Number(chainId)];
@@ -14,8 +20,21 @@ export function axelarChainName(chainId: number | bigint): string {
  */
 export async function axelarGasFee(
   sourceChainId: number | bigint,
-  destinationChainId: number | bigint
+  destinationChainId: number | bigint,
+  payloads?: `0x${string}`[],
+  stellarExecutor?: string
 ): Promise<bigint> {
+  if (isTestnetCorridor(sourceChainId, destinationChainId)) {
+    const { data } = await axios.post<{ fee: string }>("/axelar/gas", {
+      sourceChainId: Number(sourceChainId),
+      destinationChainId: Number(destinationChainId),
+      payloads,
+      stellarExecutor
+    });
+    if (!/^\d+$/.test(data.fee) || BigInt(data.fee) <= 0n)
+      throw new Error("Testnet Axelar gas estimate unavailable");
+    return BigInt(data.fee);
+  }
   const floor = AXELAR_GAS_FLOOR[Number(sourceChainId)];
   if (floor === undefined) throw new Error(`No Axelar gas floor for chain ${sourceChainId}`);
   try {
@@ -34,5 +53,5 @@ export async function axelarGasFee(
 /** Axelarscan GMP page of a submit transaction; Stellar hashes carry no 0x prefix there. */
 export function axelarscanUrl(txHash: `0x${string}`, sourceChainId: number | bigint) {
   const hash = isStellarChain(sourceChainId) ? txHash.replace(/^0x/, "") : txHash;
-  return `https://axelarscan.io/gmp/${hash}`;
+  return `https://${isChainIdTestnet(sourceChainId) ? "testnet." : ""}axelarscan.io/gmp/${hash}`;
 }

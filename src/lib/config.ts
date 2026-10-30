@@ -1,3 +1,26 @@
+import { env } from "$env/dynamic/public";
+import {
+  loadStellarTestnet,
+  stellarContractHex,
+  STELLAR_TESTNET_ID,
+  STELLAR_TESTNET_USDC
+} from "./stellarTestnet";
+export { STELLAR_TESTNET_ID, isTestnetCorridor } from "./stellarTestnet";
+
+export const stellarTestnetConfig = (() => {
+  try {
+    return {
+      ...loadStellarTestnet(
+        env.PUBLIC_STELLAR_TESTNET_ENABLED,
+        env.PUBLIC_STELLAR_TESTNET_DEPLOYMENT_JSON
+      ),
+      error: undefined
+    };
+  } catch (error) {
+    return { enabled: false, deployment: undefined, error: String(error) };
+  }
+})();
+
 import {
   COIN_FILLER,
   COMPACT,
@@ -75,7 +98,7 @@ export const STELLAR_RPC_URL = "https://mainnet.sorobanrpc.com";
 export const STELLAR_NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015";
 
 export function isStellarChain(chainId: number | bigint | string) {
-  return normalizeChainId(chainId) === STELLAR_CHAIN_ID;
+  return [STELLAR_CHAIN_ID, STELLAR_TESTNET_ID].includes(normalizeChainId(chainId));
 }
 
 // Axelar GMP oracles. EVM entries are addresses; the Stellar entry is the raw
@@ -85,11 +108,62 @@ export const AXELAR_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [arbitrum.id]: "0x86dd17B49ebcE5773b44490951BB80692D905BC9",
   [STELLAR_CHAIN_ID]: "0x2a9746edd91c73f4c63b95ef626f0d0ad40ac6901dba0686f4a5fed64c359048"
 };
+if (stellarTestnetConfig.enabled && stellarTestnetConfig.deployment) {
+  AXELAR_ORACLE[STELLAR_TESTNET_ID] = stellarContractHex(
+    stellarTestnetConfig.deployment.stellar.axelarOracle
+  );
+  AXELAR_ORACLE[84532] = stellarTestnetConfig.deployment.baseSepolia.axelarOracle;
+}
 export const AXELAR_CHAIN_NAMES: Partial<Record<number, string>> = {
   [base.id]: "base",
   [arbitrum.id]: "arbitrum",
   [STELLAR_CHAIN_ID]: "stellar"
 };
+AXELAR_CHAIN_NAMES[STELLAR_TESTNET_ID] = "stellar-2026-q1-2";
+AXELAR_CHAIN_NAMES[84532] = "base-sepolia";
+
+export type ChainMeta = { id: number; name: string; rpc: string; passphrase: string };
+export function stellarNetwork(chainId: number | bigint): ChainMeta {
+  if (Number(chainId) === STELLAR_CHAIN_ID)
+    return {
+      id: STELLAR_CHAIN_ID,
+      name: "Mainnet",
+      rpc: STELLAR_RPC_URL,
+      passphrase: STELLAR_NETWORK_PASSPHRASE
+    };
+  if (Number(chainId) === STELLAR_TESTNET_ID)
+    return {
+      id: STELLAR_TESTNET_ID,
+      name: "Testnet",
+      rpc: "https://soroban-testnet.stellar.org",
+      passphrase: "Test SDF Network ; September 2015"
+    };
+  throw new Error(`Unknown Stellar network ${chainId}`);
+}
+export function stellarDeployment(chainId: bigint) {
+  if (chainId !== BigInt(STELLAR_TESTNET_ID)) return undefined;
+  const config = stellarTestnetConfig;
+  if (!config.enabled || !config.deployment)
+    throw new Error(
+      config.error ?? "Stellar testnet corridor disabled: missing deployment configuration"
+    );
+  return {
+    inputEscrow: stellarContractHex(config.deployment.stellar.inputEscrow),
+    outputSettler: stellarContractHex(config.deployment.stellar.outputSettler)
+  };
+}
+export function requireAlignedAxelar(a: number | bigint, b: number | bigint) {
+  if (
+    !(
+      (Number(a) === STELLAR_TESTNET_ID && Number(b) === 84532) ||
+      (Number(a) === 84532 && Number(b) === STELLAR_TESTNET_ID)
+    )
+  )
+    throw new Error(
+      "Unsupported old-ABI Axelar deployment: publication/claim disabled; historical reads/refunds remain available"
+    );
+  stellarDeployment(BigInt(STELLAR_TESTNET_ID));
+}
 // Minimum Axelar gas payment, in the SOURCE chain's base unit (wei / stroops).
 export const AXELAR_GAS_FLOOR: Partial<Record<number, bigint>> = {
   [base.id]: 500000000000000n,
@@ -144,7 +218,11 @@ export const chainList = (mainnet: boolean) => {
 
 export const chainIdList = (mainnet: boolean): number[] => {
   const ids: number[] = chainList(mainnet).map((name) => chainMap[name].id);
-  return mainnet ? [...ids, STELLAR_CHAIN_ID] : ids;
+  return mainnet
+    ? [...ids, STELLAR_CHAIN_ID]
+    : stellarTestnetConfig.enabled
+      ? [...ids, STELLAR_TESTNET_ID]
+      : ids;
 };
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
@@ -157,6 +235,12 @@ export type Token = {
   name: string;
   chainId: number;
   decimals: number;
+};
+export const STELLAR_TESTNET_TOKEN: Token = {
+  address: stellarContractHex(STELLAR_TESTNET_USDC),
+  name: "usdc",
+  chainId: STELLAR_TESTNET_ID,
+  decimals: 7
 };
 
 export const coinList = (mainnet: boolean) => {
@@ -291,6 +375,7 @@ export const coinList = (mainnet: boolean) => {
     ] as const;
   else
     return [
+      ...(stellarTestnetConfig.enabled ? [STELLAR_TESTNET_TOKEN] : []),
       {
         address: `0x5fd84259d66Cd46123540766Be93DFE6D43130D7`,
         name: "usdc",
@@ -433,6 +518,12 @@ export function getCoin(
   const comparedAddress = isStellarChain(chainId)
     ? address
     : "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
+  if (
+    chainId === STELLAR_TESTNET_ID &&
+    (name?.toLowerCase() === "usdc" ||
+      comparedAddress?.toLowerCase() === STELLAR_TESTNET_TOKEN.address.toLowerCase())
+  )
+    return STELLAR_TESTNET_TOKEN;
   for (const token of coinList(!isChainIdTestnet(chainId))) {
     // check chain first.
     if (token.chainId === chainId) {
@@ -460,14 +551,18 @@ function normalizeChainId(chainId: number | bigint | string) {
 export function isChainIdTestnet(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
   if (normalized === STELLAR_CHAIN_ID) return false;
+  if (normalized === STELLAR_TESTNET_ID) return true;
   const chain = chainById[normalized];
   if (!chain) throw new Error(`Chain is not known: ${normalized}`);
   return chain.testnet;
 }
 
-export function getChainName(chainId: number | bigint | string): ChainName | "stellar" {
+export function getChainName(
+  chainId: number | bigint | string
+): ChainName | "stellar" | "stellarTestnet" {
   const normalized = normalizeChainId(chainId);
   if (normalized === STELLAR_CHAIN_ID) return "stellar";
+  if (normalized === STELLAR_TESTNET_ID) return "stellarTestnet";
   const name = chainNameById[normalized];
   if (!name) throw new Error(`Chain is not known: ${normalized}`);
   return name;

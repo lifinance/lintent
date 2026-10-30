@@ -15,6 +15,7 @@ import {
   isChainIdTestnet,
   isStellarChain,
   STELLAR_CHAIN_ID,
+  STELLAR_TESTNET_ID,
   type availableAllocators,
   type Token,
   type Verifier,
@@ -223,12 +224,16 @@ class Store {
   }
 
   /** Stellar transactions share the receipt cache, keyed by the Stellar chain id. */
-  async saveStellarTransaction(hash: `0x${string}`, data: { ledger: number; createdAt: number }) {
-    await this.saveTransactionReceipt(STELLAR_CHAIN_ID, hash, data);
+  async saveStellarTransaction(
+    chainId: number | bigint,
+    hash: `0x${string}`,
+    data: { ledger: number; createdAt: number }
+  ) {
+    await this.saveTransactionReceipt(chainId, hash, data);
   }
 
-  getStellarTransaction(hash: `0x${string}`) {
-    const serialized = this.transactionReceipts[`${STELLAR_CHAIN_ID}:${hash}`];
+  getStellarTransaction(chainId: number | bigint, hash: `0x${string}`) {
+    const serialized = this.transactionReceipts[`${chainId}:${hash}`];
     if (!serialized) return undefined;
     return JSON.parse(serialized) as { ledger: number; createdAt: number };
   }
@@ -240,15 +245,18 @@ class Store {
       : undefined
   );
   /** Connected Stellar account (`G…`), used for every Stellar-side action. */
-  stellarAccount = $state<string | undefined>(undefined);
+  stellarAccounts = $state<Record<number, string | undefined>>({});
+  stellarChainId = $derived(this.mainnet ? STELLAR_CHAIN_ID : STELLAR_TESTNET_ID);
+  stellarAccount = $derived(this.stellarAccounts[this.stellarChainId]);
 
   async connectStellar() {
-    this.stellarAccount = await connectStellarWallet();
+    const chainId = this.stellarChainId;
+    this.stellarAccounts[chainId] = await connectStellarWallet(chainId);
   }
 
   async disconnectStellar() {
-    await disconnectStellarWallet();
-    this.stellarAccount = undefined;
+    await disconnectStellarWallet(this.stellarChainId);
+    this.stellarAccounts[this.stellarChainId] = undefined;
   }
 
   walletClient = $state<WC>(undefined as unknown as WC);
@@ -275,8 +283,10 @@ class Store {
       isMainnet: this.mainnet,
       scopeKey: `${account ?? "none"}:${stellarAccount ?? "none"}`,
       fetcher: (asset, client) => getBalance(account, asset, client),
-      stellarFetcher: (asset) =>
-        stellarAccount ? stellarTokenBalance(asset, stellarAccount) : Promise.resolve(0n)
+      stellarFetcher: (asset, chainId) =>
+        this.stellarAccounts[chainId]
+          ? stellarTokenBalance(chainId, asset, this.stellarAccounts[chainId]!)
+          : Promise.resolve(0n)
     });
   });
 
@@ -398,6 +408,16 @@ class Store {
     this.stopRpcRefreshLoop();
     this._rpcRefreshHandle = setInterval(() => {
       this.refreshWalletReads();
+      if (this.stellarAccount) {
+        const chainId = this.stellarChainId;
+        restoreStellarWallet(chainId)
+          .then((address) => {
+            this.stellarAccounts[chainId] = address;
+          })
+          .catch(() => {
+            this.stellarAccounts[chainId] = undefined;
+          });
+      }
     }, intervalMs ?? this.rpcRefreshMs);
   }
 
@@ -413,6 +433,7 @@ class Store {
     if (!db) await initDb();
     if (!db) return;
     const rows = await db!.select().from(tokensTable).where(eq(tokensTable.isTestnet, !mainnet));
+    if (this.mainnet !== mainnet) return;
     this.availableTokens = rows.map((r) => ({
       address: r.address as `0x${string}`,
       name: r.name,
@@ -522,6 +543,9 @@ class Store {
   }
 
   async syncTokensForNetwork(mainnet: boolean) {
+    this.availableTokens = [...coinList(mainnet)];
+    await this.dbReady;
+    if (this.mainnet !== mainnet) return;
     await this.loadTokensFromDb(mainnet);
   }
 
@@ -559,7 +583,7 @@ class Store {
       asset: `0x${string}`,
       client: (typeof clientsById)[keyof typeof clientsById]
     ) => Promise<T>;
-    stellarFetcher: (asset: `0x${string}`) => Promise<T>;
+    stellarFetcher: (asset: `0x${string}`, chainId: number) => Promise<T>;
   }) {
     const { bucket, ttlMs, isMainnet, scopeKey, fetcher, stellarFetcher } = opts;
     const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
@@ -570,7 +594,7 @@ class Store {
         key,
         () =>
           isStellarChain(token.chainId)
-            ? stellarFetcher(token.address)
+            ? stellarFetcher(token.address, token.chainId)
             : fetcher(token.address, clientsById[token.chainId]),
         { ttlMs }
       );
@@ -598,9 +622,11 @@ class Store {
         this.syncWalletClient().catch((error) => console.warn("syncWalletClient failed", error));
       });
 
-      restoreStellarWallet()
-        .then((address) => (this.stellarAccount = address))
-        .catch((error) => console.warn("restoreStellarWallet failed", error));
+      for (const chainId of [STELLAR_CHAIN_ID, STELLAR_TESTNET_ID]) {
+        restoreStellarWallet(chainId)
+          .then((address) => (this.stellarAccounts[chainId] = address))
+          .catch((error) => console.warn("restoreStellarWallet failed", error));
+      }
     }
 
     this.startRpcRefreshLoop();

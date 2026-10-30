@@ -52,7 +52,7 @@ export async function isOutputFilled(orderId: `0x${string}`, output: MandateOutp
     async () => {
       const outputHash = getOutputHash(output);
       if (isStellarChain(output.chainId))
-        return (await stellarFillRecord(orderId, outputHash)) !== undefined;
+        return (await stellarFillRecord(output.chainId, orderId, outputHash)) !== undefined;
       const result = await getClient(output.chainId).readContract({
         address: bytes32ToAddress(output.settler),
         abi: COIN_FILLER_ABI,
@@ -82,6 +82,7 @@ export async function isOutputValidatedOnChain(
     async () => {
       if (isStellarChain(inputChain))
         return stellarIsProven(
+          inputChain,
           inputOracle,
           output.chainId,
           output.oracle,
@@ -107,9 +108,9 @@ export async function isInputChainFinalised(chainId: bigint, container: OrderCon
 
   if (isStellarChain(chainId)) {
     return getOrFetchRpc(
-      `progress:finalised:stellar:${orderId}`,
+      `progress:finalised:stellar:${chainId}:${orderId}`,
       async () => {
-        const status = await stellarOrderStatus(orderId);
+        const status = await stellarOrderStatus(chainId, orderId);
         return status === StellarOrderStatus_Claimed || status === StellarOrderStatus_Refunded;
       },
       { ttlMs: PROGRESS_TTL_MS }

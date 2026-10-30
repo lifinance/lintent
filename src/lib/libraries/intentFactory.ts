@@ -1,8 +1,11 @@
+import { validateApiQuote, type ApiQuoteContext, type SelectedApiQuote } from "./apiQuote";
+import { openStellarApiOrder } from "./stellar";
 import {
   getChain,
   getClient,
   INPUT_SETTLER_COMPACT_LIFI,
   INPUT_SETTLER_ESCROW_LIFI,
+  requireAlignedAxelar,
   isStellarChain,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
   type WC
@@ -90,6 +93,10 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
 
 function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOptions {
   const account = opts.account();
+  if (opts.verifier === "axelar") {
+    for (const output of opts.outputTokens)
+      requireAlignedAxelar(opts.inputTokens[0].token.chainId, output.token.chainId);
+  }
   if (opts.lock.type === "compact") {
     return {
       exclusiveFor: opts.exclusiveFor,
@@ -127,6 +134,7 @@ export class IntentFactory {
   intentApi: IntentApi;
 
   walletClient: WC;
+  apiQuoteContext?: () => ApiQuoteContext;
 
   preHook?: (chainId: number) => Promise<any>;
   postHook?: () => Promise<any>;
@@ -137,6 +145,7 @@ export class IntentFactory {
     mainnet: boolean;
     useProductionApi?: boolean | null;
     walletClient: WC;
+    apiQuoteContext?: () => ApiQuoteContext;
     preHook?: (chainId: number) => Promise<any>;
     postHook?: () => Promise<any>;
     ordersPointer?: OrderContainer[];
@@ -145,6 +154,7 @@ export class IntentFactory {
     this.mainnet = mainnet;
     this.intentApi = new IntentApi(useProductionApi ?? mainnet);
     this.walletClient = walletClient;
+    this.apiQuoteContext = options.apiQuoteContext;
 
     this.preHook = preHook;
     this.postHook = postHook;
@@ -152,16 +162,95 @@ export class IntentFactory {
     if (ordersPointer) this.orders = ordersPointer;
   }
 
+  async executeApiQuote(quote: SelectedApiQuote) {
+    if (!this.apiQuoteContext) throw new Error("Missing API quote request context");
+    const context = this.apiQuoteContext();
+    const chainId = context.inputs[0].token.chainId;
+    let validated = validateApiQuote(quote, context);
+    const tx = quote.order.openIntentTx;
+    let hash: `0x${string}`;
+    if (isStellarChain(chainId)) {
+      const source = store.stellarAccounts[chainId];
+      if (source !== context.user || !validated.scval)
+        throw new Error("Stellar quote account changed");
+      const receipt = await openStellarApiOrder(chainId, tx.to, validated.scval, source, () => {
+        validateApiQuote(quote, this.apiQuoteContext!());
+        if (store.stellarAccounts[chainId] !== source)
+          throw new Error("Stellar quote account changed");
+      });
+      hash = receipt.hash;
+      await store.saveStellarTransaction(chainId, hash, receipt);
+    } else {
+      if (this.preHook) await this.preHook(chainId);
+      const [address] = await this.walletClient.getAddresses();
+      if (
+        address?.toLowerCase() !== context.user.toLowerCase() ||
+        (await this.walletClient.getChainId()) !== chainId
+      )
+        throw new Error("Quote wallet account/network changed");
+      for (const allowance of quote.order.checks.allowances) {
+        validated = validateApiQuote(quote, this.apiQuoteContext());
+        const client = getClient(chainId);
+        const token = allowance.token as `0x${string}`;
+        const spender = allowance.spender as `0x${string}`;
+        const current = await client.readContract({
+          address: token,
+          abi: ERC20_ABI,
+          functionName: "allowance",
+          args: [address, spender]
+        });
+        if (current < BigInt(allowance.required)) {
+          validateApiQuote(quote, this.apiQuoteContext());
+          const approval = await this.walletClient.writeContract({
+            chain: getChain(chainId),
+            account: address,
+            address: token,
+            abi: ERC20_ABI,
+            functionName: "approve",
+            args: [spender, BigInt(allowance.required)]
+          });
+          await client.waitForTransactionReceipt({ hash: approval });
+        }
+      }
+      validated = validateApiQuote(quote, this.apiQuoteContext());
+      const [currentAddress] = await this.walletClient.getAddresses();
+      if (
+        currentAddress?.toLowerCase() !== address.toLowerCase() ||
+        (await this.walletClient.getChainId()) !== chainId
+      )
+        throw new Error("Quote wallet account/network changed before signing");
+      hash = await this.walletClient.sendTransaction({
+        chain: getChain(chainId),
+        account: address,
+        to: tx.to as `0x${string}`,
+        data: tx.data as `0x${string}`,
+        value: BigInt(tx.value ?? "0")
+      });
+      const receipt = await getClient(chainId).waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("API quote open reverted");
+      await store.saveTransactionReceipt(chainId, hash, receipt);
+    }
+    await this.saveOrder({
+      order: validated.order,
+      inputSettler: isStellarChain(chainId) ? validated.inputSettler : (tx.to as `0x${string}`),
+      apiQuote: quote
+    });
+    if (this.postHook) await this.postHook();
+    return hash;
+  }
+
   private async saveOrder(options: {
     order: StandardOrder | MultichainOrder;
     inputSettler: `0x${string}`;
     sponsorSignature?: Signature | NoSignature;
     allocatorSignature?: Signature | NoSignature;
+    apiQuote?: SelectedApiQuote;
   }) {
-    const { order, inputSettler, sponsorSignature, allocatorSignature } = options;
+    const { order, inputSettler, sponsorSignature, allocatorSignature, apiQuote } = options;
 
-    const orderContainer: OrderContainer = {
+    const orderContainer: OrderContainer & { apiQuote?: SelectedApiQuote } = {
       order,
+      ...(apiQuote ? { apiQuote } : {}),
       inputSettler,
       sponsorSignature: sponsorSignature ?? {
         type: "None",

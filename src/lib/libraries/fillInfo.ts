@@ -12,7 +12,7 @@ import {
 } from "@lifi/intent";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import store from "$lib/state.svelte";
-import { getStellarTransaction, stellarFillRecord } from "./stellar";
+import { getStellarTransaction, stellarFillRecord, stellarFillEvent } from "./stellar";
 
 export async function persistReceipt(
   chainId: number | bigint,
@@ -35,12 +35,12 @@ export async function getReceiptCachedOrRpc(chainId: number | bigint, txHash: `0
 }
 
 /** Ledger close time of a Stellar transaction: local cache first, then RPC (~7 day retention). */
-export async function fetchStellarTransaction(hash: `0x${string}`) {
-  const cached = store.getStellarTransaction(hash);
+export async function fetchStellarTransaction(chainId: number | bigint, hash: `0x${string}`) {
+  const cached = store.getStellarTransaction(chainId, hash);
   if (cached) return cached;
-  const tx = await getStellarTransaction(hash);
+  const tx = await getStellarTransaction(chainId, hash);
   if (!tx) throw new Error(`Stellar transaction ${hash} not found (RPC keeps ~7 days)`);
-  await store.saveStellarTransaction(hash, tx);
+  await store.saveStellarTransaction(chainId, hash, tx);
   return tx;
 }
 
@@ -51,8 +51,9 @@ export async function fetchStellarTransaction(hash: `0x${string}`) {
  */
 export function solverIdentityFor(order: StandardOrder | MultichainOrder): `0x${string}` {
   if ("originChainId" in order && isStellarChain(order.originChainId)) {
-    if (!store.stellarAccount) throw new Error("Connect a Stellar wallet first");
-    return stellarAddressCommitment(store.stellarAccount);
+    const source = store.stellarAccounts[Number(order.originChainId)];
+    if (!source) throw new Error("Connect a Stellar wallet on the order's origin network first");
+    return stellarAddressCommitment(source);
   }
   if (!store.connectedAccount) throw new Error("Connect an EVM wallet first");
   return addressToBytes32(store.connectedAccount.address);
@@ -95,16 +96,22 @@ export async function getFillInfo(args: {
   let solver: `0x${string}`;
   let timestamp: number;
   if (isStellarChain(output.chainId)) {
-    // Stellar outputs only exist on EVM-origin orders, filled by the EVM account.
-    ({ createdAt: timestamp } = await fetchStellarTransaction(fillTransactionHash));
-    if (!store.connectedAccount) throw new Error("Connect an EVM wallet first");
-    solver = addressToBytes32(store.connectedAccount.address);
-    const record = await stellarFillRecord(orderId, getOutputHash(output));
+    const tx = await fetchStellarTransaction(output.chainId, fillTransactionHash);
+    timestamp = tx.createdAt;
+    // Read the actual fill event, not the connected user's EVM identity.
+    const event = await stellarFillEvent(output.chainId, fillTransactionHash, orderId, output);
+    solver = event.solver;
+    timestamp = event.timestamp;
+    const record = await stellarFillRecord(output.chainId, orderId, getOutputHash(output));
     const expected = keccak256(encodePacked(["bytes32", "uint32"], [solver, timestamp]));
-    if (record !== expected)
-      throw new Error("Stellar fill was not made by the connected EVM account");
+    if (record !== expected) throw new Error("Stellar fill event and on-chain record differ");
   } else {
     const { log } = await findOutputFilledLog(output, fillTransactionHash);
+    if (
+      log.args.orderId.toLowerCase() !== orderId.toLowerCase() ||
+      log.address.toLowerCase() !== `0x${output.settler.slice(-40)}`.toLowerCase()
+    )
+      throw new Error("EVM fill order/emitter differs from requested output");
     solver = log.args.solver;
     timestamp = Number(log.args.timestamp);
   }

@@ -15,6 +15,37 @@
   import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
+  import { axelarActionBlocker } from "$lib/libraries/coreDeps";
+  import { getFillInfo } from "$lib/libraries/fillInfo";
+  import { axelarGasFee } from "$lib/libraries/axelar";
+  import { isStellarChain } from "$lib/config";
+  let feeEstimates = $state<Record<string, { fee?: bigint; error?: string }>>({});
+  $effect(() => {
+    if (!usesAxelar || actionBlocker) return;
+    const orderId = containerToIntent(orderContainer).orderId();
+    let cancelled = false;
+    for (const inputChain of containerToIntent(orderContainer).inputChains()) {
+      for (const output of orderContainer.order.outputs) {
+        const key = validationKey(inputChain, output);
+        const hash = store.fillTransactions[outputKey(output)];
+        if (!hash) continue;
+        const stellarChain = isStellarChain(inputChain) ? inputChain : output.chainId;
+        const executor = store.stellarAccounts[Number(stellarChain)];
+        feeEstimates[key] = {};
+        getFillInfo({ orderId, output, fillTransactionHash: hash })
+          .then(({ payload }) => axelarGasFee(output.chainId, inputChain, [payload], executor))
+          .then((fee) => {
+            if (!cancelled) feeEstimates[key] = { fee };
+          })
+          .catch((error) => {
+            if (!cancelled) feeEstimates[key] = { error: (error as Error).message };
+          });
+      }
+    }
+    return () => {
+      cancelled = true;
+    };
+  });
 
   // This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 
@@ -31,6 +62,7 @@
     postHook: () => Promise<any>;
     account: () => `0x${string}`;
   } = $props();
+  const actionBlocker = $derived(axelarActionBlocker(orderContainer));
 
   let refreshValidation = $state(0);
   let autoScrolledOrderId = $state<`0x${string}` | null>(null);
@@ -173,6 +205,7 @@
     : "Click on each output and wait until they turn green. Polymer does not support batch validation. Continue to the right."}
 >
   <div class="space-y-2">
+    {#if actionBlocker}<p role="alert" class="text-xs text-red-600">{actionBlocker}</p>{/if}
     {#each containerToIntent(orderContainer).inputChains() as inputChain}
       <SectionCard compact>
         <ChainActionRow chainLabel={getChainName(inputChain)}>
@@ -183,7 +216,14 @@
             {#each orderContainer.order.outputs as output}
               {@const status = validationStatuses[validationKey(inputChain, output)]}
               {@const submitTxHash = axelarSubmits[validationKey(inputChain, output)]}
-              {#if status === undefined}
+              {#if actionBlocker}
+                <span class="text-xs text-red-600">Unsupported deployment</span>
+              {:else if usesAxelar && !status && !feeEstimates[validationKey(inputChain, output)]?.fee}
+                <button disabled class="rounded border px-2 text-xs text-gray-400"
+                  >Manual publication disabled: {feeEstimates[validationKey(inputChain, output)]
+                    ?.error ?? "Awaiting gas estimate"}</button
+                >
+              {:else if status === undefined}
                 <TokenAmountChip
                   amountText={formatTokenAmount(
                     output.amount,

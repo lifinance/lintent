@@ -17,6 +17,7 @@
     isInputChainFinalised
   } from "$lib/libraries/flowProgress";
   import { invalidateRpcPrefix } from "$lib/libraries/rpcCache";
+  import { axelarActionBlocker } from "$lib/libraries/coreDeps";
 
   let {
     orderContainer,
@@ -29,6 +30,7 @@
     postHook?: () => Promise<any>;
     account: () => `0x${string}`;
   } = $props();
+  const actionBlocker = $derived(axelarActionBlocker(orderContainer));
 
   let refreshClaimed = $state(0);
   let claimedByChain = $state<Record<string, boolean>>({});
@@ -94,6 +96,11 @@
 
 <ScreenFrame title="Finalise Intent" description="Finalise the order to receive the input assets.">
   <div class="relative space-y-2">
+    <p class="text-xs text-gray-600">
+      External Catamaran fills and claims are observed independently of your wallet. Only the fill
+      claimant may finalise.
+    </p>
+    {#if actionBlocker}<p role="alert" class="text-xs text-red-600">{actionBlocker}</p>{/if}
     {#if allFinalised}
       <div class="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true">
         {#each confettiPieces as piece, i}
@@ -117,7 +124,9 @@
         <ChainActionRow chainLabel={getChainName(inputChain)}>
           {#snippet action()}
             {@const isClaimedStatus = claimedByChain[inputChain.toString()]}
-            {#if isClaimedStatus === undefined}
+            {#if actionBlocker}
+              <button disabled class="rounded border px-2 text-xs">Unsupported deployment</button>
+            {:else if isClaimedStatus === undefined}
               <button
                 type="button"
                 class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"

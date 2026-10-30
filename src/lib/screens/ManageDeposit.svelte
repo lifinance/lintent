@@ -102,7 +102,9 @@
           />
         </div>
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-sm font-medium text-gray-700">Stellar wallet</h2>
+          <h2 class="text-sm font-medium text-gray-700">
+            Stellar {store.mainnet ? "Mainnet" : "Testnet"} wallet
+          </h2>
           {#if store.stellarAccount}
             <div class="flex items-center gap-2">
               <span class="font-mono text-xs text-gray-600" data-testid="stellar-account"
@@ -120,7 +122,7 @@
           {:else}
             <AwaitButton size="sm" buttonFunction={() => store.connectStellar()}>
               {#snippet name()}
-                Connect Freighter
+                Connect Freighter ({store.mainnet ? "Mainnet" : "Testnet"})
               {/snippet}
               {#snippet awaiting()}
                 Connecting...

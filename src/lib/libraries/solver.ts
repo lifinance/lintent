@@ -6,15 +6,18 @@ import {
   getClient,
   getOracle,
   isStellarChain,
+  requireAlignedAxelar,
+  AXELAR_CHAIN_NAMES,
   type WC
 } from "$lib/config";
-import { maxUint256 } from "viem";
+import { maxUint256, padHex, stringToHex } from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import {
   addressToBytes32,
   bytes32ToAddress,
   StandardSolanaIntent,
-  StandardStellarIntent
+  StandardStellarIntent,
+  bytes32ToStellarContract
 } from "@lifi/intent";
 import axios from "axios";
 import { AXELAR_ORACLE_ABI } from "$lib/abi/axelaroracle";
@@ -24,7 +27,7 @@ import { ERC20_ABI } from "$lib/abi/erc20";
 import { containerToIntent } from "$lib/utils/intent";
 import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
-import { axelarChainName, axelarGasFee } from "./axelar";
+import { axelarGasFee } from "./axelar";
 import { findOutputFilledLog, getFillInfo, persistReceipt, solverIdentityFor } from "./fillInfo";
 import { getOutputStorageKey } from "./flowProgress";
 import { fillStellarOutputs, finaliseStellarIntent, submitStellarAxelar } from "./stellar";
@@ -70,9 +73,9 @@ export class Solver {
           outputs,
           fillDeadline: order.fillDeadline,
           solver: solverIdentityFor(order),
-          source: store.stellarAccount
+          source: store.stellarAccounts[Number(outputs[0].chainId)]
         });
-        await store.saveStellarTransaction(fill.hash, fill);
+        await store.saveStellarTransaction(outputs[0].chainId, fill.hash, fill);
         if (postHook) await postHook();
         return fill.hash;
       }
@@ -187,17 +190,28 @@ export class Solver {
             fillTransactionHash: fillHash
           });
           // The proof travels from the output chain to the input chain.
-          const fee = await axelarGasFee(output.chainId, sourceChainId);
-          const destinationChain = axelarChainName(sourceChainId);
-          const recipientOracle = addressToBytes32(order.inputOracle);
+          requireAlignedAxelar(output.chainId, sourceChainId);
+          const fee = await axelarGasFee(
+            output.chainId,
+            sourceChainId,
+            [payload],
+            store.stellarAccounts[
+              Number(isStellarChain(sourceChainId) ? sourceChainId : output.chainId)
+            ]
+          );
+          const destinationChainId = BigInt(sourceChainId);
+          const recipientOracle = isStellarChain(sourceChainId)
+            ? bytes32ToStellarContract(order.inputOracle)
+            : bytes32ToAddress(addressToBytes32(order.inputOracle));
 
           if (isStellarChain(output.chainId)) {
             const submit = await submitStellarAxelar({
-              destinationChain,
+              chainId: output.chainId,
+              destinationChainId,
               recipientOracle,
               payloads: [payload],
               gasAmount: fee,
-              source: store.stellarAccount
+              source: store.stellarAccounts[Number(output.chainId)]
             });
             if (postHook) await postHook();
             return { submitTxHash: submit.hash };
@@ -206,6 +220,32 @@ export class Solver {
           const outputOracle = AXELAR_ORACLE[Number(output.chainId)];
           if (!outputOracle) throw new Error(`No Axelar oracle on chain ${output.chainId}`);
           if (preHook) await preHook(Number(output.chainId));
+          const client = getClient(output.chainId);
+          const anchor = await client.getBlock({ blockTag: "safe" });
+          const key = BigInt(
+            padHex(stringToHex(AXELAR_CHAIN_NAMES[Number(sourceChainId)]!), {
+              size: 32,
+              dir: "right"
+            })
+          );
+          const [forward, reverse] = await Promise.all([
+            client.readContract({
+              address: outputOracle,
+              abi: AXELAR_ORACLE_ABI,
+              functionName: "chainIdMap",
+              args: [key],
+              blockNumber: anchor.number
+            }),
+            client.readContract({
+              address: outputOracle,
+              abi: AXELAR_ORACLE_ABI,
+              functionName: "reverseChainIdMap",
+              args: [destinationChainId],
+              blockNumber: anchor.number
+            })
+          ]);
+          if (forward !== destinationChainId || reverse !== key)
+            throw new Error("Axelar forward/reverse chain map mismatch");
           const submitTxHash = await walletClient.writeContract({
             chain: getChain(output.chainId),
             account: account(),
@@ -213,7 +253,7 @@ export class Solver {
             abi: AXELAR_ORACLE_ABI,
             functionName: "submit",
             args: [
-              destinationChain,
+              destinationChainId,
               recipientOracle,
               bytes32ToAddress(output.settler),
               [payload],
@@ -345,6 +385,8 @@ export class Solver {
       const { preHook, postHook, account } = opts;
       const { orderContainer, fillTransactionHashes, sourceChainId } = args;
       const { order } = orderContainer;
+      if (AXELAR_ORACLE[Number(sourceChainId)]?.toLowerCase() === order.inputOracle.toLowerCase())
+        for (const output of order.outputs) requireAlignedAxelar(output.chainId, sourceChainId);
       const intent = containerToIntent(orderContainer);
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Finalise is not supported for Solana input intents.");
@@ -369,14 +411,19 @@ export class Solver {
           })
         )
       );
-      const solver = solverIdentityFor(order);
-      const solveParams = fills.map(({ timestamp }) => ({ timestamp, solver }));
+      const solveParams = fills.map(({ timestamp, solver }) => ({ timestamp, solver }));
+      if (
+        fills.some(({ solver }) => solver.toLowerCase() !== solverIdentityFor(order).toLowerCase())
+      )
+        throw new Error(
+          "Only the fill claimant can finalise; an external Catamaran solver completes its own claim"
+        );
 
       if (intent instanceof StandardStellarIntent) {
         const finalise = await finaliseStellarIntent({
           intent,
           solves: solveParams,
-          source: store.stellarAccount
+          source: store.stellarAccounts[Number(sourceChainId)]
         });
         if (postHook) await postHook();
         return finalise;

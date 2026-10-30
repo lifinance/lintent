@@ -6,7 +6,8 @@ import {
   INPUT_SETTLER_COMPACT_LIFI,
   isStellarChain,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
-  MULTICHAIN_INPUT_SETTLER_COMPACT
+  MULTICHAIN_INPUT_SETTLER_COMPACT,
+  stellarDeployment
 } from "../config";
 import {
   bytes32ToAddress,
@@ -161,8 +162,16 @@ function normalizeAddress(value: string) {
   return value.toLowerCase();
 }
 
-function mapInputScheme(inputSettler: `0x${string}`): string | undefined {
+function mapInputScheme(inputSettler: `0x${string}`, chainId?: bigint): string | undefined {
   const settler = normalizeAddress(inputSettler);
+  if (chainId && isStellarChain(chainId)) {
+    try {
+      if (settler === normalizeAddress(inputSettlerForStellar(BigInt(chainId), stellarDeployment)))
+        return "Escrow";
+    } catch {
+      return undefined;
+    }
+  }
   if (settler === normalizeAddress(INPUT_SETTLER_ESCROW_LIFI)) return "Escrow";
   if (settler === normalizeAddress(inputSettlerForStellar(STELLAR_MAINNET_CHAIN_ID)))
     return "Escrow";
@@ -213,8 +222,14 @@ function getContextDetails(orderContainer: OrderContainer): ContextDetails {
   const isExclusive = typeByte === "e0" || typeByte === "e1";
   if (!isExclusive) return details;
 
-  const exclusiveFor = decodeExclusiveFor(firstContext);
-  if (exclusiveFor) details.exclusiveForAddress = shortHexAddress(exclusiveFor);
+  const stellarClaimant = "originChainId" in order && isStellarChain(order.originChainId);
+  const exclusiveFor = stellarClaimant
+    ? firstContext.length >= 68
+      ? (`0x${firstContext.slice(4, 68)}` as `0x${string}`)
+      : undefined
+    : decodeExclusiveFor(firstContext);
+  if (exclusiveFor)
+    details.exclusiveForAddress = `${stellarClaimant ? "Commitment " : ""}${shortHexAddress(exclusiveFor)}`;
 
   // bytes1 + bytes32 + uint32 (big-endian)
   if (firstContext.length >= 76) {
@@ -255,7 +270,10 @@ export function buildBaseIntentRow(orderContainer: OrderContainer): BaseIntentRo
     outputCount: outputChipsRaw.length,
     chainScope,
     chainScopeBadge: toChainScopeBadge(chainScope),
-    inputSchemeBadge: mapInputScheme(orderContainer.inputSettler),
+    inputSchemeBadge: mapInputScheme(
+      orderContainer.inputSettler,
+      "originChainId" in order ? order.originChainId : undefined
+    ),
     orderTypeBadge: contextDetails.orderTypeBadge,
     exclusiveForAddress: contextDetails.exclusiveForAddress,
     exclusiveUntil: contextDetails.exclusiveUntil,

@@ -134,7 +134,7 @@
 
 <ScreenFrame
   title="Fill Intent"
-  description="Fill each chain once and continue to the right. If you refreshed the page provide your fill tx hash in the input box."
+  description="Catamaran may fill externally. Supply its fill transaction hash to inspect proof progress; no solver wallet connection is required for reads."
 >
   <div class="space-y-2">
     <SectionCard compact title="Add Fill Tx Hash">

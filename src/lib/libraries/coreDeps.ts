@@ -5,9 +5,13 @@ import {
   isStellarChain,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   POLYMER_ORACLE,
-  WORMHOLE_ORACLE
+  WORMHOLE_ORACLE,
+  stellarDeployment,
+  requireAlignedAxelar,
+  stellarTestnetConfig,
+  STELLAR_TESTNET_ID
 } from "$lib/config";
-import { outputSettlerForStellar } from "@lifi/intent";
+import { outputSettlerForStellar, type OrderContainer } from "@lifi/intent";
 import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
 
 function isNonZeroAddress(value: string | undefined): value is `0x${string}` {
@@ -15,6 +19,7 @@ function isNonZeroAddress(value: string | undefined): value is `0x${string}` {
 }
 
 export const intentDeps: IntentDeps = {
+  getStellarDeployment: stellarDeployment,
   getOracle(verifier, chainId) {
     const key = Number(chainId);
     if (!Number.isFinite(key)) return undefined;
@@ -28,7 +33,13 @@ export const intentDeps: IntentDeps = {
 };
 
 export const orderValidationDeps: OrderContainerValidationDeps = {
-  inputSettlers: [INPUT_SETTLER_COMPACT_LIFI, MULTICHAIN_INPUT_SETTLER_COMPACT],
+  inputSettlers: [
+    INPUT_SETTLER_COMPACT_LIFI,
+    MULTICHAIN_INPUT_SETTLER_COMPACT,
+    ...(stellarTestnetConfig.enabled
+      ? [stellarDeployment(BigInt(STELLAR_TESTNET_ID))!.inputEscrow]
+      : [])
+  ],
   allowedInputOracles({ chainId, sameChainFill }) {
     const key = Number(chainId);
     if (!Number.isFinite(key)) return undefined;
@@ -58,6 +69,25 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     return allowed;
   },
   allowedOutputSettlers(chainId) {
-    return isStellarChain(chainId) ? [outputSettlerForStellar(BigInt(chainId))] : [COIN_FILLER];
+    if (!isStellarChain(chainId)) return [COIN_FILLER];
+    try {
+      return [outputSettlerForStellar(BigInt(chainId), stellarDeployment)];
+    } catch {
+      return [];
+    }
   }
 };
+
+/** Legacy oracle identities remain readable; only the configured ABI-aligned pair is writable. */
+export function axelarActionBlocker(container: OrderContainer): string | undefined {
+  const order = container.order;
+  if (!("originChainId" in order)) return undefined;
+  if (AXELAR_ORACLE[Number(order.originChainId)]?.toLowerCase() !== order.inputOracle.toLowerCase())
+    return undefined;
+  try {
+    for (const output of order.outputs) requireAlignedAxelar(order.originChainId, output.chainId);
+  } catch (error) {
+    return (error as Error).message;
+  }
+  return undefined;
+}

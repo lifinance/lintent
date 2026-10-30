@@ -63,6 +63,13 @@ escrow, simulates, then asks Freighter to sign under the selected passphrase;
 the API payload is not an envelope. Wallets, RPCs, balances and receipt caches
 are network-scoped.
 
+The selection's request generation is revocable. Clearing, replacing, refreshing
+or editing it also invalidates pending execution, even if the old amount is
+restored. The factory rechecks selection identity/generation and live output
+amount before EVM approval/open requests and Freighter signing, after asynchronous
+preparation and network checks. Only initial quote selection accepts a pre-quote
+output placeholder. Revocation cannot undo an approval/signature already requested.
+
 Catamaran may fill and claim externally. Supply its actual fill transaction hash
 in **Fill Intent** to inspect proof progress. Stellar fill events and records
 identify the real claimant; reads do not require the connected EVM user to equal

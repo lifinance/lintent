@@ -117,8 +117,12 @@ async function invokeStellar(opts: {
   const server = stellarServer(chainId);
   const tx = contractCall(chainId, await server.getAccount(source), contractId, method, args);
   const prepared = await server.prepareTransaction(tx);
-  opts.beforeSign?.();
-  const signed = await signStellarTransaction(prepared.toXDR(), source, Number(chainId));
+  const signed = await signStellarTransaction(
+    prepared.toXDR(),
+    source,
+    Number(chainId),
+    opts.beforeSign
+  );
   const sent = await server.sendTransaction(
     TransactionBuilder.fromXDR(signed, stellarNetwork(chainId).passphrase)
   );

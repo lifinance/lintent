@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { IntentApi } from "@lifi/intent";
   import {
     apiQuoteRequest,
@@ -13,6 +13,7 @@
     exclusiveFor = $bindable(),
     outputTokens = $bindable(),
     selectedQuote = $bindable(),
+    generation = $bindable(0),
     context,
     mainnet,
     useProductionApi,
@@ -22,6 +23,7 @@
     exclusiveFor: string;
     outputTokens: ApiQuoteContext["outputs"];
     selectedQuote: SelectedApiQuote | undefined;
+    generation: number;
     context: ApiQuoteContext;
     mainnet: boolean;
     useProductionApi: boolean | null;
@@ -47,17 +49,19 @@
       (_, value) => (typeof value === "bigint" ? value.toString() : value)
     )
   );
-  let generation = 0;
   let loading = $state(false);
   let message = $state("No quote selected");
   let expires = $state(0);
   let now = $state(Date.now());
   let timer: ReturnType<typeof setInterval> | undefined;
-  $effect(() => {
-    requestKey;
-    generation += 1;
+  function revokeQuote() {
+    generation = untrack(() => generation) + 1;
     selectedQuote = undefined;
     expires = 0;
+  }
+  $effect(() => {
+    requestKey;
+    revokeQuote();
     loading = false;
     message = blocked ? "Route unavailable" : "No quote selected";
     if (blocked || !context.user || !context.recipient) return;
@@ -68,16 +72,14 @@
     timer = setInterval(() => {
       now = Date.now();
       if (expires && now >= expires) {
-        selectedQuote = undefined;
-        expires = 0;
+        revokeQuote();
         message = "Quote expired";
-        generation += 1;
       }
     }, 1000);
     return () => clearInterval(timer);
   });
   onDestroy(() => {
-    generation += 1;
+    revokeQuote();
     clearInterval(timer);
   });
   $effect(() => {
@@ -87,16 +89,13 @@
         (item, i) => item.amount !== BigInt(selectedQuote!.preview.outputs[i]?.amount ?? "-1")
       )
     ) {
-      selectedQuote = undefined;
-      expires = 0;
+      revokeQuote();
       message = "Quote invalidated by amount change";
-      generation += 1;
     }
   });
   export async function updateQuote() {
-    const id = ++generation;
-    selectedQuote = undefined;
-    expires = 0;
+    revokeQuote();
+    const id = generation;
     if (blocked) return;
     loading = true;
     message = "Requesting quote";

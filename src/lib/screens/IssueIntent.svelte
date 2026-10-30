@@ -33,6 +33,7 @@
   import { isAddress } from "viem";
   import type { SelectedApiQuote, ApiQuoteContext } from "$lib/libraries/apiQuote";
   let selectedQuote = $state<SelectedApiQuote | undefined>();
+  let quoteGeneration = $state(0);
   const testnetPair = $derived(
     isTestnetCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId)
   );
@@ -149,6 +150,7 @@
       useProductionApi: store.useProductionApi,
       walletClient: store.walletClient,
       apiQuoteContext: () => quoteContext,
+      apiQuoteSelection: () => ({ quote: selectedQuote, generation: quoteGeneration }),
       preHook,
       postHook: postHookScroll,
       ordersPointer: store.orders
@@ -374,6 +376,7 @@
         <GetQuote
           bind:exclusiveFor={store.exclusiveFor}
           bind:selectedQuote
+          bind:generation={quoteGeneration}
           context={quoteContext}
           blocked={!!routeBlocker}
           mainnet={store.mainnet}

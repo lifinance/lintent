@@ -1,4 +1,9 @@
-import { validateApiQuote, type ApiQuoteContext, type SelectedApiQuote } from "./apiQuote";
+import {
+  validateApiQuoteExecution,
+  type ApiQuoteContext,
+  type ApiQuoteSelection,
+  type SelectedApiQuote
+} from "./apiQuote";
 import { openStellarApiOrder } from "./stellar";
 import {
   getChain,
@@ -135,6 +140,7 @@ export class IntentFactory {
 
   walletClient: WC;
   apiQuoteContext?: () => ApiQuoteContext;
+  apiQuoteSelection?: () => ApiQuoteSelection;
 
   preHook?: (chainId: number) => Promise<any>;
   postHook?: () => Promise<any>;
@@ -146,6 +152,7 @@ export class IntentFactory {
     useProductionApi?: boolean | null;
     walletClient: WC;
     apiQuoteContext?: () => ApiQuoteContext;
+    apiQuoteSelection?: () => ApiQuoteSelection;
     preHook?: (chainId: number) => Promise<any>;
     postHook?: () => Promise<any>;
     ordersPointer?: OrderContainer[];
@@ -155,6 +162,7 @@ export class IntentFactory {
     this.intentApi = new IntentApi(useProductionApi ?? mainnet);
     this.walletClient = walletClient;
     this.apiQuoteContext = options.apiQuoteContext;
+    this.apiQuoteSelection = options.apiQuoteSelection;
 
     this.preHook = preHook;
     this.postHook = postHook;
@@ -163,10 +171,19 @@ export class IntentFactory {
   }
 
   async executeApiQuote(quote: SelectedApiQuote) {
-    if (!this.apiQuoteContext) throw new Error("Missing API quote request context");
-    const context = this.apiQuoteContext();
+    const getContext = this.apiQuoteContext;
+    const getSelection = this.apiQuoteSelection;
+    if (!getContext || !getSelection) throw new Error("Missing API quote selection context");
+    const generation = getSelection().generation;
+    const validateCurrentQuote = () => {
+      const current = getSelection();
+      if (current.quote !== quote || current.generation !== generation)
+        throw new Error("API quote selection changed");
+      return validateApiQuoteExecution(quote, getContext());
+    };
+    const context = getContext();
     const chainId = context.inputs[0].token.chainId;
-    let validated = validateApiQuote(quote, context);
+    let validated = validateCurrentQuote();
     const tx = quote.order.openIntentTx;
     let hash: `0x${string}`;
     if (isStellarChain(chainId)) {
@@ -174,7 +191,7 @@ export class IntentFactory {
       if (source !== context.user || !validated.scval)
         throw new Error("Stellar quote account changed");
       const receipt = await openStellarApiOrder(chainId, tx.to, validated.scval, source, () => {
-        validateApiQuote(quote, this.apiQuoteContext!());
+        validateCurrentQuote();
         if (store.stellarAccounts[chainId] !== source)
           throw new Error("Stellar quote account changed");
       });
@@ -189,7 +206,7 @@ export class IntentFactory {
       )
         throw new Error("Quote wallet account/network changed");
       for (const allowance of quote.order.checks.allowances) {
-        validated = validateApiQuote(quote, this.apiQuoteContext());
+        validated = validateCurrentQuote();
         const client = getClient(chainId);
         const token = allowance.token as `0x${string}`;
         const spender = allowance.spender as `0x${string}`;
@@ -200,7 +217,7 @@ export class IntentFactory {
           args: [address, spender]
         });
         if (current < BigInt(allowance.required)) {
-          validateApiQuote(quote, this.apiQuoteContext());
+          validateCurrentQuote();
           const approval = await this.walletClient.writeContract({
             chain: getChain(chainId),
             account: address,
@@ -212,13 +229,13 @@ export class IntentFactory {
           await client.waitForTransactionReceipt({ hash: approval });
         }
       }
-      validated = validateApiQuote(quote, this.apiQuoteContext());
       const [currentAddress] = await this.walletClient.getAddresses();
       if (
         currentAddress?.toLowerCase() !== address.toLowerCase() ||
         (await this.walletClient.getChainId()) !== chainId
       )
         throw new Error("Quote wallet account/network changed before signing");
+      validated = validateCurrentQuote();
       hash = await this.walletClient.sendTransaction({
         chain: getChain(chainId),
         account: address,

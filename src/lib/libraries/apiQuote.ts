@@ -27,6 +27,10 @@ import {
 import type { AppTokenContext } from "$lib/appTypes";
 
 export type SelectedApiQuote = Awaited<ReturnType<IntentApi["getQuotes"]>>["quotes"][number];
+export type ApiQuoteSelection = {
+  quote: SelectedApiQuote | undefined;
+  generation: number;
+};
 export type ApiQuoteContext = {
   inputs: AppTokenContext[];
   outputs: AppTokenContext[];
@@ -337,4 +341,12 @@ export function validateApiQuote(
   if (tx.value !== undefined && BigInt(tx.value) !== 0n)
     throw new Error("USDC escrow quote must not spend native value");
   return { ...decoded, inputSettler: wire(inputSettler) };
+}
+
+/** Selection may start with a placeholder output; signing must use the selected terms. */
+export function validateApiQuoteExecution(quote: SelectedApiQuote, context: ApiQuoteContext) {
+  const validated = validateApiQuote(quote, context);
+  if (context.outputs[0].amount !== BigInt(validated.order.outputs[0].amount))
+    throw new Error("Quote output amount changed");
+  return validated;
 }

@@ -54,12 +54,14 @@ export async function disconnectStellarWallet(chainId: number) {
 export async function signStellarTransaction(
   xdr: string,
   address: string,
-  chainId: number
+  chainId: number,
+  beforeSign?: () => void
 ): Promise<string> {
   const selected = stellarNetwork(chainId);
   const network = await getNetworkDetails();
   if (network.error || network.networkPassphrase !== selected.passphrase)
     throw new Error(`Switch Freighter to ${selected.name}`);
+  beforeSign?.();
   const { signedTxXdr, error } = await signTransaction(xdr, {
     networkPassphrase: selected.passphrase,
     address

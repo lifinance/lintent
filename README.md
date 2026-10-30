@@ -92,16 +92,17 @@ disable manual publication; there is no testnet gas floor. Existing mainnet
 estimation remains separate. Testnet messages link to testnet Axelarscan.
 
 The SDK is pinned to the published P2 Git commit
-`398f9730835cf869858d7e4dc6212e9c789827ce`; no release or local link is assumed.
-Its normal Git `prepare` produces `_esm`, `_cjs` and `_types`. In this worktree
-Bun 1.4.2's in-place Git preparation failed (Rollup's TypeScript plugin excludes
-`node_modules`). A real remote Git install with
-`npm install --legacy-peer-deps --package-lock=false --foreground-scripts --no-audit --no-fund`
-did prepare and install those exports; Bun then ran the consumer checks.
-The npm flag accommodates the existing MetaMask optional-peer conflict, not a
-dependency downgrade. `bun.lock` remains authoritative; no npm lock is committed.
-A Bun-only clean install/automatic preview must not be claimed ready until that
-Git-prepare limitation is resolved upstream or in the install toolchain.
+`352216efb365c620a1a9dd49cb72116b8faf5b61`; no release or local link is assumed.
+Normal `bun install` runs the trusted Git package's `prepare` to generate
+`_esm`, `_cjs` and `_types`; no manual SDK build or copied outputs are required.
+Bun's in-place Git preparation uses the consumer's build tools, so install with
+devDependencies enabled: `rollup ^4.61.0`, `rollup-plugin-esbuild ^6.2.1`,
+`typescript ^5.6.3` and `@types/bun ^1.3.8` (compatible newer versions are valid).
+The manifest explicitly trusts `@lifi/intent`; preserve other audited trust
+entries and do not blanket-approve lifecycle scripts. `bun.lock` pins the exact
+Git revision and resolved build tools. Production build stages must install
+devDependencies before preparing the SDK and building lintent; a
+production-only install from an empty dependency tree omits required tools.
 
 Activation still requires D1–D4: real deployments/fingerprints and owner maps,
 funded/trustlined wallets, durable ingestion, network-scoped Order configuration

@@ -9,13 +9,15 @@
     scrollStepProgress,
     selectedOrder,
     onStepClick,
-    className = ""
+    className = "",
+    browsing = false
   }: {
     currentScreenIndex: number;
     scrollStepProgress: number;
     selectedOrder: OrderContainer | undefined;
     onStepClick?: (step: FlowStep) => void;
     className?: string;
+    browsing?: boolean;
   } = $props();
 
   let progressRefreshTick = $state(0);
@@ -47,7 +49,7 @@
     selectedOrder;
     selectedOutputFillHashSignature;
 
-    if (!store.connectedAccount || !store.walletClient || !selectedOrder) {
+    if (!selectedOrder) {
       flowChecks = {
         allFilled: false,
         allValidated: false,
@@ -74,8 +76,9 @@
   });
 
   const progressSteps = $derived.by(() => {
-    const connected = !!store.connectedAccount && !!store.walletClient;
-    if (!connected) {
+    const flowAccessible =
+      browsing || !!store.stellarAccount || (!!store.connectedAccount && !!store.walletClient);
+    if (!flowAccessible) {
       return [
         {
           id: "connect",

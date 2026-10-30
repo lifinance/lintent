@@ -13,6 +13,8 @@
   import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
+  import { getUnsupportedChains } from "$lib/libraries/intentList";
+  import { coinList } from "$lib/config";
 
   BigInt.prototype.toJSON = function () {
     return this.toString();
@@ -26,13 +28,14 @@
   };
 
   $effect(() => {
-    store.mainnet;
-    store.syncTokensForNetwork(store.mainnet).then(() => {
-      store.inputTokens = [{ token: store.availableTokens[0], amount: 0n }];
-      store.outputTokens = [
-        { token: store.availableTokens[1] ?? store.availableTokens[0], amount: 0n }
-      ];
-    });
+    const mainnet = store.mainnet;
+    const tokens = coinList(mainnet);
+    // Invalidate the previous network immediately, not after IndexedDB finishes.
+    store.inputTokens = [{ token: tokens[0], amount: 0n }];
+    store.outputTokens = [{ token: tokens[1] ?? tokens[0], amount: 0n }];
+    store
+      .syncTokensForNetwork(mainnet)
+      .catch((error) => console.warn("network tokens unavailable", error));
   });
 
   const intentApi = $derived(new IntentApi(store.useProductionApi ?? store.mainnet));
@@ -100,6 +103,10 @@
   let selectedOrder = $state<OrderContainer | undefined>(undefined);
   let currentScreenIndex = $state(0);
   let scrollStepProgress = $state(0);
+  let explore = $state(false);
+  const flowAccessible = $derived(
+    explore || !!store.stellarAccount || (!!store.connectedAccount && !!store.walletClient)
+  );
   async function importOrderById(orderId: `0x${string}`): Promise<"inserted" | "updated"> {
     const importedOrder = await intentApi.getOrderByOnChainOrderId(orderId);
     const importedOrderId = containerToIntent(importedOrder).orderId();
@@ -107,6 +114,10 @@
       (o) => containerToIntent(o).orderId() === importedOrderId
     );
     await store.saveOrderToDb(importedOrder);
+    const unsupported = getUnsupportedChains(importedOrder.order);
+    if (unsupported.length > 0) {
+      throw new Error(`Order saved, but chain ${unsupported.join(", ")} is not supported.`);
+    }
     selectedOrder =
       store.orders.find((o) => containerToIntent(o).orderId() === importedOrderId) ?? importedOrder;
     return existingIndex >= 0 ? "updated" : "inserted";
@@ -194,25 +205,32 @@
             Preview by LI.FI
           </a>
 
-          {#if !(!store.connectedAccount || !store.walletClient)}
-            <!-- Right Button -->
-            <button
-              class="absolute top-1.5 right-2 z-50 cursor-pointer rounded bg-sky-50 px-1"
-              onclick={scroll(true)}
-            >
-              →
-            </button>
-            <!-- Back Button -->
-            <button
-              class="absolute top-1.5 left-[1rem] z-50 cursor-pointer rounded bg-sky-50 px-1"
-              onclick={scroll(false)}
-            >
-              ←
-            </button>
-          {/if}
+          <!-- Right Button -->
+          <button
+            class="absolute top-1.5 right-2 z-50 cursor-pointer rounded bg-sky-50 px-1"
+            onclick={scroll(true)}
+          >
+            →
+          </button>
+          <!-- Back Button -->
+          <button
+            class="absolute top-1.5 left-[1rem] z-50 cursor-pointer rounded bg-sky-50 px-1"
+            onclick={scroll(false)}
+          >
+            ←
+          </button>
           <div class="flex h-full w-max flex-row">
-            {#if !store.connectedAccount || !store.walletClient}
-              <ConnectWallet></ConnectWallet>
+            {#if !flowAccessible}
+              <div class="relative">
+                <ConnectWallet />
+                <button
+                  class="absolute bottom-8 left-16 rounded border px-3 py-1 text-sm"
+                  onclick={() => {
+                    explore = true;
+                    currentScreenIndex = 0;
+                  }}>Explore without connecting</button
+                >
+              </div>
             {:else}
               <ManageDeposit {scroll} {preHook} {postHook} {account}></ManageDeposit>
               <IssueIntent {scroll} {preHook} {postHook} {account}></IssueIntent>
@@ -245,6 +263,7 @@
         {currentScreenIndex}
         {scrollStepProgress}
         {selectedOrder}
+        browsing={flowAccessible}
         onStepClick={(step) => {
           if (step.targetIndex === undefined) return;
           goToScreen(step.targetIndex);

@@ -4,10 +4,19 @@ import {
   getCoin,
   INPUT_SETTLER_ESCROW_LIFI,
   INPUT_SETTLER_COMPACT_LIFI,
+  isStellarChain,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
-  MULTICHAIN_INPUT_SETTLER_COMPACT
+  MULTICHAIN_INPUT_SETTLER_COMPACT,
+  stellarDeployment
 } from "../config";
-import { bytes32ToAddress, idToToken } from "@lifi/intent";
+import {
+  bytes32ToAddress,
+  bytes32ToStellarAccount,
+  idToToken,
+  inputSettlerForStellar,
+  STELLAR_MAINNET_CHAIN_ID
+} from "@lifi/intent";
+import { toHex } from "viem";
 import { containerToIntent } from "$lib/utils/intent";
 import type { OrderContainer, StandardOrder, MultichainOrder } from "@lifi/intent";
 import { validateOrderContainerWithReason } from "@lifi/intent";
@@ -41,6 +50,8 @@ export type BaseIntentRow = {
   outputOverflow: number;
   validationPassed: boolean;
   validationReason: string;
+  /** Chain ids the app has no config for; such orders cannot be opened in the flow screens. */
+  unsupportedChains: string[];
 };
 
 export type TimedIntentRow = BaseIntentRow & {
@@ -75,7 +86,10 @@ function shortAddress(value: string, start = 6, end = 4) {
 }
 
 function summarizeInput(chainId: bigint, tokenId: bigint, amount: bigint): string {
-  const tokenAddress = idToToken(tokenId);
+  // Orders reloaded from the DB carry bigints as decimal strings.
+  const tokenAddress = isStellarChain(chainId)
+    ? toHex(BigInt(tokenId), { size: 32 })
+    : idToToken(tokenId);
   const chainName = safeChainName(chainId);
   if (!chainName) {
     return `${amount.toString()} ${shortAddress(tokenAddress)} on chain-${chainId.toString()}`;
@@ -128,6 +142,18 @@ function toChainScopeBadge(scope: ChainScope) {
   return "MultiChain";
 }
 
+export function getUnsupportedChains(order: StandardOrder | MultichainOrder): string[] {
+  const chainIds =
+    "originChainId" in order
+      ? [order.originChainId]
+      : order.inputs.map((chainInput) => chainInput.chainId);
+  for (const output of order.outputs) chainIds.push(output.chainId);
+  const unsupported = chainIds
+    .filter((chainId) => safeChainName(chainId) === undefined)
+    .map((chainId) => chainId.toString());
+  return [...new Set(unsupported)];
+}
+
 function shortHexAddress(value: `0x${string}`) {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
@@ -136,9 +162,19 @@ function normalizeAddress(value: string) {
   return value.toLowerCase();
 }
 
-function mapInputScheme(inputSettler: `0x${string}`): string | undefined {
+function mapInputScheme(inputSettler: `0x${string}`, chainId?: bigint): string | undefined {
   const settler = normalizeAddress(inputSettler);
+  if (chainId && isStellarChain(chainId)) {
+    try {
+      if (settler === normalizeAddress(inputSettlerForStellar(BigInt(chainId), stellarDeployment)))
+        return "Escrow";
+    } catch {
+      return undefined;
+    }
+  }
   if (settler === normalizeAddress(INPUT_SETTLER_ESCROW_LIFI)) return "Escrow";
+  if (settler === normalizeAddress(inputSettlerForStellar(STELLAR_MAINNET_CHAIN_ID)))
+    return "Escrow";
   if (settler === normalizeAddress(INPUT_SETTLER_COMPACT_LIFI)) return "Compact";
   if (settler === normalizeAddress(MULTICHAIN_INPUT_SETTLER_ESCROW)) return "MultichainEscrow";
   if (settler === normalizeAddress(MULTICHAIN_INPUT_SETTLER_COMPACT)) return "MultichainCompact";
@@ -186,8 +222,14 @@ function getContextDetails(orderContainer: OrderContainer): ContextDetails {
   const isExclusive = typeByte === "e0" || typeByte === "e1";
   if (!isExclusive) return details;
 
-  const exclusiveFor = decodeExclusiveFor(firstContext);
-  if (exclusiveFor) details.exclusiveForAddress = shortHexAddress(exclusiveFor);
+  const stellarClaimant = "originChainId" in order && isStellarChain(order.originChainId);
+  const exclusiveFor = stellarClaimant
+    ? firstContext.length >= 68
+      ? (`0x${firstContext.slice(4, 68)}` as `0x${string}`)
+      : undefined
+    : decodeExclusiveFor(firstContext);
+  if (exclusiveFor)
+    details.exclusiveForAddress = `${stellarClaimant ? "Commitment " : ""}${shortHexAddress(exclusiveFor)}`;
 
   // bytes1 + bytes32 + uint32 (big-endian)
   if (firstContext.length >= 76) {
@@ -216,13 +258,22 @@ export function buildBaseIntentRow(orderContainer: OrderContainer): BaseIntentRo
     orderContainer,
     orderId,
     orderIdShort: shortAddress(orderId, 10, 4),
-    userShort: shortAddress(order.user, 8, 4),
+    userShort: shortAddress(
+      "originChainId" in order && isStellarChain(order.originChainId)
+        ? bytes32ToStellarAccount(order.user)
+        : order.user,
+      8,
+      4
+    ),
     fillDeadline: order.fillDeadline,
     inputCount: inputChipsRaw.length,
     outputCount: outputChipsRaw.length,
     chainScope,
     chainScopeBadge: toChainScopeBadge(chainScope),
-    inputSchemeBadge: mapInputScheme(orderContainer.inputSettler),
+    inputSchemeBadge: mapInputScheme(
+      orderContainer.inputSettler,
+      "originChainId" in order ? order.originChainId : undefined
+    ),
     orderTypeBadge: contextDetails.orderTypeBadge,
     exclusiveForAddress: contextDetails.exclusiveForAddress,
     exclusiveUntil: contextDetails.exclusiveUntil,
@@ -231,7 +282,8 @@ export function buildBaseIntentRow(orderContainer: OrderContainer): BaseIntentRo
     outputChips: outputChipsRaw.slice(0, MAX_CHIPS_PER_SIDE),
     outputOverflow: Math.max(0, outputChipsRaw.length - MAX_CHIPS_PER_SIDE),
     validationPassed: validation.passed,
-    validationReason: validation.reason
+    validationReason: validation.reason,
+    unsupportedChains: getUnsupportedChains(order)
   };
 }
 

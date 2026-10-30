@@ -4,15 +4,50 @@
   import FormControl from "$lib/components/ui/FormControl.svelte";
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
-  import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
+  import {
+    AXELAR_ORACLE,
+    POLYMER_ALLOCATOR,
+    POLYMER_ORACLE,
+    formatTokenAmount,
+    getChainName,
+    isStellarChain,
+    stellarTestnetConfig,
+    requireAlignedAxelar,
+    isTestnetCorridor,
+    STELLAR_TESTNET_ID,
+    coinList,
+    type Verifier
+  } from "$lib/config";
   import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
   import { CompactLib } from "$lib/libraries/compactLib";
   import store from "$lib/state.svelte";
   import InputTokenModal from "../components/InputTokenModal.svelte";
   import OutputTokenModal from "$lib/components/OutputTokenModal.svelte";
-  import { ResetPeriod } from "@lifi/intent";
+  import {
+    ResetPeriod,
+    isStellarAccount,
+    isStellarContract,
+    stellarStrkeyToBytes32
+  } from "@lifi/intent";
   import type { AppCreateIntentOptions } from "$lib/appTypes";
   import { isAddress } from "viem";
+  import type { SelectedApiQuote, ApiQuoteContext } from "$lib/libraries/apiQuote";
+  let selectedQuote = $state<SelectedApiQuote | undefined>();
+  let quoteGeneration = $state(0);
+  const testnetPair = $derived(
+    isTestnetCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId)
+  );
+  function selectTestnetDirection(stellarOrigin: boolean) {
+    const tokens = coinList(false);
+    const stellar = tokens.find((t) => t.chainId === STELLAR_TESTNET_ID)!;
+    const base = tokens.find((t) => t.chainId === 84532 && t.name === "usdc")!;
+    store.intentType = "escrow";
+    store.verifier = "axelar";
+    store.inputTokens = [
+      { token: stellarOrigin ? stellar : base, amount: stellarOrigin ? 1000000n : 100000n }
+    ];
+    store.outputTokens = [{ token: stellarOrigin ? base : stellar, amount: 0n }];
+  }
 
   const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
   const REQUIRED_INPUT_USDC_RAW = 100n;
@@ -31,11 +66,52 @@
 
   let inputTokenSelectorActive = $state<boolean>(false);
   let outputTokenSelectorActive = $state<boolean>(false);
-  const resolveExclusiveFor = (value: string): `0x${string}` | undefined =>
-    isAddress(value, { strict: false }) ? value : undefined;
+  const inputOnStellar = $derived(
+    store.inputTokens.some(({ token }) => isStellarChain(token.chainId))
+  );
+  const outputsOnStellar = $derived(
+    store.outputTokens.some(({ token }) => isStellarChain(token.chainId))
+  );
+  const outputsOnEvm = $derived(
+    store.outputTokens.some(({ token }) => !isStellarChain(token.chainId))
+  );
+  const stellarInvolved = $derived(inputOnStellar || outputsOnStellar);
+  const quoteContext = $derived<ApiQuoteContext>({
+    inputs: store.inputTokens,
+    outputs: store.outputTokens,
+    mainnet: store.mainnet,
+    verifier: store.verifier,
+    lockType: store.intentType,
+    user: inputOnStellar ? (store.stellarAccount ?? "") : (store.connectedAccount?.address ?? ""),
+    recipient:
+      store.recipient ||
+      (outputsOnStellar ? (store.stellarAccount ?? "") : (store.connectedAccount?.address ?? "")),
+    exclusiveFor:
+      store.useExclusiveForQuoteRequest && isAddress(store.exclusiveFor)
+        ? [store.exclusiveFor]
+        : undefined
+  });
 
-  const resolveRecipient = (value: string): `0x${string}` | undefined =>
-    isAddress(value, { strict: false }) ? value : undefined;
+  const resolveExclusiveFor = (value: string): `0x${string}` | undefined =>
+    !inputOnStellar && isAddress(value, { strict: false }) ? value : undefined;
+
+  // Recipients are EVM addresses or Stellar accounts (`G…`, as their 32-byte key).
+  const resolveRecipient = (value: string): `0x${string}` | undefined => {
+    if (isAddress(value, { strict: false })) return value;
+    if (isStellarAccount(value)) return stellarStrkeyToBytes32(value);
+    if (isStellarContract(value)) return stellarStrkeyToBytes32(value);
+    return undefined;
+  };
+
+  // Cross-namespace orders need an explicit recipient; default to the
+  // connected wallet on the output side.
+  const outputRecipient = $derived.by((): `0x${string}` | undefined => {
+    if (store.recipient.length > 0) return resolveRecipient(store.recipient);
+    if (outputsOnStellar && !inputOnStellar)
+      return store.stellarAccount ? stellarStrkeyToBytes32(store.stellarAccount) : undefined;
+    if (inputOnStellar && outputsOnEvm) return store.connectedAccount?.address;
+    return undefined;
+  });
 
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({
@@ -43,7 +119,7 @@
       inputTokens: store.inputTokens,
       outputTokens: store.outputTokens,
       verifier: store.verifier,
-      outputRecipient: resolveRecipient(store.recipient),
+      outputRecipient,
       lock:
         store.intentType === "compact"
           ? {
@@ -52,7 +128,7 @@
               resetPeriod: ResetPeriod.OneDay
             }
           : { type: "escrow" },
-      account
+      account: inputOnStellar ? () => stellarStrkeyToBytes32(store.stellarAccount!) : account
     })
   );
 
@@ -73,6 +149,8 @@
       mainnet: store.mainnet,
       useProductionApi: store.useProductionApi,
       walletClient: store.walletClient,
+      apiQuoteContext: () => quoteContext,
+      apiQuoteSelection: () => ({ quote: selectedQuote, generation: quoteGeneration }),
       preHook,
       postHook: postHookScroll,
       ordersPointer: store.orders
@@ -191,6 +269,56 @@
     return inputChain === outputChain;
   });
 
+  const involvedChains = $derived([
+    ...store.inputTokens.map(({ token }) => token.chainId),
+    ...store.outputTokens.map(({ token }) => token.chainId)
+  ]);
+  const verifierOptions = $derived<{ value: Verifier; label: string; enabled: boolean }[]>([
+    {
+      value: "polymer",
+      label: "Polymer",
+      enabled: involvedChains.every((chainId) => POLYMER_ORACLE[chainId] !== undefined)
+    },
+    {
+      value: "axelar",
+      label: "Axelar",
+      enabled:
+        testnetPair && involvedChains.every((chainId) => AXELAR_ORACLE[chainId] !== undefined)
+    },
+    { value: "wormhole", label: "Wormhole", enabled: false }
+  ]);
+  $effect(() => {
+    if (verifierOptions.some((o) => o.value === store.verifier && o.enabled)) return;
+    const fallback = verifierOptions.find((o) => o.enabled);
+    if (fallback) store.verifier = fallback.value;
+  });
+
+  const routeBlocker = $derived.by((): string | undefined => {
+    if (stellarInvolved) {
+      try {
+        requireAlignedAxelar(
+          store.inputTokens[0].token.chainId,
+          store.outputTokens[0].token.chainId
+        );
+      } catch (error) {
+        return (error as Error).message;
+      }
+      if (store.intentType !== "escrow") return "Testnet API issuance requires escrow";
+      if (store.inputTokens.length !== 1 || store.outputTokens.length !== 1)
+        return "Testnet corridor supports one USDC input and output";
+    }
+    if (inputOnStellar && numInputChains > 1)
+      return "Stellar inputs cannot be combined with other input chains";
+    if (inputOnStellar && store.intentType === "compact")
+      return "Stellar inputs only support escrow";
+    if (outputsOnStellar && outputsOnEvm)
+      return "Stellar outputs cannot be combined with outputs on other chains";
+    if (inputOnStellar && outputsOnStellar) return "Stellar to Stellar orders are not supported";
+    if (!sameChain && !verifierOptions.some((o) => o.enabled))
+      return "No verifier is deployed on all chains of this route";
+    return undefined;
+  });
+
   // const inputSecurityCheck = $derived.by(() => {
   // 	if (store.inputTokens.length === 0) return false;
   // 	const usdcOnly = store.inputTokens.every(({ token }) => token.name.toLowerCase() === "usdc");
@@ -220,19 +348,42 @@
   {/if}
 
   <div class="space-y-2">
+    {#if !store.mainnet}
+      {#if stellarTestnetConfig.error}
+        <p role="alert" data-testid="testnet-config-error" class="text-xs text-red-600">
+          {stellarTestnetConfig.error}
+        </p>
+      {:else if !stellarTestnetConfig.enabled}
+        <p data-testid="testnet-disabled" class="text-xs text-gray-600">
+          Stellar testnet corridor disabled: missing enabled deployment-record configuration.
+        </p>
+      {:else}
+        <div class="flex gap-2 text-xs" data-testid="testnet-routes">
+          <button class="rounded border px-2 py-1" onclick={() => selectTestnetDirection(true)}
+            >Stellar Testnet → Base Sepolia</button
+          >
+          <button class="rounded border px-2 py-1" onclick={() => selectTestnetDirection(false)}
+            >Base Sepolia → Stellar Testnet</button
+          >
+        </div>
+        <p class="text-xs text-gray-600">
+          Freighter: Testnet · Order dev API · USDC only · external Catamaran solver
+        </p>
+      {/if}
+    {/if}
     <SectionCard title="Intent pair" compact>
       {#snippet headerRight()}
-        <div class="w-20">
-          <GetQuote
-            bind:exclusiveFor={store.exclusiveFor}
-            useExclusiveForQuoteRequest={store.useExclusiveForQuoteRequest}
-            mainnet={store.mainnet}
-            useProductionApi={store.useProductionApi}
-            inputTokens={store.inputTokens}
-            bind:outputTokens={store.outputTokens}
-            {account}
-          ></GetQuote>
-        </div>
+        <GetQuote
+          bind:exclusiveFor={store.exclusiveFor}
+          bind:selectedQuote
+          bind:generation={quoteGeneration}
+          context={quoteContext}
+          blocked={!!routeBlocker}
+          mainnet={store.mainnet}
+          useProductionApi={store.useProductionApi}
+          scope={`${store.walletConnection.chainId}:${store.intentType}:${store.verifier}:${store.allocatorId}:${store.useExclusiveForQuoteRequest}`}
+          bind:outputTokens={store.outputTokens}
+        />
       {/snippet}
       <div class="flex w-full flex-row justify-evenly gap-2">
         <div class="flex flex-col justify-center space-y-1">
@@ -303,7 +454,7 @@
             type="text"
             size="sm"
             className="flex-1"
-            placeholder="0x... (optional)"
+            placeholder="0x… or G… (optional)"
             state={store.recipient.length > 0 && !resolveRecipient(store.recipient)
               ? "error"
               : "default"}
@@ -317,9 +468,10 @@
               <option selected disabled>Settler</option>
             </FormControl>
           {:else}
-            <FormControl as="select" id="verified-by" size="sm">
-              <option value="polymer" selected>Polymer</option>
-              <option value="wormhole" disabled>Wormhole</option>
+            <FormControl as="select" id="verified-by" size="sm" bind:value={store.verifier}>
+              {#each verifierOptions as option (option.value)}
+                <option value={option.value} disabled={!option.enabled}>{option.label}</option>
+              {/each}
             </FormControl>
           {/if}
         </div>
@@ -329,7 +481,9 @@
             type="text"
             size="sm"
             className="flex-1"
-            placeholder="0x... (optional)"
+            placeholder={inputOnStellar ? "Not supported for Stellar inputs" : "0x... (optional)"}
+            state={inputOnStellar ? "disabled" : "default"}
+            disabled={inputOnStellar}
             bind:value={store.exclusiveFor}
           />
           <label
@@ -346,8 +500,43 @@
       </div>
     </SectionCard>
 
+    {#if routeBlocker}
+      <p class="mx-auto w-4/5 text-center text-xs font-semibold text-red-600">{routeBlocker}</p>
+    {/if}
     <div class="mt-2 flex justify-center">
-      {#if !allowanceCheck}
+      {#if routeBlocker}
+        <button
+          type="button"
+          class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+          disabled
+        >
+          Unsupported route
+        </button>
+      {:else if inputOnStellar && !store.stellarAccount}
+        <AwaitButton buttonFunction={() => store.connectStellar()}>
+          {#snippet name()}
+            Connect Freighter ({store.mainnet ? "Mainnet" : "Testnet"})
+          {/snippet}
+          {#snippet awaiting()}
+            Connecting...
+          {/snippet}
+        </AwaitButton>
+      {:else if !inputOnStellar && !store.connectedAccount}
+        <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
+          >Connect the origin EVM wallet</button
+        >
+      {:else if testnetPair}
+        {#if !selectedQuote}
+          <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
+            >Select a valid API quote</button
+          >
+        {:else}
+          <AwaitButton buttonFunction={() => intentFactory.executeApiQuote(selectedQuote!)}>
+            {#snippet name()}Execute API quote{/snippet}
+            {#snippet awaiting()}Waiting for transaction…{/snippet}
+          </AwaitButton>
+        {/if}
+      {:else if !allowanceCheck}
         <AwaitButton buttonFunction={approveFunction}>
           {#snippet name()}
             Set allowance

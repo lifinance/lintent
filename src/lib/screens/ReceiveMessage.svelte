@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { formatTokenAmount, getChainName, getClient, getCoin } from "$lib/config";
-  import { addressToBytes32 } from "@lifi/intent";
-  import { encodeMandateOutput } from "@lifi/intent";
-  import { hashStruct, keccak256 } from "viem";
+  import { AXELAR_ORACLE, formatTokenAmount, getChainName, getCoin } from "$lib/config";
   import type { MandateOutput, OrderContainer } from "@lifi/intent";
-  import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
   import { Solver } from "$lib/libraries/solver";
+  import { axelarscanUrl } from "$lib/libraries/axelar";
+  import {
+    getOutputStorageKey as outputKey,
+    isOutputValidatedOnChain
+  } from "$lib/libraries/flowProgress";
+  import { invalidateRpcPrefix } from "$lib/libraries/rpcCache";
   import AwaitButton from "$lib/components/AwaitButton.svelte";
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
@@ -13,7 +15,37 @@
   import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
-  import { compactTypes } from "@lifi/intent";
+  import { axelarActionBlocker } from "$lib/libraries/coreDeps";
+  import { getFillInfo } from "$lib/libraries/fillInfo";
+  import { axelarGasFee } from "$lib/libraries/axelar";
+  import { isStellarChain } from "$lib/config";
+  let feeEstimates = $state<Record<string, { fee?: bigint; error?: string }>>({});
+  $effect(() => {
+    if (!usesAxelar || actionBlocker) return;
+    const orderId = containerToIntent(orderContainer).orderId();
+    let cancelled = false;
+    for (const inputChain of containerToIntent(orderContainer).inputChains()) {
+      for (const output of orderContainer.order.outputs) {
+        const key = validationKey(inputChain, output);
+        const hash = store.fillTransactions[outputKey(output)];
+        if (!hash) continue;
+        const stellarChain = isStellarChain(inputChain) ? inputChain : output.chainId;
+        const executor = store.stellarAccounts[Number(stellarChain)];
+        feeEstimates[key] = {};
+        getFillInfo({ orderId, output, fillTransactionHash: hash })
+          .then(({ payload }) => axelarGasFee(output.chainId, inputChain, [payload], executor))
+          .then((fee) => {
+            if (!cancelled) feeEstimates[key] = { fee };
+          })
+          .catch((error) => {
+            if (!cancelled) feeEstimates[key] = { error: (error as Error).message };
+          });
+      }
+    }
+    return () => {
+      cancelled = true;
+    };
+  });
 
   // This script needs to be updated to be able to fetch the associated events of fills. Currently, this presents an issue since it can only fill single outputs.
 
@@ -30,63 +62,71 @@
     postHook: () => Promise<any>;
     account: () => `0x${string}`;
   } = $props();
+  const actionBlocker = $derived(axelarActionBlocker(orderContainer));
 
   let refreshValidation = $state(0);
   let autoScrolledOrderId = $state<`0x${string}` | null>(null);
   let validationRun = 0;
   let validationStatuses = $state<Record<string, boolean>>({});
-  const postHookRefreshValidate = async () => {
-    await postHook();
+  // Axelar submit transactions, keyed like validationStatuses.
+  let axelarSubmits = $state<Record<string, `0x${string}`>>({});
+  const refreshProofs = () => {
+    invalidateRpcPrefix("progress:proven:");
     refreshValidation += 1;
   };
-  const outputKey = (output: MandateOutput) =>
-    hashStruct({
-      data: output,
-      types: compactTypes,
-      primaryType: "MandateOutput"
-    });
+  const postHookRefreshValidate = async () => {
+    await postHook();
+    refreshProofs();
+  };
   const validationKey = (inputChain: bigint, output: MandateOutput) =>
     `${inputChain.toString()}:${outputKey(output)}`;
 
-  async function isValidated(
-    orderId: `0x${string}`,
-    chainId: bigint,
-    orderContainer: OrderContainer,
-    output: MandateOutput,
-    fillTransactionHash: `0x${string}`,
-    _?: any
-  ) {
-    if (!fillTransactionHash) return false;
-    if (
-      !fillTransactionHash ||
-      !fillTransactionHash.startsWith("0x") ||
-      fillTransactionHash.length != 66
-    )
-      return false;
-    const { order } = orderContainer;
-    const outputClient = getClient(output.chainId);
-    const transactionReceipt = await outputClient.getTransactionReceipt({
-      hash: fillTransactionHash
-    });
-    const blockHashOfFill = transactionReceipt.blockHash;
-    const block = await outputClient.getBlock({
-      blockHash: blockHashOfFill
-    });
-    const encodedOutput = encodeMandateOutput({
-      solver: addressToBytes32(transactionReceipt.from),
-      orderId,
-      timestamp: Number(block.timestamp),
-      output
-    });
-    const outputHash = keccak256(encodedOutput);
-    const sourceChainClient = getClient(chainId);
-    return await sourceChainClient.readContract({
-      address: order.inputOracle,
-      abi: POLYMER_ORACLE_ABI,
-      functionName: "isProven",
-      args: [output.chainId, output.oracle, output.settler, outputHash]
-    });
-  }
+  const usesAxelar = $derived(
+    containerToIntent(orderContainer)
+      .inputChains()
+      .some(
+        (chainId) =>
+          AXELAR_ORACLE[Number(chainId)]?.toLowerCase() ===
+          orderContainer.order.inputOracle.toLowerCase()
+      )
+  );
+
+  // Axelar delivers asynchronously (minutes); poll until every proof lands.
+  $effect(() => {
+    if (!usesAxelar) return;
+    const pending = Object.values(validationStatuses).some((validated) => !validated);
+    if (!pending) return;
+    const handle = setInterval(refreshProofs, 30_000);
+    return () => clearInterval(handle);
+  });
+
+  const validateOutput = (inputChain: bigint, output: MandateOutput) => {
+    const validate = Solver.validate(
+      store.walletClient,
+      {
+        output,
+        orderContainer,
+        fillTransactionHash: store.fillTransactions[outputKey(output)],
+        sourceChainId: Number(inputChain),
+        mainnet: store.mainnet
+      },
+      {
+        preHook,
+        postHook: postHookRefreshValidate,
+        account
+      }
+    );
+    return async () => {
+      const result = await validate();
+      if (
+        result &&
+        typeof result === "object" &&
+        "submitTxHash" in result &&
+        typeof result.submitTxHash === "string"
+      )
+        axelarSubmits[validationKey(inputChain, output)] = result.submitTxHash as `0x${string}`;
+    };
+  };
 
   // const validations = $derived(
   // 	orderContainer.order.outputs.map((output) => {
@@ -132,14 +172,16 @@
       outputs.map((output, outputIndex) => ({
         key: validationKey(inputChain, output),
         run: () =>
-          isValidated(
+          isOutputValidatedOnChain(
             orderId,
             inputChain,
             orderContainer,
             output,
-            fillTxHashes[outputIndex] as `0x${string}`,
-            refreshValidation
-          )
+            fillTxHashes[outputIndex] as `0x${string}`
+          ).catch((error) => {
+            console.warn("validation check failed", error);
+            return false;
+          })
       }))
     );
     Promise.all(pairs.map(async (pair) => [pair.key, await pair.run()] as const))
@@ -158,9 +200,12 @@
 
 <ScreenFrame
   title="Submit Proof of Fill"
-  description="Click on each output and wait until they turn green. Polymer does not support batch validation. Continue to the right."
+  description={usesAxelar
+    ? "Submit the fill proof through Axelar from the output chain. Delivery takes about 1 minute from Stellar and about 30 minutes to Stellar."
+    : "Click on each output and wait until they turn green. Polymer does not support batch validation. Continue to the right."}
 >
   <div class="space-y-2">
+    {#if actionBlocker}<p role="alert" class="text-xs text-red-600">{actionBlocker}</p>{/if}
     {#each containerToIntent(orderContainer).inputChains() as inputChain}
       <SectionCard compact>
         <ChainActionRow chainLabel={getChainName(inputChain)}>
@@ -170,7 +215,15 @@
           {#snippet chips()}
             {#each orderContainer.order.outputs as output}
               {@const status = validationStatuses[validationKey(inputChain, output)]}
-              {#if status === undefined}
+              {@const submitTxHash = axelarSubmits[validationKey(inputChain, output)]}
+              {#if actionBlocker}
+                <span class="text-xs text-red-600">Unsupported deployment</span>
+              {:else if usesAxelar && !status && !feeEstimates[validationKey(inputChain, output)]?.fee}
+                <button disabled class="rounded border px-2 text-xs text-gray-400"
+                  >Manual publication disabled: {feeEstimates[validationKey(inputChain, output)]
+                    ?.error ?? "Awaiting gas estimate"}</button
+                >
+              {:else if status === undefined}
                 <TokenAmountChip
                   amountText={formatTokenAmount(
                     output.amount,
@@ -184,23 +237,7 @@
                   size="sm"
                   variant={status ? "success" : "warning"}
                   baseClass={["min-w-[6.5rem] justify-center"]}
-                  buttonFunction={status
-                    ? async () => {}
-                    : Solver.validate(
-                        store.walletClient,
-                        {
-                          output,
-                          orderContainer,
-                          fillTransactionHash: store.fillTransactions[outputKey(output)],
-                          sourceChainId: Number(inputChain),
-                          mainnet: store.mainnet
-                        },
-                        {
-                          preHook,
-                          postHook: postHookRefreshValidate,
-                          account
-                        }
-                      )}
+                  buttonFunction={status ? async () => {} : validateOutput(inputChain, output)}
                 >
                   {#snippet name()}
                     {formatTokenAmount(
@@ -217,6 +254,14 @@
                     Validating...
                   {/snippet}
                 </AwaitButton>
+                {#if submitTxHash && !status}
+                  <a
+                    class="text-[11px] font-semibold text-sky-700 underline"
+                    href={axelarscanUrl(submitTxHash, output.chainId)}
+                    target="_blank"
+                    rel="noreferrer">Axelarscan</a
+                  >
+                {/if}
               {/if}
             {/each}
           {/snippet}

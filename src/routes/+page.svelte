@@ -10,9 +10,11 @@
   import ReceiveMessage from "$lib/screens/ReceiveMessage.svelte";
   import Finalise from "$lib/screens/Finalise.svelte";
   import ConnectWallet from "$lib/screens/ConnectWallet.svelte";
+  import WalletStatus from "$lib/components/WalletStatus.svelte";
   import FlowStepTracker from "$lib/components/ui/FlowStepTracker.svelte";
   import store from "$lib/state.svelte";
-  import { containerToIntent } from "$lib/utils/intent";
+  import { containerToIntent, reviveOrderBigInts } from "$lib/utils/intent";
+  import { getChainType } from "$lib/utils/chainType";
   import { getUnsupportedChains } from "$lib/libraries/intentList";
   import { coinList } from "$lib/config";
 
@@ -69,7 +71,15 @@
               type: "None",
               payload: "0x"
             } as NoSignature);
-        const orderContainer = { ...order, allocatorSignature, sponsorSignature };
+        // The socket hands over raw parsed JSON (`user:vm-order-submit` skips
+        // the BigInt conversion getAndParseOrders does), so every bigint field
+        // arrives as a decimal string — which broke Solana PDA derivations.
+        const orderContainer = {
+          ...order,
+          order: reviveOrderBigInts(order.order),
+          allocatorSignature,
+          sponsorSignature
+        };
 
         // Deduplicate: only add if not already present
         const orderId = containerToIntent(orderContainer).orderId();
@@ -98,15 +108,39 @@
   // --- Execute Transaction Variables --- //
   const preHook = (chainId: number) => store.setWalletToCorrectChain(chainId);
   const postHook = async () => store.forceUpdate();
-  const account = () => store.connectedAccount?.address!;
+  // Wallet identity is bound to the chain of the OPERATION, not to the draft
+  // issuance form: filling uses the selected order's output chain, proving and
+  // finalising use its input chain. The draft form only drives issuance.
+  // An address from one namespace is never a valid identity in another, so a
+  // missing wallet blocks instead of silently falling back to the EVM account.
+  const accountFor = (chainId: number | bigint | undefined) => {
+    if (chainId !== undefined) {
+      const chainType = getChainType(chainId);
+      if (chainType !== "evm") {
+        const resolved = store.accountForChain(chainId);
+        if (!resolved) {
+          throw new Error(
+            chainType === "tron"
+              ? "Connect TronLink to act on Tron"
+              : "Connect a Solana wallet to act on Solana"
+          );
+        }
+        return resolved;
+      }
+    }
+    const resolved = chainId !== undefined ? store.accountForChain(chainId) : undefined;
+    return resolved ?? store.connectedAccount?.address!;
+  };
+  const account = () => accountFor(store.inputTokens[0]?.token.chainId);
+  const fillAccount = () => accountFor(selectedOrder?.order.outputs[0]?.chainId);
+  const sourceAccount = () =>
+    accountFor(selectedOrder ? containerToIntent(selectedOrder).inputChains()[0] : undefined);
 
   let selectedOrder = $state<OrderContainer | undefined>(undefined);
   let currentScreenIndex = $state(0);
   let scrollStepProgress = $state(0);
   let explore = $state(false);
-  const flowAccessible = $derived(
-    explore || !!store.stellarAccount || (!!store.connectedAccount && !!store.walletClient)
-  );
+  const flowAccessible = $derived(explore || !!store.stellarAccount || store.anyWalletConnected);
   async function importOrderById(orderId: `0x${string}`): Promise<"inserted" | "updated"> {
     const importedOrder = await intentApi.getOrderByOnChainOrderId(orderId);
     const importedOrderId = containerToIntent(importedOrder).orderId();
@@ -179,9 +213,14 @@
 </script>
 
 <main class="main">
-  <h1 class="mb-1 pt-3 text-center align-middle text-xl font-medium text-gray-900">
-    Resource lock intents using OIF
-  </h1>
+  <div class="flex items-center justify-between px-4 pt-3 md:px-10">
+    <h1 class="mb-1 flex-1 text-center align-middle text-xl font-medium text-gray-900">
+      Resource lock intents using OIF
+    </h1>
+    {#if store.anyWalletConnected}
+      <WalletStatus />
+    {/if}
+  </div>
   <div
     class="mx-auto flex flex-col-reverse items-center px-4 pt-2 md:max-w-[80rem] md:flex-row md:items-start md:px-10 md:pt-3"
   >
@@ -243,16 +282,27 @@
               ></IntentList>
               {#if selectedOrder !== undefined}
                 <!-- <IntentDescription></IntentDescription> -->
-                <FillIntent {scroll} orderContainer={selectedOrder} {account} {preHook} {postHook}
+                <FillIntent
+                  {scroll}
+                  orderContainer={selectedOrder}
+                  account={fillAccount}
+                  defaultSolver={sourceAccount}
+                  {preHook}
+                  {postHook}
                 ></FillIntent>
                 <ReceiveMessage
                   {scroll}
                   orderContainer={selectedOrder}
-                  {account}
+                  account={sourceAccount}
                   {preHook}
                   {postHook}
                 ></ReceiveMessage>
-                <Finalise orderContainer={selectedOrder} {preHook} {postHook} {account}></Finalise>
+                <Finalise
+                  orderContainer={selectedOrder}
+                  {preHook}
+                  {postHook}
+                  account={sourceAccount}
+                ></Finalise>
               {/if}
             {/if}
           </div>

@@ -13,10 +13,22 @@ import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COMPACT_ABI } from "$lib/abi/compact";
 import { hashStruct, keccak256 } from "viem";
-import { bytes32ToAddress, compactTypes, getOutputHash } from "@lifi/intent";
+import { bytes32ToAddress, compactTypes, encodeMandateOutput, getOutputHash } from "@lifi/intent";
 import { containerToIntent } from "$lib/utils/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
+import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import { isValidTxRef, type TxRef } from "$lib/utils/txRef";
+import { getSolanaReads } from "$lib/solana/client";
+import {
+  readIsLocallyAttested,
+  readIsOrderFinalised,
+  readIsOutputFilled as readIsSolanaOutputFilled,
+  readIsProvenOnSolana
+} from "$lib/solana/reads";
+import { getFillDetails } from "$lib/libraries/fillEvent";
+import { getTronReads } from "$lib/tron/client";
+import { readIsOutputFilled, readIsProven, readOrderStatus } from "$lib/tron/reads";
 import { getFillInfo } from "./fillInfo";
 import { stellarFillRecord, stellarIsProven, stellarOrderStatus } from "./stellar";
 
@@ -41,16 +53,27 @@ export function getOutputStorageKey(output: MandateOutput) {
   });
 }
 
-function isValidHash(hash: string | undefined): hash is `0x${string}` {
-  return !!hash && hash.startsWith("0x") && hash.length === 66;
-}
-
 export async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
   const outputKey = getOutputStorageKey(output);
+  const outputHash = getOutputHash(output);
+  if (isSolanaChain(output.chainId)) {
+    return getOrFetchRpc(
+      `progress:filled:${orderId}:${outputKey}`,
+      async () =>
+        readIsSolanaOutputFilled(await getSolanaReads(output.chainId), { orderId, output }),
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
+  if (isTronChain(output.chainId)) {
+    return getOrFetchRpc(
+      `progress:filled:${orderId}:${outputKey}`,
+      async () => readIsOutputFilled(await getTronReads(), output.settler, orderId, outputHash),
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
   return getOrFetchRpc(
     `progress:filled:${orderId}:${outputKey}`,
     async () => {
-      const outputHash = getOutputHash(output);
       if (isStellarChain(output.chainId))
         return (await stellarFillRecord(output.chainId, orderId, outputHash)) !== undefined;
       const result = await getClient(output.chainId).readContract({
@@ -70,15 +93,76 @@ export async function isOutputValidatedOnChain(
   inputChain: bigint,
   orderContainer: OrderContainer,
   output: MandateOutput,
-  fillTransactionHash: `0x${string}`
+  fillTransactionHash: TxRef
 ) {
   const outputKey = getOutputStorageKey(output);
-  const { payload } = await getFillInfo({ orderId, output, fillTransactionHash });
-  const payloadHash = keccak256(payload);
+
+  // Solver and timestamp come from the OutputFilled event — the recorded
+  // solver may be an override, not the transaction sender, and the recorded
+  // timestamp is the exact value hashed into the attested payload. Stellar
+  // fills are resolved from the Soroban fill event and cross-checked against
+  // the on-chain fill record.
+  const { solver, timestamp } = isStellarChain(output.chainId)
+    ? await getFillInfo({
+        orderId,
+        output,
+        fillTransactionHash: fillTransactionHash as `0x${string}`
+      })
+    : await getFillDetails(orderId, output, fillTransactionHash);
+
+  const payloadHash = keccak256(
+    encodeMandateOutput({
+      solver,
+      orderId,
+      timestamp,
+      output
+    })
+  );
   const { inputOracle } = orderContainer.order;
 
+  const provenCacheKey = `progress:proven:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`;
+  if (isSolanaChain(inputChain)) {
+    // On Solana "proven" is not a mapping lookup — the oracle CREATES an
+    // attestation account, so its existence is the proof. Same-chain fills
+    // never reach an oracle at all: the fill itself writes a LocalAttestation.
+    // BigInt() on both sides: a DB-rehydrated container carries chain ids as
+    // decimal strings, and a string/bigint pair is never strictly equal — which
+    // silently classified a same-chain fill as remote.
+    const sameChain = BigInt(output.chainId) === BigInt(inputChain);
+    return getOrFetchRpc(
+      provenCacheKey,
+      async () => {
+        const reads = await getSolanaReads(inputChain);
+        if (sameChain) {
+          return readIsLocallyAttested(reads, { orderId, output, solver });
+        }
+        return readIsProvenOnSolana(reads, {
+          inputOracle,
+          output,
+          payloadHash
+        });
+      },
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
+  if (isTronChain(inputChain)) {
+    return getOrFetchRpc(
+      provenCacheKey,
+      async () =>
+        readIsProven(
+          await getTronReads(),
+          inputOracle,
+          output.chainId,
+          output.oracle,
+          output.settler,
+          payloadHash
+        ),
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
+
   return getOrFetchRpc(
-    `progress:proven:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`,
+    provenCacheKey,
     async () => {
       if (isStellarChain(inputChain))
         return stellarIsProven(
@@ -105,6 +189,31 @@ export async function isInputChainFinalised(chainId: bigint, container: OrderCon
   const { order, inputSettler } = container;
   const intent = containerToIntent(container);
   const orderId = intent.orderId();
+
+  if (isSolanaChain(chainId)) {
+    // No status enum on Solana: finalise and refund both close order_context,
+    // so "context gone, consumed_order still present" is the terminal signal.
+    // That folds Claimed and Refunded into one state, exactly as the EVM and
+    // Tron branches below already do.
+    return getOrFetchRpc(
+      `progress:finalised:solana:${orderId}`,
+      async () => readIsOrderFinalised(await getSolanaReads(chainId), orderId),
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
+
+  if (isTronChain(chainId)) {
+    return getOrFetchRpc(
+      `progress:finalised:tron:${orderId}`,
+      async () => {
+        // The settler is resolved from the order container so pre-rotation
+        // (legacy) orders stay trackable.
+        const status = await readOrderStatus(await getTronReads(), inputSettler, orderId);
+        return status === OrderStatus_Claimed || status === OrderStatus_Refunded;
+      },
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
 
   if (isStellarChain(chainId)) {
     return getOrFetchRpc(
@@ -170,7 +279,7 @@ export async function isInputChainFinalised(chainId: bigint, container: OrderCon
 
 export async function getOrderProgressChecks(
   orderContainer: OrderContainer,
-  fillTransactions: Record<string, `0x${string}`>
+  fillTransactions: Record<string, TxRef>
 ): Promise<FlowCheckState> {
   try {
     const intent = containerToIntent(orderContainer);
@@ -189,7 +298,10 @@ export async function getOrderProgressChecks(
         inputChains.flatMap((inputChain) =>
           outputs.map(async (output) => {
             const fillHash = fillTransactions[getOutputStorageKey(output)];
-            if (!isValidHash(fillHash)) return false;
+            // Validated against the OUTPUT chain: a Solana fill is base58, so
+            // a 0x-only check would discard it here and the order could never
+            // report as validated.
+            if (!isValidTxRef(fillHash, output.chainId)) return false;
             return isOutputValidatedOnChain(orderId, inputChain, orderContainer, output, fillHash);
           })
         )

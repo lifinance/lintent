@@ -30,9 +30,17 @@
     scope: string;
     blocked?: boolean;
   } = $props();
+
   const corridor = $derived(
     [...context.inputs, ...context.outputs].some(({ token }) => isStellarChain(token.chainId))
   );
+  /**
+   * Everything the request is built from, as a comparable value. Every party is
+   * named in its own chain's namespace, so a quote depends on the user, the
+   * recipient (override or destination wallet) and the exclusivity / 1:1 demo
+   * settings as much as on the tokens; any change revokes the selected quote.
+   * Output amounts are absent: this component writes them back from the response.
+   */
   const requestKey = $derived(
     JSON.stringify(
       {
@@ -41,6 +49,7 @@
         user: context.user,
         recipient: context.recipient,
         exclusiveFor: context.exclusiveFor,
+        integratorKey: context.integratorKey,
         mainnet,
         useProductionApi,
         scope,
@@ -64,7 +73,11 @@
     revokeQuote();
     loading = false;
     message = blocked ? "Route unavailable" : "No quote selected";
+    // A missing counterparty identity is an ordinary UI state (connect a wallet
+    // or name a recipient), not a failed request.
     if (blocked || !context.user || !context.recipient) return;
+    // Debounced, and cancelled on change, so typing an amount or a recipient
+    // sends one request rather than one per keystroke.
     const timeout = setTimeout(updateQuote, 500);
     return () => clearTimeout(timeout);
   });

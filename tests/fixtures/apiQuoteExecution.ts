@@ -201,6 +201,10 @@ export async function runExecutionScenario(window: ExecutionWindow, mutation: Se
     openEscrowIntent: unused,
     signIntentCompact: unused
   }));
+  mock.module("../../src/lib/tron/client", () => ({
+    getTronReads: unused,
+    getTronSigner: unused
+  }));
   mock.module("@stellar/freighter-api", () => ({
     getAddress: unused,
     isConnected: unused,

@@ -12,6 +12,7 @@
   import { toHex } from "viem";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
+  import { isValidTxRef } from "$lib/utils/txRef";
   import {
     getOutputStorageKey as outputKey,
     isInputChainFinalised
@@ -67,8 +68,22 @@
   const fillTransactionHashesFor = (container: OrderContainer) =>
     container.order.outputs.map((output) => store.fillTransactions[outputKey(output)]);
 
-  const isValidFillTxHash = (hash: unknown): hash is `0x${string}` =>
-    typeof hash === "string" && /^0x[0-9a-fA-F]{64}$/.test(hash);
+  // The fill reference belongs to the OUTPUT chain, not the input chain: a
+  // Solana fill of an EVM-input order is base58 even though the source chain is
+  // EVM, so the output's chain id is what validates it.
+  const isValidFillTxHash = (hash: unknown, chainId?: bigint) =>
+    typeof hash === "string" && isValidTxRef(hash, chainId);
+
+  /**
+   * Whether every output has a usable fill reference.
+   *
+   * Each hash is validated against ITS OWN output's chain, not the order's
+   * source chain — a Solana fill of an EVM-input order is base58.
+   */
+  const hasAllFillTransactions = (container: OrderContainer) =>
+    container.order.outputs.every((output) =>
+      isValidFillTxHash(store.fillTransactions[outputKey(output)], output.chainId)
+    );
 
   // Stellar input ids are raw 32-byte contract ids, not EVM token ids.
   // Orders reloaded from the DB carry bigints as decimal strings.
@@ -90,7 +105,13 @@
         for (const [key, value] of entries) next[key] = value;
         claimedByChain = next;
       })
-      .catch((e) => console.warn("claim status refresh failed", e));
+      .catch((e) => {
+        console.warn("claim status refresh failed", e);
+        if (currentRun !== claimStatusRun) return;
+        const next: Record<string, boolean> = {};
+        for (const chain of inputChains) next[chain.toString()] = false;
+        claimedByChain = next;
+      });
   });
 </script>
 
@@ -144,7 +165,7 @@
               </button>
             {:else}
               {@const fillTransactionHashes = fillTransactionHashesFor(orderContainer)}
-              {@const canClaim = fillTransactionHashes.every((hash) => isValidFillTxHash(hash))}
+              {@const canClaim = hasAllFillTransactions(orderContainer)}
               {#if !canClaim}
                 <button
                   type="button"

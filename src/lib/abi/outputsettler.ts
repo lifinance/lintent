@@ -372,6 +372,79 @@ export const COIN_FILLER_ABI = [
     stateMutability: "nonpayable"
   },
   {
+    // Emitted by `emitNotFilled` once `fillDeadline` has passed with no fill on record.
+    // Proving this log through Polymer is what lets the input settler refund the user
+    // early, without waiting for `expires`. Source: lifi-oif
+    // src/output/OutputSettlerBase.sol:112. Only `orderId` is indexed; `output` and
+    // `fillDeadline` sit in the data blob, and the tuple is dynamic (bytes members), so
+    // it is head/tail encoded behind an offset pointer.
+    type: "event",
+    name: "OutputNotFilled",
+    inputs: [
+      {
+        name: "orderId",
+        type: "bytes32",
+        indexed: true,
+        internalType: "bytes32"
+      },
+      {
+        name: "output",
+        type: "tuple",
+        indexed: false,
+        internalType: "struct MandateOutput",
+        components: [
+          {
+            name: "oracle",
+            type: "bytes32",
+            internalType: "bytes32"
+          },
+          {
+            name: "settler",
+            type: "bytes32",
+            internalType: "bytes32"
+          },
+          {
+            name: "chainId",
+            type: "uint256",
+            internalType: "uint256"
+          },
+          {
+            name: "token",
+            type: "bytes32",
+            internalType: "bytes32"
+          },
+          {
+            name: "amount",
+            type: "uint256",
+            internalType: "uint256"
+          },
+          {
+            name: "recipient",
+            type: "bytes32",
+            internalType: "bytes32"
+          },
+          {
+            name: "callbackData",
+            type: "bytes",
+            internalType: "bytes"
+          },
+          {
+            name: "context",
+            type: "bytes",
+            internalType: "bytes"
+          }
+        ]
+      },
+      {
+        name: "fillDeadline",
+        type: "uint32",
+        indexed: false,
+        internalType: "uint32"
+      }
+    ],
+    anonymous: false
+  },
+  {
     type: "event",
     name: "OutputFilled",
     inputs: [

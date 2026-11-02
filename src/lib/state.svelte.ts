@@ -1,8 +1,7 @@
 import type { OrderContainer } from "@lifi/intent";
+import { ADDRESS_ZERO } from "@lifi/intent";
 import type { GetTransactionReceiptReturnType } from "viem";
-import type { AppTokenContext } from "./appTypes";
-
-type OrderContainerWithMeta = OrderContainer & { id?: string; intentType?: string };
+import type { AppTokenContext, OrderContainerWithMeta } from "./appTypes";
 import {
   ALWAYS_OK_ALLOCATOR,
   clientsById,
@@ -12,6 +11,7 @@ import {
   INPUT_SETTLER_ESCROW_LIFI,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
+  TRON_MAINNET_INPUT_SETTLER,
   isChainIdTestnet,
   isStellarChain,
   STELLAR_CHAIN_ID,
@@ -28,7 +28,6 @@ import {
   disconnectStellarWallet,
   restoreStellarWallet
 } from "./utils/stellarWallet";
-import { maxUint256 } from "viem";
 import { browser } from "$app/environment";
 import { initDb, db } from "./db";
 import {
@@ -38,7 +37,7 @@ import {
   tokens as tokensTable
 } from "./schema";
 import { and, eq, ne, notInArray } from "drizzle-orm";
-import { containerToIntent } from "./utils/intent";
+import { containerToIntent, reviveOrderBigInts } from "./utils/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {
   getCurrentConnection,
@@ -48,6 +47,20 @@ import {
   watchWalletConnection
 } from "./utils/wagmi";
 import { switchWalletChain } from "./utils/walletClientRuntime";
+import {
+  type TronWalletConnection,
+  getTronConnection,
+  watchTronConnection
+} from "$lib/tron/signer";
+import { getTronReads } from "$lib/tron/client";
+import type { SolanaWalletConnection } from "$lib/solana/wallet";
+import { getSolanaConnectionState, watchSolanaConnection } from "$lib/solana/wallet";
+import { getTrc20Allowance, getTrc20Balance, getTrxBalance } from "$lib/tron/reads";
+import { getSolanaReads } from "$lib/solana/client";
+import { readSolBalance, readSplBalance } from "$lib/solana/reads";
+import { maxUint256 } from "viem";
+import { isSolanaChain, isTronChain } from "./utils/chainType";
+import type { TxRef } from "./utils/txRef";
 
 function generateUUID(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -67,7 +80,19 @@ class Store {
     if (!db) await initDb();
     if (!db) return;
     const rows = await db!.select().from(intents);
-    this.orders = rows.map((r) => JSON.parse(r.data) as OrderContainer);
+    this.orders = rows.map((r) => {
+      const order = JSON.parse(r.data) as OrderContainerWithMeta;
+      // The blob was stringified under the BigInt.prototype.toJSON polyfill,
+      // so every bigint field is a decimal string here until revived.
+      order.order = reviveOrderBigInts(order.order);
+      // Re-attach the authoritative column values dropped by JSON.parse. The
+      // dedicated `created_at` column always wins over anything stale in the
+      // blob; `submitTime` (order-server time) round-trips inside the blob.
+      order.id = r.id;
+      order.intentType = r.intentType;
+      order.createdAt = r.createdAt;
+      return order;
+    });
   }
 
   async saveOrderToDb(order: OrderContainerWithMeta) {
@@ -75,6 +100,10 @@ class Store {
     if (!db) await initDb();
     const orderId = containerToIntent(order).orderId();
     const now = Math.floor(Date.now() / 1000);
+    // Stamp the local "added to list" time onto the in-memory object so freshly
+    // created/imported intents sort correctly immediately (the column is only
+    // read back on reload). Guard so re-saves don't overwrite the original.
+    if (order.createdAt === undefined) order.createdAt = now;
     const id = order.id ?? generateUUID();
     const intentType = order.intentType ?? "escrow";
     const data = JSON.stringify(order);
@@ -130,12 +159,12 @@ class Store {
     if (!db) await initDb();
     if (!db) return;
     const rows = await db!.select().from(fillTransactionsTable);
-    const loaded: { [outputId: string]: `0x${string}` } = {};
-    for (const row of rows) loaded[row.outputHash] = row.txHash as `0x${string}`;
+    const loaded: { [outputId: string]: TxRef } = {};
+    for (const row of rows) loaded[row.outputHash] = row.txHash;
     this.fillTransactions = loaded;
   }
 
-  async saveFillTransaction(outputHash: string, txHash: `0x${string}`) {
+  async saveFillTransaction(outputHash: string, txHash: TxRef) {
     if (!browser) return;
     if (!db) await initDb();
     if (!db) return;
@@ -262,11 +291,67 @@ class Store {
   walletClient = $state<WC>(undefined as unknown as WC);
   _unwatchWalletConnection?: () => void;
 
+  tronWalletConnection = $state<TronWalletConnection>({ status: "disconnected" });
+  tronConnectedAccount = $derived(
+    this.tronWalletConnection.status === "connected" && this.tronWalletConnection.hexAddress
+      ? {
+          address: this.tronWalletConnection.hexAddress,
+          base58Address: this.tronWalletConnection.address!
+        }
+      : undefined
+  );
+  _unwatchTronConnection?: () => void;
+
+  solanaWalletConnection = $state<SolanaWalletConnection>({ status: "disconnected" });
+  solanaConnectedAccount = $derived(
+    this.solanaWalletConnection.status === "connected" && this.solanaWalletConnection.addressBytes32
+      ? {
+          address: this.solanaWalletConnection.addressBytes32,
+          base58Address: this.solanaWalletConnection.address!
+        }
+      : undefined
+  );
+  _unwatchSolanaConnection?: () => void;
+
+  anyWalletConnected = $derived(
+    (!!this.connectedAccount && !!this.walletClient) ||
+      !!this.tronConnectedAccount ||
+      !!this.solanaConnectedAccount
+  );
+
+  /**
+   * The acting account for a chain, as bytes32-compatible hex.
+   *
+   * Solana returns the 32-byte form of the pubkey rather than base58, because
+   * bytes32 is the app's canonical internal identity everywhere else
+   * (order.user, solveParams.solver). Use `accountDisplayForChain` for UI.
+   *
+   * Stellar returns undefined: its account is a `G…` strkey with no hex form
+   * here, and falling through to the EVM account would act as the wrong user.
+   * Stellar paths use `stellarAccounts[chainId]` / `stellarAccount` directly.
+   */
+  accountForChain(chainId: number | bigint): `0x${string}` | undefined {
+    if (isStellarChain(chainId)) return undefined;
+    if (isTronChain(chainId)) return this.tronConnectedAccount?.address;
+    if (isSolanaChain(chainId)) return this.solanaConnectedAccount?.address;
+    return this.connectedAccount?.address;
+  }
+
+  /** The same account in the form that chain's explorers and wallets show. */
+  accountDisplayForChain(chainId: number | bigint): string | undefined {
+    if (isStellarChain(chainId)) return this.stellarAccounts[Number(chainId)];
+    if (isTronChain(chainId)) return this.tronConnectedAccount?.base58Address;
+    if (isSolanaChain(chainId)) return this.solanaConnectedAccount?.base58Address;
+    return this.connectedAccount?.address;
+  }
+
   availableTokens = $state<Token[]>([...(coinList(true) as readonly Token[])]);
   manualTokenKeys = $state<Set<string>>(new Set());
   inputTokens = $state<AppTokenContext[]>([]);
   outputTokens = $state<AppTokenContext[]>([]);
-  fillTransactions = $state<{ [outputId: string]: `0x${string}` }>({});
+  // TxRef, not `0x${string}`: a Solana fill signature is base58. The schema
+  // column is already `text`, so this needs no migration.
+  fillTransactions = $state<{ [outputId: string]: TxRef }>({});
   transactionReceipts = $state<Record<string, string>>({});
 
   refreshEpoch = $state(0);
@@ -275,14 +360,37 @@ class Store {
 
   balances = $derived.by(() => {
     this.refreshEpoch;
-    const account = this.connectedAccount?.address;
+    const evmAccount = this.connectedAccount?.address;
+    const tronAccount = this.tronConnectedAccount?.address;
+    const solanaAccount = this.solanaConnectedAccount?.base58Address;
     const stellarAccount = this.stellarAccount;
     return this.mapOverCoinsCached({
       bucket: "balance",
       ttlMs: 30_000,
+      tronTtlMs: 120_000,
       isMainnet: this.mainnet,
-      scopeKey: `${account ?? "none"}:${stellarAccount ?? "none"}`,
-      fetcher: (asset, client) => getBalance(account, asset, client),
+      // Every connected account is in the scope key: without the Solana one,
+      // cached balances would leak across a Solana wallet switch.
+      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${solanaAccount ?? "none"}:${stellarAccount ?? "none"}`,
+      fetcher: async (asset, client, chainId) => {
+        if (isSolanaChain(chainId)) {
+          if (!solanaAccount) return 0n;
+          const reads = await getSolanaReads(chainId);
+          return asset.toLowerCase() === ADDRESS_ZERO
+            ? readSolBalance(reads, solanaAccount)
+            : readSplBalance(reads, { mintBytes32: asset, ownerBase58: solanaAccount });
+        }
+        const account = isTronChain(chainId) ? tronAccount : evmAccount;
+        if (!account) return 0n;
+        if (isTronChain(chainId)) {
+          // TronGrid-backed reads — viewing balances must not require TronLink.
+          const reads = await getTronReads();
+          return asset.toLowerCase() === ADDRESS_ZERO
+            ? getTrxBalance(reads, account)
+            : getTrc20Balance(reads, asset, account);
+        }
+        return getBalance(account, asset, client);
+      },
       stellarFetcher: (asset, chainId) =>
         this.stellarAccounts[chainId]
           ? stellarTokenBalance(chainId, asset, this.stellarAccounts[chainId]!)
@@ -292,7 +400,9 @@ class Store {
 
   allowances = $derived.by(() => {
     this.refreshEpoch;
-    const account = this.connectedAccount?.address;
+    const evmAccount = this.connectedAccount?.address;
+    const tronAccount = this.tronConnectedAccount?.address;
+    const solanaAccount = this.solanaConnectedAccount?.base58Address;
     const spender =
       this.inputSettler === INPUT_SETTLER_COMPACT_LIFI ||
       this.inputSettler === MULTICHAIN_INPUT_SETTLER_COMPACT
@@ -301,9 +411,23 @@ class Store {
     return this.mapOverCoinsCached({
       bucket: "allowance",
       ttlMs: 60_000,
+      tronTtlMs: 180_000,
       isMainnet: this.mainnet,
-      scopeKey: `${account ?? "none"}:${spender}`,
-      fetcher: (asset, client) => getAllowance(spender)(account, asset, client),
+      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${solanaAccount ?? "none"}:${spender}`,
+      fetcher: async (asset, client, chainId) => {
+        // Solana has no allowance concept: `open` debits the user's ATA under
+        // the user's own signature, so nothing is ever "not approved".
+        if (isSolanaChain(chainId)) return maxUint256;
+        const account = isTronChain(chainId) ? tronAccount : evmAccount;
+        if (!account) return 0n;
+        if (isTronChain(chainId)) {
+          // Native TRX needs no allowance; TRC-20 allowances via TronGrid.
+          if (asset.toLowerCase() === ADDRESS_ZERO) return maxUint256;
+          const reads = await getTronReads();
+          return getTrc20Allowance(reads, asset, account, TRON_MAINNET_INPUT_SETTLER);
+        }
+        return getAllowance(spender)(account, asset, client);
+      },
       // The Stellar escrow pulls inputs with an authorised transfer; no approval exists.
       stellarFetcher: () => Promise.resolve(maxUint256)
     });
@@ -318,7 +442,12 @@ class Store {
       ttlMs: 60_000,
       isMainnet: this.mainnet,
       scopeKey: `${account ?? "none"}:${allocatorId}`,
-      fetcher: (asset, client) => getCompactBalance(account, asset, client, allocatorId),
+      fetcher: (asset, client, chainId) => {
+        // Neither Tron nor Solana has a Compact deployment.
+        if (isTronChain(chainId) || isSolanaChain(chainId)) return Promise.resolve(0n);
+        return getCompactBalance(account, asset, client, allocatorId);
+      },
+      // Nor does Stellar.
       stellarFetcher: () => Promise.resolve(0n)
     });
   });
@@ -338,11 +467,22 @@ class Store {
   exclusiveFor: string = $state("");
   recipient: string = $state("");
   useExclusiveForQuoteRequest = $state(false);
+  // 1:1 stablecoin demo: when on, quote requests send the X-Integrator-Key header
+  // and never set metadata.exclusiveFor (the integrator key drives the quote), but
+  // the on-chain intent is still made exclusive to the demo solver so it fills 1:1.
+  use11Demo = $state(false);
+  integratorKey: string = $state("");
 
   invalidateWalletReadCache(scope: "all" | "balance" | "allowance" | "compact" = "all") {
     if (scope === "all" || scope === "balance") invalidateRpcPrefix("balance:");
     if (scope === "all" || scope === "allowance") invalidateRpcPrefix("allowance:");
     if (scope === "all" || scope === "compact") invalidateRpcPrefix("compact:");
+    if (scope === "all") {
+      // Flow-progress state changes on-chain after fill/prove/claim actions —
+      // stale cached "false" here keeps the step tracker behind for a full TTL.
+      invalidateRpcPrefix("progress:");
+      invalidateRpcPrefix("claim:");
+    }
   }
 
   refreshWalletReads(opts?: {
@@ -563,6 +703,10 @@ class Store {
   }
 
   async setWalletToCorrectChain(chainId: number | bigint) {
+    // Only EVM wallets have a chain to switch. Tron and Solana wallets are
+    // bound to their own network, and the cluster/network guard in each facade
+    // is what catches a mismatch.
+    if (isTronChain(chainId) || isSolanaChain(chainId)) return;
     try {
       return await switchWalletChain(this.walletClient, Number(chainId));
     } catch (error) {
@@ -577,26 +721,29 @@ class Store {
   mapOverCoinsCached<T>(opts: {
     bucket: "balance" | "allowance" | "compact";
     ttlMs: number;
+    tronTtlMs?: number;
     isMainnet: boolean;
     scopeKey: string;
     fetcher: (
       asset: `0x${string}`,
-      client: (typeof clientsById)[keyof typeof clientsById]
+      client: (typeof clientsById)[keyof typeof clientsById],
+      chainId: number
     ) => Promise<T>;
     stellarFetcher: (asset: `0x${string}`, chainId: number) => Promise<T>;
   }) {
-    const { bucket, ttlMs, isMainnet, scopeKey, fetcher, stellarFetcher } = opts;
+    const { bucket, ttlMs, tronTtlMs, isMainnet, scopeKey, fetcher, stellarFetcher } = opts;
     const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
     for (const token of this.availableTokens) {
       if (!resolved[token.chainId]) resolved[token.chainId] = {};
       const key = `${bucket}:${isMainnet ? "mainnet" : "testnet"}:${token.chainId}:${token.address}:${scopeKey}`;
+      const effectiveTtl = tronTtlMs && isTronChain(token.chainId) ? tronTtlMs : ttlMs;
       resolved[token.chainId][token.address] = getOrFetchRpc(
         key,
         () =>
           isStellarChain(token.chainId)
             ? stellarFetcher(token.address, token.chainId)
-            : fetcher(token.address, clientsById[token.chainId]),
-        { ttlMs }
+            : fetcher(token.address, clientsById[token.chainId], token.chainId),
+        { ttlMs: effectiveTtl }
       );
     }
     return resolved;
@@ -620,6 +767,16 @@ class Store {
       this._unwatchWalletConnection = watchWalletConnection((connection) => {
         this.walletConnection = connection;
         this.syncWalletClient().catch((error) => console.warn("syncWalletClient failed", error));
+      });
+
+      this.tronWalletConnection = getTronConnection();
+      this._unwatchTronConnection = watchTronConnection((connection) => {
+        this.tronWalletConnection = connection;
+      });
+
+      this.solanaWalletConnection = getSolanaConnectionState();
+      this._unwatchSolanaConnection = watchSolanaConnection((connection) => {
+        this.solanaWalletConnection = connection;
       });
 
       for (const chainId of [STELLAR_CHAIN_ID, STELLAR_TESTNET_ID]) {

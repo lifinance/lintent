@@ -10,16 +10,8 @@ export {
   type AxelarNetwork
 } from "./axelarNetworks";
 
-import {
-  COIN_FILLER,
-  COMPACT,
-  INPUT_SETTLER_COMPACT_LIFI,
-  INPUT_SETTLER_ESCROW_LIFI,
-  MULTICHAIN_INPUT_SETTLER_COMPACT,
-  MULTICHAIN_INPUT_SETTLER_ESCROW,
-  STELLAR_MAINNET_CHAIN_ID
-} from "@lifi/intent";
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
+import type { HttpTransport } from "viem";
 import {
   arbitrum,
   arbitrumSepolia,
@@ -33,8 +25,40 @@ import {
   katana,
   megaeth,
   optimism,
-  arcTestnet
+  arcTestnet,
+  hyperEvm,
+  monad,
+  avalanche,
+  tron
 } from "viem/chains";
+import {
+  COIN_FILLER,
+  COMPACT,
+  INPUT_SETTLER_COMPACT_LIFI,
+  INPUT_SETTLER_ESCROW_LIFI,
+  MULTICHAIN_INPUT_SETTLER_COMPACT,
+  MULTICHAIN_INPUT_SETTLER_ESCROW,
+  SOLANA_DEVNET_CHAIN_ID,
+  SOLANA_MAINNET_CHAIN_ID,
+  SOLANA_OUTPUT_SETTLER_PDA,
+  SOLANA_POLYMER_ORACLE_PDA,
+  SOLANA_POLYMER_ORACLE_PROGRAM,
+  STELLAR_MAINNET_CHAIN_ID,
+  TRON_MAINNET_INPUT_SETTLER,
+  TRON_MAINNET_OUTPUT_SETTLER,
+  TRON_MAINNET_POLYMER_ORACLE,
+  solanaBase58ToBytes32,
+  tronBase58ToHex
+} from "@lifi/intent";
+import type { ChainType } from "$lib/utils/chainType";
+import { getChainType, isSolanaChain } from "$lib/utils/chainType";
+const routemeshApiKey: string | undefined =
+  import.meta.env?.PUBLIC_ROUTEMESH_API_KEY?.trim() || undefined;
+
+function routemeshRpc(chainId: number): HttpTransport[] {
+  if (!routemeshApiKey) return [];
+  return [http(`https://lb.routeme.sh/rpc/${chainId}/${routemeshApiKey}`)];
+}
 
 export const pharos = defineChain({
   id: 1672,
@@ -58,26 +82,68 @@ export {
 };
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
+export { TRON_MAINNET_INPUT_SETTLER, TRON_MAINNET_OUTPUT_SETTLER };
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [ethereum.id]: "0x0000000000000000000000000000000000000000",
   [arbitrum.id]: "0x0000000000000000000000000000000000000000",
   [base.id]: "0x0000000000000000000000000000000000000000"
 };
+// The mainnet bucket points at `PolymerOracleMapped`
+// (0x008C3800F3Ad9b3B662d002E90Cc00000000eE17). It inherits `ChainMap`: `_getMappedChainId`
+// reverts with `ZeroValue()` for any protocol chain id that has not been mapped, so a route
+// only works if the *input* chain's oracle has the *output* chain mapped. `setChainMap` is
+// `onlyOwner` (0x712E90032d8f44bE276A903E1769d64dD1C7F45a) and write-once per chain.
+//
+// The maps are being populated chain by chain and were incomplete when last measured
+// (2026-07-31 ~09:40 UTC, mappings are identity: protocolId == chainId):
+//   ethereum, arbitrum, bsc  all of the chains below mapped
+//   katana                   only ethereum, polygon, pharos
+//   base                     only ethereum
+//   polygon, pharos          nothing mapped
+// Same-chain swaps are unaffected: `intent.ts` uses COIN_FILLER as `inputOracle` when
+// `isSameChain()`, bypassing the oracle entirely.
+//
+// Re-measure before widening `coinList`/`chainList` — see the note above `chainList`.
+// Addresses track `main` after SOLV-695 (#62), ported into this branch's chain-id-keyed
+// shape. `main` keys this map by chain name; re-keying is why the values could not
+// auto-merge — keep the two in sync by value, not by diff.
 export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [ethereum.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [arbitrum.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [base.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  // MegaETH (4326) is not part of the mainnet deployment set: there is no code at the settler,
+  // filler or oracle addresses there. Kept only to satisfy the `chain` key type; the chain is
+  // disabled in `chainList`/`coinList` below, so this value is never read.
   [megaeth.id]: "0x0000003E06000007A224AeE90052fA6bb46d43C9",
   [katana.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [polygon.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [bsc.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
   [pharos.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
-  // testnet
-  [sepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
-  [baseSepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
-  [arbitrumSepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
-  [optimismSepolia.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90",
-  [arcTestnet.id]: "0xC401b53377b8A71A7cEB820e6a4dC53832343a90"
+  [hyperEvm.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [monad.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [avalanche.id]: "0x008C3800F3Ad9b3B662d002E90Cc00000000eE17",
+  [tron.id]: TRON_MAINNET_POLYMER_ORACLE,
+  // Solana: this table answers "what is the input oracle for an order
+  // originating on this chain", so it holds the Polymer oracle *PDA*. No order
+  // built today puts this value in `MandateOutput.oracle` on either side:
+  //   - a Solana OUTPUT carries the Polymer *program id* (below, as
+  //     SOLANA_POLYMER_OUTPUT_ORACLE) — swapping them yields an order that
+  //     fills and can then never be proven;
+  //   - an EVM/Tron output on a Solana-ORIGIN order carries the *output*
+  //     chain's oracle from this table, because the PDA's dirty upper bytes
+  //     make the EVM settler revert HasDirtyBits().
+  // Orders opened before @lifi/intent 0.5.0 did carry the PDA on an EVM/Tron
+  // output; `allowedOutputOracles` still accepts those so they stay renderable
+  // and refundable. See tests/fixtures/solana/PREFLIGHT.md.
+  [Number(SOLANA_MAINNET_CHAIN_ID)]: SOLANA_POLYMER_ORACLE_PDA,
+  [Number(SOLANA_DEVNET_CHAIN_ID)]: SOLANA_POLYMER_ORACLE_PDA,
+  // testnet — matches `main` after SOLV-695 (#62), which superseded the 0xC401b533… bucket.
+  [sepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  [baseSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  [arbitrumSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  [optimismSepolia.id]: "0xa70fE63Dd97e8e0Cb37241ed231FCBca87E99B72",
+  // Not covered by the new deployment set; left on the superseded oracle.
+  [arcTestnet.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
 };
 
 // Stellar mainnet (intent-soroban). Not a viem chain: Stellar code paths must
@@ -103,8 +169,8 @@ for (const { stellar, evm } of Object.values(AXELAR_NETWORKS)) {
   }
 }
 
-export type ChainMeta = { id: number; name: string; rpc: string; passphrase: string };
-export function stellarNetwork(chainId: number | bigint): ChainMeta {
+export type StellarNetworkMeta = { id: number; name: string; rpc: string; passphrase: string };
+export function stellarNetwork(chainId: number | bigint): StellarNetworkMeta {
   if (Number(chainId) === STELLAR_CHAIN_ID)
     return {
       id: STELLAR_CHAIN_ID,
@@ -141,21 +207,31 @@ export const chainMap = {
   bsc,
   polygon,
   pharos,
-  arcTestnet
+  hyperEvm,
+  monad,
+  avalanche,
+  arcTestnet,
+  tron
 } as const;
 type ChainName = keyof typeof chainMap;
 export const chains = Object.keys(chainMap) as ChainName[];
+// Output-chain selector. MegaETH is omitted because `OutputSettlerSimple` is not deployed there,
+// so it cannot settle a fill. Every other chain here is a valid destination from the origin chains
+// `coinList` offers — see the chain-map notes above `POLYMER_ORACLE`.
 export const chainList = (mainnet: boolean) => {
   if (mainnet == true) {
     return [
       "ethereum",
       "base",
       "arbitrum",
-      "megaeth",
       "katana",
       "polygon",
       "bsc",
-      "pharos"
+      "pharos",
+      "hyperEvm",
+      "monad",
+      "avalanche",
+      "tron"
     ] as ChainName[];
   } else
     return [
@@ -168,8 +244,15 @@ export const chainList = (mainnet: boolean) => {
 };
 
 export const chainIdList = (mainnet: boolean): number[] => {
-  const ids: number[] = chainList(mainnet).map((name) => chainMap[name].id);
-  return [...ids, mainnet ? STELLAR_CHAIN_ID : STELLAR_TESTNET_ID];
+  const evm: number[] = chainList(mainnet).map((name) => chainMap[name].id);
+  // Solana and Stellar are not in `chainMap` (see the ChainMeta note below), so
+  // they are appended here. Both Solana clusters run the same deployment, verified
+  // on chain: see the "Verified on chain" table in tests/fixtures/solana/PREFLIGHT.md.
+  return [
+    ...evm,
+    Number(mainnet ? SOLANA_MAINNET_CHAIN_ID : SOLANA_DEVNET_CHAIN_ID),
+    mainnet ? STELLAR_CHAIN_ID : STELLAR_TESTNET_ID
+  ];
 };
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
@@ -259,18 +342,8 @@ export const coinList = (mainnet: boolean) => {
         chainId: arbitrum.id,
         decimals: 18
       },
-      {
-        address: `0x4200000000000000000000000000000000000006`,
-        name: "weth",
-        chainId: megaeth.id,
-        decimals: 18
-      },
-      {
-        address: `0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7`,
-        name: "usdm",
-        chainId: megaeth.id,
-        decimals: 18
-      },
+      // MegaETH tokens removed: no InputSettlerEscrowLIFI / OutputSettlerSimple deployed on
+      // chain 4326, so neither leg of an intent can execute there.
       {
         address: `0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d`,
         name: "usdc-b",
@@ -306,6 +379,95 @@ export const coinList = (mainnet: boolean) => {
         name: "usdc.e",
         chainId: polygon.id,
         decimals: 6
+      },
+      {
+        address: tronBase58ToHex("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"),
+        name: "usdt",
+        chainId: tron.id,
+        decimals: 6
+      },
+      {
+        address: tronBase58ToHex("TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8"),
+        name: "usdc",
+        chainId: tron.id,
+        decimals: 6
+      },
+      {
+        address: ADDRESS_ZERO,
+        name: "trx",
+        chainId: tron.id,
+        decimals: 6
+      },
+      {
+        address: `0xc879c018db60520f4355c26ed1a6d572cdac1815`,
+        name: "usdc",
+        chainId: pharos.id,
+        decimals: 6
+      },
+      {
+        address: `0xb88339CB7199b77E23DB6E890353E22632Ba630f`,
+        name: "usdc",
+        chainId: hyperEvm.id,
+        decimals: 6
+      },
+      {
+        address: `0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb`,
+        name: "usdt0",
+        chainId: hyperEvm.id,
+        decimals: 6
+      },
+      {
+        address: `0x754704Bc059F8C67012fEd69BC8A327a5aafb603`,
+        name: "usdc",
+        chainId: monad.id,
+        decimals: 6
+      },
+      {
+        address: `0xe7cd86e13AC4309349F30B3435a9d337750fC82D`,
+        name: "usdt0",
+        chainId: monad.id,
+        decimals: 6
+      },
+      {
+        address: `0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E`,
+        name: "usdc",
+        chainId: avalanche.id,
+        decimals: 6
+      },
+      {
+        address: `0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7`,
+        name: "usdt",
+        chainId: avalanche.id,
+        decimals: 6
+      },
+      // Solana mainnet. Mints stored as 32-byte hex, like the devnet entries
+      // below — `Token.address` is the app's internal identity, and `getCoin`
+      // compares Solana addresses whole rather than truncating to 20 bytes.
+      //
+      // Decimals and owning program read from mainnet on 2026-08-13: all three
+      // are legacy SPL Token (not Token-2022).
+      {
+        // EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+        address: solanaBase58ToBytes32("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+        name: "usdc",
+        chainId: Number(SOLANA_MAINNET_CHAIN_ID),
+        decimals: 6
+      },
+      {
+        // Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
+        address: solanaBase58ToBytes32("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"),
+        name: "usdt",
+        chainId: Number(SOLANA_MAINNET_CHAIN_ID),
+        decimals: 6
+      },
+      {
+        // Wrapped SOL. Native SOL is a valid OUTPUT via `native_fill` but never
+        // an input — the escrow's `open` has no native path — so wSOL is what
+        // an order can actually deposit.
+        address: solanaBase58ToBytes32("So11111111111111111111111111111111111111112"),
+        name: "wsol",
+        chainId: Number(SOLANA_MAINNET_CHAIN_ID),
+        decimals: 9
       },
       {
         address: `0x25b4fcd859aec2fa6348438c489b3c3c10c98b6d21be4fd3cb30cb68953ef977`,
@@ -369,7 +531,7 @@ export const coinList = (mainnet: boolean) => {
         address: ADDRESS_ZERO,
         name: "eth",
         chainId: arbitrumSepolia.id,
-        decimals: 6
+        decimals: 18
       },
       {
         address: `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14`,
@@ -400,6 +562,30 @@ export const coinList = (mainnet: boolean) => {
         name: "usdc",
         chainId: arcTestnet.id,
         decimals: 6
+      },
+      // Solana devnet. Mints are stored as 32-byte hex, not base58, because
+      // `Token.address` is the app's internal identity everywhere — `getCoin`
+      // compares Solana addresses whole rather than truncating to 20 bytes.
+      //
+      // Devnet only for now: mainnet Solana is deliberately absent from
+      // `coinList` and `chainIdList` until the live checks in
+      // tests/fixtures/solana/PREFLIGHT.md pass and a small-value canary has
+      // settled end to end.
+      {
+        // 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+        address: solanaBase58ToBytes32("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
+        name: "usdc",
+        chainId: Number(SOLANA_DEVNET_CHAIN_ID),
+        decimals: 6
+      },
+      {
+        // Wrapped SOL. Native SOL (the zero mint) is a valid OUTPUT via
+        // `native_fill`, but never an input: the escrow's `open` has no
+        // native path, so wSOL is what an order can actually deposit.
+        address: solanaBase58ToBytes32("So11111111111111111111111111111111111111112"),
+        name: "wsol",
+        chainId: Number(SOLANA_DEVNET_CHAIN_ID),
+        decimals: 9
       }
     ] as const;
 };
@@ -444,7 +630,11 @@ export const polymerChainIds = {
   bsc: bsc.id,
   polygon: polygon.id,
   pharos: pharos.id,
-  arcTestnet: arcTestnet.id
+  hyperEvm: hyperEvm.id,
+  monad: monad.id,
+  avalanche: avalanche.id,
+  arcTestnet: arcTestnet.id,
+  tron: tron.id
 } as const;
 
 export type Verifier = "wormhole" | "polymer" | "axelar";
@@ -460,11 +650,14 @@ export function getCoin(
 ) {
   const { name = undefined, address = undefined } = args;
   const chainId = normalizeChainId(args.chainId);
-  // EVM ids are compared as 20-byte addresses (inputs may be bytes32-padded);
-  // Stellar contract ids are full 32-byte values.
-  const comparedAddress = isStellarChain(chainId)
-    ? address
-    : "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
+  // EVM and Tron token ids are uint256-widened 20-byte addresses, so the low
+  // 20 bytes are the address. Solana mints and Stellar contract ids are genuinely
+  // 32 bytes — truncating one would match the wrong token (or nothing) — so
+  // compare them whole.
+  const comparedAddress =
+    isSolanaChain(chainId) || isStellarChain(chainId)
+      ? address
+      : "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
   if (
     chainId === STELLAR_TESTNET_ID &&
     (name?.toLowerCase() === "usdc" ||
@@ -499,20 +692,18 @@ export function isChainIdTestnet(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
   if (normalized === STELLAR_CHAIN_ID) return false;
   if (normalized === STELLAR_TESTNET_ID) return true;
-  const chain = chainById[normalized];
-  if (!chain) throw new Error(`Chain is not known: ${normalized}`);
-  return chain.testnet;
+  const meta = chainMetaById[normalized];
+  if (!meta) throw new Error(`Chain is not known: ${normalized}`);
+  return meta.testnet;
 }
 
-export function getChainName(
-  chainId: number | bigint | string
-): ChainName | "stellar" | "stellarTestnet" {
+export function getChainName(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
   if (normalized === STELLAR_CHAIN_ID) return "stellar";
   if (normalized === STELLAR_TESTNET_ID) return "stellarTestnet";
-  const name = chainNameById[normalized];
-  if (!name) throw new Error(`Chain is not known: ${normalized}`);
-  return name;
+  const meta = chainMetaById[normalized];
+  if (!meta) throw new Error(`Chain is not known: ${normalized}`);
+  return meta.name;
 }
 
 export function formatTokenDecimals(
@@ -533,24 +724,37 @@ export function getOracle(verifier: Verifier, chainId: number | bigint | string)
   return undefined;
 }
 
+// Deliberately EVM-only: both return viem values that have no non-EVM
+// analogue. Callers handling a Tron or Solana chain must branch on chain type
+// BEFORE reaching these — the error names the chain type so a missing branch
+// is obvious from the message rather than surfacing as "chain not found".
 export function getChain(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
   const chain = chainById[normalized];
-  if (!chain) throw new Error(`Could not find chain for chainId ${normalized}`);
+  if (!chain) throw new Error(`${describeNonEvmChain(normalized)} (getChain)`);
   return chain;
 }
 
 export function getClient(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
   const client = clientsById[normalized];
-  if (!client) throw new Error(`Could not find client for chainId ${normalized}`);
+  if (!client) throw new Error(`${describeNonEvmChain(normalized)} (getClient)`);
   return client;
+}
+
+function describeNonEvmChain(normalized: number) {
+  const type = getChainType(normalized);
+  if (type !== "evm") {
+    return `Chain ${normalized} is a ${type} chain, not an EVM chain — callers must branch on chain type`;
+  }
+  return `Could not find chain for chainId ${normalized}`;
 }
 
 export const clients = {
   ethereum: createPublicClient({
     chain: ethereum,
     transport: fallback([
+      ...routemeshRpc(ethereum.id),
       http("https://ethereum-rpc.publicnode.com"),
       ...ethereum.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -558,6 +762,7 @@ export const clients = {
   arbitrum: createPublicClient({
     chain: arbitrum,
     transport: fallback([
+      ...routemeshRpc(arbitrum.id),
       http("https://arbitrum-rpc.publicnode.com"),
       ...arbitrum.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -565,6 +770,7 @@ export const clients = {
   base: createPublicClient({
     chain: base,
     transport: fallback([
+      ...routemeshRpc(base.id),
       http("https://base-rpc.publicnode.com"),
       ...base.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -572,6 +778,7 @@ export const clients = {
   optimism: createPublicClient({
     chain: optimism,
     transport: fallback([
+      ...routemeshRpc(optimism.id),
       http("https://optimism-rpc.publicnode.com"),
       ...optimism.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -579,33 +786,68 @@ export const clients = {
   bsc: createPublicClient({
     chain: bsc,
     transport: fallback([
+      ...routemeshRpc(bsc.id),
       http("https://bsc-rpc.publicnode.com"),
+      http("https://bsc-dataseed.bnbchain.org"),
+      http("https://bsc-dataseed1.defibit.io"),
+      http("https://bsc.drpc.org"),
+      http("https://1rpc.io/bnb"),
       ...bsc.rpcUrls.default.http.map((v) => http(v))
     ])
   }),
   polygon: createPublicClient({
     chain: base,
     transport: fallback([
+      ...routemeshRpc(polygon.id),
       http("https://polygon-bor-rpc.publicnode.com"),
       ...polygon.rpcUrls.default.http.map((v) => http(v))
     ])
   }),
   megaeth: createPublicClient({
     chain: megaeth,
-    transport: fallback([...megaeth.rpcUrls.default.http.map((v) => http(v))])
+    transport: fallback([
+      ...routemeshRpc(megaeth.id),
+      ...megaeth.rpcUrls.default.http.map((v) => http(v))
+    ])
   }),
   katana: createPublicClient({
     chain: katana,
-    transport: fallback([...katana.rpcUrls.default.http.map((v) => http(v))])
+    transport: fallback([
+      ...routemeshRpc(katana.id),
+      ...katana.rpcUrls.default.http.map((v) => http(v))
+    ])
   }),
   pharos: createPublicClient({
     chain: pharos,
     transport: fallback([...pharos.rpcUrls.default.http.map((v) => http(v))])
   }),
+  hyperEvm: createPublicClient({
+    chain: hyperEvm,
+    transport: fallback([
+      ...routemeshRpc(hyperEvm.id),
+      ...hyperEvm.rpcUrls.default.http.map((v) => http(v))
+    ])
+  }),
+  monad: createPublicClient({
+    chain: monad,
+    transport: fallback([
+      ...routemeshRpc(monad.id),
+      ...monad.rpcUrls.default.http.map((v) => http(v))
+    ])
+  }),
+  avalanche: createPublicClient({
+    chain: avalanche,
+    transport: fallback([
+      ...routemeshRpc(avalanche.id),
+      http("https://avalanche-c-chain-rpc.publicnode.com"),
+      ...avalanche.rpcUrls.default.http.map((v) => http(v))
+    ])
+  }),
   // Testnet
   sepolia: createPublicClient({
     chain: sepolia,
     transport: fallback([
+      ...routemeshRpc(sepolia.id),
       http("https://ethereum-sepolia-rpc.publicnode.com"),
       ...sepolia.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -613,6 +855,7 @@ export const clients = {
   arbitrumSepolia: createPublicClient({
     chain: arbitrumSepolia,
     transport: fallback([
+      ...routemeshRpc(arbitrumSepolia.id),
       http("https://arbitrum-sepolia-rpc.publicnode.com"),
       ...arbitrumSepolia.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -620,6 +863,7 @@ export const clients = {
   baseSepolia: createPublicClient({
     chain: baseSepolia,
     transport: fallback([
+      ...routemeshRpc(baseSepolia.id),
       http("https://base-sepolia-rpc.publicnode.com"),
       ...baseSepolia.rpcUrls.default.http.map((v) => http(v))
     ])
@@ -627,13 +871,25 @@ export const clients = {
   optimismSepolia: createPublicClient({
     chain: optimismSepolia,
     transport: fallback([
+      ...routemeshRpc(optimismSepolia.id),
       http("https://optimism-sepolia-rpc.publicnode.com"),
       ...optimismSepolia.rpcUrls.default.http.map((v) => http(v))
     ])
   }),
   arcTestnet: createPublicClient({
     chain: arcTestnet,
-    transport: fallback([...arcTestnet.rpcUrls.default.http.map((v) => http(v))])
+    transport: fallback([
+      ...routemeshRpc(arcTestnet.id),
+      ...arcTestnet.rpcUrls.default.http.map((v) => http(v))
+    ])
+  }),
+  tron: createPublicClient({
+    chain: tron,
+    transport: fallback([
+      ...routemeshRpc(tron.id),
+      ...tron.rpcUrls.default.http.map((v) => http(v, { retryCount: 0 }))
+    ]),
+    batch: { multicall: false }
   })
 } as const;
 
@@ -643,6 +899,69 @@ export const chainById = Object.fromEntries(chainEntries) as Record<
 >;
 
 export const chainNameById = Object.fromEntries(chainNameEntries) as Record<number, ChainName>;
+
+// Non-EVM chains deliberately stay OUT of `chainMap`. `chainMap` feeds
+// `wagmiChains` in utils/wagmi.ts — a Solana entry there would show up in
+// every wallet's switch-chain menu — and `clientsById`, which would build a
+// viem public client with an EVM JSON-RPC transport pointed at a Solana RPC:
+// a client that type-checks and then fails at runtime. The `pharos` precedent
+// does not apply; Pharos is a real EVM chain with a real JSON-RPC endpoint.
+//
+// Instead, everything that is genuinely chain-agnostic — display name, testnet
+// flag, chain type — lives in this parallel registry, and the viem-only
+// accessors (`getChain`, `getClient`) keep throwing for non-EVM ids so callers
+// are forced to branch.
+/**
+ * The value `MandateOutput.oracle` must hold for a Solana OUTPUT — the Polymer
+ * *program id*, not the oracle PDA in `POLYMER_ORACLE` above.
+ * `oracle_polymer::submit` compares the fill's LocalAttestation consumer
+ * against its own program id, and the EVM `PolymerOracle` keys `_attestations`
+ * under the same value as Polymer's `returnedProgramId`.
+ *
+ * Applies to the OUTPUT chain only. An order whose *input* is Solana names the
+ * output chain's own oracle (`POLYMER_ORACLE[outputChainId]`), never this.
+ */
+export const SOLANA_POLYMER_OUTPUT_ORACLE = SOLANA_POLYMER_ORACLE_PROGRAM;
+
+/** The value `MandateOutput.settler` must hold for a Solana output. */
+export const SOLANA_OUTPUT_SETTLER = SOLANA_OUTPUT_SETTLER_PDA;
+
+export type ChainMeta = {
+  id: number;
+  name: string;
+  testnet: boolean;
+  type: ChainType;
+};
+
+export const SOLANA_CHAIN_META: readonly ChainMeta[] = [
+  {
+    id: Number(SOLANA_MAINNET_CHAIN_ID),
+    name: "solana",
+    testnet: false,
+    type: "solana"
+  },
+  {
+    id: Number(SOLANA_DEVNET_CHAIN_ID),
+    name: "solanaDevnet",
+    testnet: true,
+    type: "solana"
+  }
+];
+
+export const chainMetaById: Record<number, ChainMeta> = {
+  ...Object.fromEntries(
+    chains.map((name) => [
+      chainMap[name].id,
+      {
+        id: chainMap[name].id,
+        name,
+        testnet: Boolean(chainMap[name].testnet),
+        type: getChainType(chainMap[name].id)
+      } satisfies ChainMeta
+    ])
+  ),
+  ...Object.fromEntries(SOLANA_CHAIN_META.map((meta) => [meta.id, meta]))
+};
 
 export const clientsById = Object.fromEntries(
   chains.map((name) => [chainMap[name].id, clients[name]])

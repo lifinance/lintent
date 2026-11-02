@@ -22,6 +22,9 @@ jobs:
         env:
           PRIVATE_POLYMER_MAINNET_ZONE_API_KEY: ${{ secrets.PRIVATE_POLYMER_MAINNET_ZONE_API_KEY }}
           PRIVATE_POLYMER_TESTNET_ZONE_API_KEY: ${{ secrets.PRIVATE_POLYMER_TESTNET_ZONE_API_KEY }}
+          # Required by src/lib/libraries/outputFilledVerify.ts (V2-199, #53), which
+          # imports it from $env/static/private. deploy.yml already passes it.
+          PRIVATE_ROUTEMESH_API_KEY: ${{ secrets.PRIVATE_ROUTEMESH_API_KEY }}
           PUBLIC_WALLET_CONNECT_PROJECT_ID: ${{ secrets.PUBLIC_WALLET_CONNECT_PROJECT_ID }}
       - name: Run unit tests
         run: bun run test:unit

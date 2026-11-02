@@ -106,32 +106,46 @@ test("executes full standard escrow flow from base to arbitrum with raw input 10
   await page.getByTestId("network-mainnet").click();
   await page.getByTestId("intent-type-escrow").click();
 
-  // Keep the flow deterministic by fixing tiny standard-order assets directly in state.
-  await page.evaluate(
-    async ({ amount, issuer }) => {
-      const { default: store } = await import("/src/lib/state.svelte.ts");
-      const { coinList, chainMap } = await import("/src/lib/config");
-      const coins = coinList(true);
-      const baseUsdc = coins.find(
-        (token) => token.chainId === chainMap.base.id && token.name === "usdc"
-      );
-      const arbitrumUsdc = coins.find(
-        (token) => token.chainId === chainMap.arbitrum.id && token.name === "usdc"
-      );
-      if (!baseUsdc || !arbitrumUsdc) {
-        throw new Error("Could not resolve base/arbitrum USDC from coin list.");
-      }
-
-      store.mainnet = true;
-      store.intentType = "escrow";
-      store.orders = [];
-      store.inputTokens = [{ token: baseUsdc, amount: BigInt(amount) }];
-      store.outputTokens = [{ token: arbitrumUsdc, amount: BigInt(amount) }];
-      store.exclusiveFor = issuer;
-      store.useExclusiveForQuoteRequest = true;
-    },
-    { amount: REQUIRED_INPUT_USDC_RAW, issuer: issuerAddress }
-  );
+  // Keep the flow deterministic by fixing tiny standard-order assets directly
+  // in state. The +page effect resets tokens asynchronously after the network
+  // sync, so poll-and-reinject until the injected state survives a check.
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate(
+          async ({ amount, issuer }) => {
+            const { default: store } = await import("/src/lib/state.svelte.ts");
+            const { coinList, chainMap } = await import("/src/lib/config");
+            const coins = coinList(true);
+            const baseUsdc = coins.find(
+              (token) => token.chainId === chainMap.base.id && token.name === "usdc"
+            );
+            const arbitrumUsdc = coins.find(
+              (token) => token.chainId === chainMap.arbitrum.id && token.name === "usdc"
+            );
+            if (!baseUsdc || !arbitrumUsdc) return "missing-tokens";
+            const current = store.inputTokens[0];
+            if (
+              current?.token.chainId === baseUsdc.chainId &&
+              current?.amount === BigInt(amount) &&
+              store.outputTokens[0]?.token.chainId === arbitrumUsdc.chainId
+            ) {
+              return "stable";
+            }
+            store.mainnet = true;
+            store.intentType = "escrow";
+            store.orders = [];
+            store.inputTokens = [{ token: baseUsdc, amount: BigInt(amount) }];
+            store.outputTokens = [{ token: arbitrumUsdc, amount: BigInt(amount) }];
+            store.exclusiveFor = issuer;
+            store.useExclusiveForQuoteRequest = true;
+            return "injected";
+          },
+          { amount: REQUIRED_INPUT_USDC_RAW, issuer: issuerAddress }
+        ),
+      { timeout: 20_000, intervals: [500] }
+    )
+    .toBe("stable");
 
   await page.getByRole("button", { name: "→" }).first().click();
   await expect(page.getByRole("heading", { name: "Intent Issuance" })).toBeVisible();

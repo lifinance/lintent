@@ -13,6 +13,7 @@ import { bytesToHex, decodeFunctionData } from "viem";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { AXELAR_ORACLE, axelarCorridor, isStellarChain, type AxelarCorridor } from "$lib/config";
 import { stellarContractHex } from "$lib/axelarNetworks";
+import { namespaceForChain } from "$lib/utils/chainType";
 import type { AppTokenContext } from "$lib/appTypes";
 
 export type SelectedApiQuote = Awaited<ReturnType<IntentApi["getQuotes"]>>["quotes"][number];
@@ -26,6 +27,7 @@ export type ApiQuoteContext = {
   user: string;
   recipient: string;
   exclusiveFor?: `0x${string}`[];
+  integratorKey?: string;
   mainnet?: boolean;
   verifier?: string;
   lockType?: "escrow" | "compact";
@@ -33,7 +35,7 @@ export type ApiQuoteContext = {
 export const BASE_INPUT_ESCROW = "0x00fc00edbe7c003b006f870068c548940000223e" as const;
 export const BASE_OUTPUT_SETTLER = "0x75220b7600c300005038432a0000f308e0000068" as const;
 export function apiQuoteRequest(context: ApiQuoteContext): GetQuoteOptions {
-  const { inputs, outputs, user, recipient, exclusiveFor } = context;
+  const { inputs, outputs, user, recipient, exclusiveFor, integratorKey } = context;
   if (!user || !recipient)
     throw new Error("Connect the origin wallet and choose a destination recipient");
   const stellar = [...inputs, ...outputs].some(({ token }) => isStellarChain(token.chainId));
@@ -64,12 +66,13 @@ export function apiQuoteRequest(context: ApiQuoteContext): GetQuoteOptions {
     }
   }
   const namespace = (id: number) =>
-    isStellarChain(id) ? ("stellar" as const) : ("eip155" as const);
+    isStellarChain(id) ? ("stellar" as const) : namespaceForChain(id);
   return {
     user,
     userChainId: inputs[0].token.chainId,
     userNamespace: namespace(inputs[0].token.chainId),
     exclusiveFor,
+    integratorKey,
     inputs: inputs.map(({ token, amount }) => ({
       sender: user,
       asset: token.address,

@@ -1,0 +1,481 @@
+{
+  "address": "LiFixdGLT5CMdLsHBvaijTXpPy4Uux9Y53SXkuR4HaK",
+  "metadata": {
+    "name": "intents_protocol",
+    "version": "0.0.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "create_attestation",
+      "docs": ["Create an attestation for a remote chain."],
+      "discriminator": [49, 24, 67, 80, 12, 249, 96, 239],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "attestator",
+          "signer": true
+        },
+        {
+          "name": "attestation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [97, 116, 116, 101, 115, 116, 97, 116, 105, 111, 110]
+              },
+              {
+                "kind": "account",
+                "path": "attestator"
+              },
+              {
+                "kind": "arg",
+                "path": "chain_id"
+              },
+              {
+                "kind": "arg",
+                "path": "source"
+              },
+              {
+                "kind": "arg",
+                "path": "application"
+              },
+              {
+                "kind": "arg",
+                "path": "payload_hash"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "chain_id",
+          "type": "u128"
+        },
+        {
+          "name": "source",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "application",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "payload_hash",
+          "type": {
+            "array": ["u8", 32]
+          }
+        }
+      ]
+    },
+    {
+      "name": "create_local_attestation",
+      "docs": ["Create a local attestation based on the attestation data."],
+      "discriminator": [80, 127, 2, 116, 84, 21, 190, 38],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "attestator",
+          "signer": true
+        },
+        {
+          "name": "local_attestation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108, 111, 99, 97, 108, 95, 97, 116, 116, 101, 115, 116, 97, 116, 105, 111, 110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "attestator"
+              },
+              {
+                "kind": "arg",
+                "path": "consumer"
+              },
+              {
+                "kind": "arg",
+                "path": "data_hash"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "consumer",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "data_hash",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "timestamp",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "set_chain_id",
+      "docs": ["Set the chain id of the chain."],
+      "discriminator": [57, 174, 29, 202, 84, 216, 7, 148],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "chain_id",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 104, 97, 105, 110, 95, 105, 100]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "chain_id",
+          "type": "u128"
+        }
+      ]
+    },
+    {
+      "name": "set_chain_mapping",
+      "docs": [
+        "Set the real chain id for a protocol chain id.",
+        "Dev:",
+        "`protocol_chain_id` is the protocol chain identifier.",
+        "`chain_id` is the real chain identifier."
+      ],
+      "discriminator": [174, 145, 44, 171, 203, 101, 230, 130],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle",
+          "signer": true
+        },
+        {
+          "name": "chain_mapping",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 104, 97, 105, 110, 95, 109, 97, 112, 112, 105, 110, 103]
+              },
+              {
+                "kind": "account",
+                "path": "oracle"
+              },
+              {
+                "kind": "arg",
+                "path": "protocol_chain_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "protocol_chain_id",
+          "type": "u128"
+        },
+        {
+          "name": "chain_id",
+          "type": "u128"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Attestation",
+      "discriminator": [152, 125, 183, 86, 36, 146, 121, 73]
+    },
+    {
+      "name": "ChainId",
+      "discriminator": [203, 146, 201, 161, 230, 71, 157, 218]
+    },
+    {
+      "name": "ChainMapping",
+      "discriminator": [81, 78, 77, 209, 44, 206, 85, 169]
+    },
+    {
+      "name": "LocalAttestation",
+      "discriminator": [173, 247, 101, 168, 96, 238, 17, 22]
+    }
+  ],
+  "events": [
+    {
+      "name": "AttestationCreatedEvent",
+      "discriminator": [157, 10, 208, 90, 87, 62, 175, 26]
+    },
+    {
+      "name": "ChainIdConfiguredEvent",
+      "discriminator": [92, 39, 243, 11, 30, 97, 80, 219]
+    },
+    {
+      "name": "ChainMapConfiguredEvent",
+      "discriminator": [157, 35, 137, 206, 200, 100, 92, 171]
+    },
+    {
+      "name": "LocalAttestationCreatedEvent",
+      "discriminator": [173, 59, 45, 101, 206, 241, 125, 25]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidOracle",
+      "msg": "Invalid oracle"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidLocalAttestationTimestamp",
+      "msg": "Invalid local attestation timestamp"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidChainMappingAccount",
+      "msg": "Invalid chain mapping account"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidLocalAttestationAccount",
+      "msg": "Invalid local attestation account"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidAttestationAccount",
+      "msg": "Invalid attestation account"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidChainIdAccount",
+      "msg": "Invalid chain id account"
+    }
+  ],
+  "types": [
+    {
+      "name": "Attestation",
+      "docs": [
+        "Type used to indicate that some data from another chain data has been attested.",
+        "It is derived from the attestation data as seeds"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AttestationCreatedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "attestator",
+            "type": "pubkey"
+          },
+          {
+            "name": "chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "source",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "application",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "payload_hash",
+            "type": {
+              "array": ["u8", 32]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ChainId",
+      "docs": ["Type used to store the chain id of the chain."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ChainIdConfiguredEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "chain_id_account_address",
+            "type": "pubkey"
+          },
+          {
+            "name": "chain_id",
+            "type": "u128"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ChainMapConfiguredEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "oracle",
+            "type": "pubkey"
+          },
+          {
+            "name": "protocol_chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "chain_id",
+            "type": "u128"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ChainMapping",
+      "docs": [
+        "Type used to map a protocol chain identifier to a custom configured chain identifier."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "chain_id",
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LocalAttestation",
+      "docs": [
+        "Type used to indicate that some data has been attested by an attestator.",
+        "It is derived from the local attestation data as seeds",
+        "`timestamp` is the timestamp of the local attestation was created at.",
+        "It is stored within the account since it cannot be known before creation."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp",
+            "type": "u32"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LocalAttestationCreatedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "attestator",
+            "type": "pubkey"
+          },
+          {
+            "name": "consumer",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "u32"
+          },
+          {
+            "name": "data_hash",
+            "type": {
+              "array": ["u8", 32]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

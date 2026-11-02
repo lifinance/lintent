@@ -15,6 +15,8 @@
   import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
+  import { isSolanaChain } from "$lib/utils/chainType";
+  import { isValidTxRef } from "$lib/utils/txRef";
   import { axelarActionBlocker } from "$lib/libraries/coreDeps";
   import { getFillInfo } from "$lib/libraries/fillInfo";
   import { axelarGasFee } from "$lib/libraries/axelar";
@@ -28,11 +30,11 @@
       for (const output of orderContainer.order.outputs) {
         const key = validationKey(inputChain, output);
         const hash = store.fillTransactions[outputKey(output)];
-        if (!hash) continue;
+        if (!isValidTxRef(hash, output.chainId)) continue;
         const stellarChain = isStellarChain(inputChain) ? inputChain : output.chainId;
         const executor = store.stellarAccounts[Number(stellarChain)];
         feeEstimates[key] = {};
-        getFillInfo({ orderId, output, fillTransactionHash: hash })
+        getFillInfo({ orderId, output, fillTransactionHash: hash as `0x${string}` })
           .then(({ payload }) => axelarGasFee(output.chainId, inputChain, [payload], executor))
           .then((fee) => {
             if (!cancelled) feeEstimates[key] = { fee };
@@ -160,12 +162,9 @@
       return store.fillTransactions[outputKey(output)];
     });
 
-    if (
-      fillTxHashes.some(
-        (fillTxHash) => !fillTxHash || !fillTxHash.startsWith("0x") || fillTxHash.length !== 66
-      )
-    )
-      return;
+    // Each reference is checked against its own output's chain: a Solana fill
+    // is base58, an EVM or Tron one a 0x hash.
+    if (outputs.some((output, i) => !isValidTxRef(fillTxHashes[i], output.chainId))) return;
 
     const currentRun = ++validationRun;
     const pairs = inputChains.flatMap((inputChain) =>
@@ -177,25 +176,45 @@
             inputChain,
             orderContainer,
             output,
-            fillTxHashes[outputIndex] as `0x${string}`
-          ).catch((error) => {
-            console.warn("validation check failed", error);
-            return false;
-          })
+            fillTxHashes[outputIndex]
+          )
       }))
     );
-    Promise.all(pairs.map(async (pair) => [pair.key, await pair.run()] as const))
-      .then((entries) => {
-        if (currentRun !== validationRun) return;
-        const nextStatuses: Record<string, boolean> = {};
-        for (const [key, validated] of entries) nextStatuses[key] = validated;
-        validationStatuses = nextStatuses;
-        if (entries.length === 0 || !entries.every(([, validated]) => validated)) return;
-        autoScrolledOrderId = orderId;
-        scroll(5)();
+    Promise.all(
+      pairs.map(async (pair) => {
+        try {
+          return [pair.key, await pair.run()] as const;
+        } catch (e) {
+          console.warn(`validation check failed for ${pair.key}`, e);
+          return [pair.key, false] as const;
+        }
       })
-      .catch((e) => console.warn("auto-scroll validation check failed", e));
+    ).then((entries) => {
+      if (currentRun !== validationRun) return;
+      const nextStatuses: Record<string, boolean> = {};
+      for (const [key, validated] of entries) nextStatuses[key] = validated;
+      validationStatuses = nextStatuses;
+      if (entries.length === 0 || !entries.every(([, validated]) => validated)) return;
+      autoScrolledOrderId = orderId;
+      scroll(5)();
+    });
   });
+
+  /**
+   * Chains this row will actually ask for a signature on, other than the input
+   * chain it is labelled with.
+   *
+   * Proving a Solana output runs `submit` on Solana rather than
+   * `receiveMessage` on the input chain (Solver.validate branches on
+   * `output.chainId` before it looks at the source chain), so a Base-labelled
+   * row can legitimately open a Solana wallet.
+   */
+  function proofChains(inputChain: bigint | number): bigint[] {
+    const elsewhere = orderContainer.order.outputs
+      .filter((output) => isSolanaChain(output.chainId) && output.chainId !== BigInt(inputChain))
+      .map((output) => output.chainId);
+    return [...new Set(elsewhere)];
+  }
 </script>
 
 <ScreenFrame
@@ -211,6 +230,18 @@
         <ChainActionRow chainLabel={getChainName(inputChain)}>
           {#snippet action()}
             <div class="text-[11px] font-semibold text-gray-500 uppercase">Validate outputs</div>
+            <!--
+              The row is grouped by INPUT chain, but validating a Solana output
+              submits the fill to the Solana oracle — so the signature comes
+              from the Solana wallet, not the wallet for the chain named above.
+              Said out loud, because an unexplained Solflare prompt on a row
+              labelled "Base" reads as a bug.
+            -->
+            {#each proofChains(inputChain) as proofChain (proofChain)}
+              <div class="text-[10px] text-gray-400 normal-case">
+                signs on {getChainName(proofChain)}
+              </div>
+            {/each}
           {/snippet}
           {#snippet chips()}
             {#each orderContainer.order.outputs as output}

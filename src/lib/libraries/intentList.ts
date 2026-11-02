@@ -18,6 +18,7 @@ import {
 } from "@lifi/intent";
 import { toHex } from "viem";
 import { containerToIntent } from "$lib/utils/intent";
+import type { OrderContainerWithMeta } from "$lib/appTypes";
 import type { OrderContainer, StandardOrder, MultichainOrder } from "@lifi/intent";
 import { validateOrderContainerWithReason } from "@lifi/intent";
 import { orderValidationDeps } from "./coreDeps";
@@ -36,6 +37,8 @@ export type BaseIntentRow = {
   orderIdShort: string;
   userShort: string;
   fillDeadline: number;
+  /** Submit time in unix seconds: order-server submitTime if known, else local created time. */
+  submitTime?: number;
   inputCount: number;
   outputCount: number;
   chainScope: ChainScope;
@@ -62,6 +65,17 @@ export type TimedIntentRow = BaseIntentRow & {
 
 export const EXPIRING_THRESHOLD_SECONDS = 5 * 60;
 export const MAX_CHIPS_PER_SIDE = 2;
+
+// Sort the intent list by submit time, latest first. `fillDeadline` is the
+// deterministic tiebreaker (ascending for active = soonest expiry first;
+// descending for expired = preserves prior behaviour). Rows without a submit
+// time sort last. Array.prototype.sort is stable, so ties on both keys keep
+// source order.
+export const compareActiveRows = (a: BaseIntentRow, b: BaseIntentRow) =>
+  (b.submitTime ?? 0) - (a.submitTime ?? 0) || a.fillDeadline - b.fillDeadline;
+
+export const compareExpiredRows = (a: BaseIntentRow, b: BaseIntentRow) =>
+  (b.submitTime ?? 0) - (a.submitTime ?? 0) || b.fillDeadline - a.fillDeadline;
 
 function flattenInputs(inputs: { chainId: bigint; inputs: [bigint, bigint][] }[]) {
   return inputs.flatMap((chainInput) => {
@@ -241,6 +255,9 @@ function getContextDetails(orderContainer: OrderContainer): ContextDetails {
 
 export function buildBaseIntentRow(orderContainer: OrderContainer): BaseIntentRow {
   const order = orderContainer.order;
+  // Order-server submit time is not part of `OrderContainer`; it rides along as
+  // app-local metadata when present (see `OrderContainerWithMeta`).
+  const withMeta = orderContainer as OrderContainerWithMeta;
   const orderId = containerToIntent(orderContainer).orderId();
   const inputChipsRaw = getInputs(order);
   const outputChipsRaw = getOutputs(order);
@@ -264,6 +281,7 @@ export function buildBaseIntentRow(orderContainer: OrderContainer): BaseIntentRo
       4
     ),
     fillDeadline: order.fillDeadline,
+    submitTime: withMeta.submitTime ?? withMeta.createdAt,
     inputCount: inputChipsRaw.length,
     outputCount: outputChipsRaw.length,
     chainScope,

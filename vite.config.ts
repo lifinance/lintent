@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],
+  envPrefix: ["VITE_", "PUBLIC_"],
   optimizeDeps: {
     exclude: ["@electric-sql/pglite"]
   }

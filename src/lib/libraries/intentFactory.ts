@@ -4,7 +4,7 @@ import {
   type ApiQuoteSelection,
   type SelectedApiQuote
 } from "./apiQuote";
-import { openStellarApiOrder } from "./stellar";
+import { openStellarApiOrder, openStellarIntent } from "./stellar";
 import {
   getChain,
   getClient,
@@ -13,6 +13,7 @@ import {
   axelarCorridor,
   isStellarChain,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
+  TRON_MAINNET_INPUT_SETTLER,
   type WC
 } from "$lib/config";
 import { encodePacked, maxUint256 } from "viem";
@@ -30,46 +31,81 @@ import {
   IntentApi,
   StandardSolanaIntent,
   StandardStellarIntent,
-  SOLANA_MAINNET_CHAIN_ID,
-  SOLANA_TESTNET_CHAIN_ID,
-  SOLANA_DEVNET_CHAIN_ID
+  addressToBytes32
 } from "@lifi/intent";
+import {
+  getChainType,
+  isSolanaChain,
+  isTronChain,
+  namespaceForChain,
+  type ChainType
+} from "$lib/utils/chainType";
+import { isBytes32ForChainType } from "$lib/utils/address";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { store } from "$lib/state.svelte";
 import { depositAndRegisterCompact, openEscrowIntent, signIntentCompact } from "./intentExecution";
-import { openStellarIntent } from "./stellar";
+import { ADDRESS_ZERO } from "@lifi/intent";
+import { getTronReads, getTronSigner } from "$lib/tron/client";
+import { getTrc20Allowance } from "$lib/tron/reads";
+import { approveToken } from "$lib/tron/writes";
 import { intentDeps } from "./coreDeps";
 
-const SOLANA_CHAIN_IDS = new Set([
-  SOLANA_MAINNET_CHAIN_ID,
-  SOLANA_TESTNET_CHAIN_ID,
-  SOLANA_DEVNET_CHAIN_ID
-]);
-
-const SAME_CHAIN_DURATION_SECONDS = 10 * 60; // 10 minutes
+const FILL_DEADLINE_SECONDS = 10 * 60; // 10 minutes
+// Must stay strictly greater than FILL_DEADLINE_SECONDS: the Solana input
+// settler requires `fill_deadline < expires` (EVM only rejects `>`), so equal
+// deadlines fail `open` with FillDeadlineAfterExpiry on same-chain Solana.
+const SAME_CHAIN_DURATION_SECONDS = 20 * 60; // 20 minutes
 const SAME_CHAIN_EXCLUSIVITY_SECONDS = 12 * 3; // 36 seconds
+// SOLV-544 widened the exclusivity window to 5 minutes so solvers have time to
+// fill before exclusivity ends. @lifi/intent 0.2.1 still encodes ONE_MINUTE in
+// `encodeOutputs`, so re-apply it here; drop this once the library default is
+// raised and this app depends on that release.
+const CROSS_CHAIN_EXCLUSIVITY_SECONDS = 5 * 60; // 5 minutes
 
-function applySameChainTimings(intent: Intent): void {
-  if (!intent.isSameChain()) return;
+function applyIntentTimings(intent: Intent): void {
   const mutable = intent as unknown as { expiry: number; fillDeadline: number };
+  // Every intent gets a 10 minute fill deadline, overriding the `@lifi/intent`
+  // default of 44h (set by EXP-432 to match lifi-backend). `expiry` is left on
+  // the library default for cross-chain intents so the reclaim window still
+  // clears settlement; same-chain intents shorten it to match below.
+  mutable.fillDeadline = FILL_DEADLINE_SECONDS;
+  if (!intent.isSameChain()) return;
   mutable.expiry = SAME_CHAIN_DURATION_SECONDS;
-  mutable.fillDeadline = SAME_CHAIN_DURATION_SECONDS;
 }
 
+// TODO: delete this function once the app depends on a `@lifi/intent` release
+// that takes the exclusivity window as an option (`exclusivity`) — the library
+// then encodes the context itself and this override, along with the shape check
+// it has to repeat, goes away.
 function applyExclusivityOverride(
   orderIntent: ReturnType<Intent["order"]>,
-  exclusiveFor: string | undefined,
-  isSameChain: boolean
+  exclusiveFor: `0x${string}` | undefined,
+  isSameChain: boolean,
+  inputChainType: ChainType
 ): void {
-  if (!isSameChain || !exclusiveFor) return;
-  const order = orderIntent.asOrder() as StandardOrder;
+  if (!exclusiveFor) return;
+  // The exclusive solver is paid out by the INPUT settler, so its identity must
+  // live in the input chain's address space: a Solana escrow finalises only for
+  // the signer named in the fill (`solve_params[0].solver == solver.key()`), and
+  // a zero-padded EVM address is a key nobody can sign with — the order opens,
+  // gets filled, and can then never be settled. Caller resolves the value
+  // against the input chain (see `resolveAddressForChainType`); this is the
+  // last line of defence, and it must never pad.
+  const exclusiveForBytes32 = addressToBytes32(exclusiveFor);
+  if (!isBytes32ForChainType(exclusiveForBytes32, inputChainType)) {
+    throw new Error(
+      `Exclusive solver ${exclusiveFor} is not a ${inputChainType} address: the exclusive solver must be named in the input chain's address space, or the order can be filled but never finalised.`
+    );
+  }
+  const order = orderIntent.asOrder() as StandardOrder | MultichainOrder;
   const currentTime = Math.floor(Date.now() / 1000);
-  const paddedExclusiveFor =
-    `0x${exclusiveFor.replace("0x", "").padStart(64, "0")}` as `0x${string}`;
+  const exclusivitySeconds = isSameChain
+    ? SAME_CHAIN_EXCLUSIVITY_SECONDS
+    : CROSS_CHAIN_EXCLUSIVITY_SECONDS;
   const newContext = encodePacked(
     ["bytes1", "bytes32", "uint32"],
-    ["0xe0", paddedExclusiveFor, currentTime + SAME_CHAIN_EXCLUSIVITY_SECONDS]
+    ["0xe0", exclusiveForBytes32, currentTime + exclusivitySeconds]
   );
   for (const output of order.outputs) {
     if (output.context !== "0x") {
@@ -86,11 +122,7 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
       name: input.token.name,
       chainId,
       decimals: input.token.decimals,
-      chainNamespace: isStellarChain(chainId)
-        ? "stellar"
-        : SOLANA_CHAIN_IDS.has(chainId)
-          ? "solana"
-          : "eip155"
+      chainNamespace: isStellarChain(chainId) ? "stellar" : namespaceForChain(chainId)
     },
     amount: input.amount
   };
@@ -286,16 +318,21 @@ export class IntentFactory {
     return async () => {
       const { account, inputTokens } = opts;
       const inputChain = inputTokens[0].token.chainId;
+      if (isTronChain(inputChain)) {
+        throw new Error(
+          "Compact intents are not supported for Tron — pending protocol decision on signing scheme"
+        );
+      }
       if (this.preHook) await this.preHook(inputChain);
       const intentInstance = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
-      applySameChainTimings(intentInstance);
+      applyIntentTimings(intentInstance);
       const sameChain = intentInstance.isSameChain();
       const intent = intentInstance.order();
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Compact signing is not supported for Solana intents.");
       if (intent instanceof StandardStellarIntent)
         throw new Error("Stellar inputs only support escrow");
-      applyExclusivityOverride(intent, opts.exclusiveFor, sameChain);
+      applyExclusivityOverride(intent, opts.exclusiveFor, sameChain, getChainType(inputChain));
 
       const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
 
@@ -333,15 +370,25 @@ export class IntentFactory {
   compactDepositAndRegister(opts: AppCreateIntentOptions) {
     return async () => {
       const { inputTokens, account } = opts;
+      if (isTronChain(inputTokens[0].token.chainId)) {
+        throw new Error(
+          "Compact intents are not supported for Tron — pending protocol decision on signing scheme"
+        );
+      }
       const intentInstance2 = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
-      applySameChainTimings(intentInstance2);
+      applyIntentTimings(intentInstance2);
       const sameChain2 = intentInstance2.isSameChain();
       const intent = intentInstance2.singlechain();
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Compact deposit and register is not supported for Solana intents.");
       if (intent instanceof StandardStellarIntent)
         throw new Error("Stellar inputs only support escrow");
-      applyExclusivityOverride(intent, opts.exclusiveFor, sameChain2);
+      applyExclusivityOverride(
+        intent,
+        opts.exclusiveFor,
+        sameChain2,
+        getChainType(inputTokens[0].token.chainId)
+      );
 
       if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
@@ -377,12 +424,9 @@ export class IntentFactory {
     return async () => {
       const { inputTokens, account } = opts;
       const intentInstance3 = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
-      applySameChainTimings(intentInstance3);
+      applyIntentTimings(intentInstance3);
       const sameChain3 = intentInstance3.isSameChain();
       const intent = intentInstance3.order();
-      if (intent instanceof StandardSolanaIntent)
-        throw new Error("openEscrowIntent is not supported for Solana intents.");
-
       if (intent instanceof StandardStellarIntent) {
         const open = await openStellarIntent(intent, store.stellarAccount);
         if (this.postHook) await this.postHook();
@@ -390,7 +434,12 @@ export class IntentFactory {
         return [open.hash];
       }
 
-      applyExclusivityOverride(intent, opts.exclusiveFor, sameChain3);
+      applyExclusivityOverride(
+        intent,
+        opts.exclusiveFor,
+        sameChain3,
+        getChainType(inputTokens[0].token.chainId)
+      );
 
       const inputChain = inputTokens[0].token.chainId;
       if (this.preHook) await this.preHook(inputChain);
@@ -429,6 +478,30 @@ export function escrowApprove(
       // The Stellar escrow pulls inputs with an authorised transfer; nothing to approve.
       if (isStellarChain(token.chainId)) continue;
       if (preHook) await preHook(token.chainId);
+
+      // Solana has no approval step at all: `open` debits the user's ATA under
+      // the user's own signature, so there is nothing corresponding to an
+      // ERC-20 allowance to set.
+      if (isSolanaChain(token.chainId)) continue;
+
+      if (isTronChain(token.chainId)) {
+        // Native TRX inputs are attached as callValue on open — no approval.
+        if (token.address.toLowerCase() === ADDRESS_ZERO) continue;
+        const deps = { reads: await getTronReads(), signer: getTronSigner() };
+        const tronAccount = store.tronConnectedAccount?.address;
+        if (!tronAccount) throw new Error("TronLink is not connected");
+        const currentTronAllowance = await getTrc20Allowance(
+          deps.reads,
+          token.address,
+          tronAccount,
+          TRON_MAINNET_INPUT_SETTLER
+        );
+        if (currentTronAllowance < amount) {
+          await approveToken(deps, token.address, TRON_MAINNET_INPUT_SETTLER);
+        }
+        continue;
+      }
+
       const publicClient = getClient(token.chainId);
       const currentAllowance = await publicClient.readContract({
         address: token.address,

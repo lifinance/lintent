@@ -139,6 +139,17 @@ test("black-box escrow flow shows expected UI state transitions", async ({ page 
   await page.getByTestId("input-token-modal-save").click();
   await expect(inputModal).toBeHidden({ timeout: UI_TIMEOUT_MS });
 
+  // Select the arbitrum output explicitly — the store's default output token
+  // is chain-dependent and a same-chain default would change the flow shape.
+  await page.getByTestId("open-output-modal-0").click();
+  const outputModal = page.getByTestId("output-token-modal");
+  await expect(outputModal).toBeVisible({ timeout: UI_TIMEOUT_MS });
+  await outputModal.locator("select").first().selectOption("42161");
+  await outputModal.locator('input[type="number"]').fill(REQUIRED_INPUT_USDC_HUMAN);
+  await outputModal.locator("select").nth(1).selectOption("usdc");
+  await page.getByTestId("output-token-modal-save").click();
+  await expect(outputModal).toBeHidden({ timeout: UI_TIMEOUT_MS });
+
   const exclusiveInput = page.getByPlaceholder("0x... (optional)");
   await exclusiveInput.fill(issuerAddress);
   await page.getByLabel("Lock Exclusive").check();
@@ -230,16 +241,17 @@ test("black-box escrow flow shows expected UI state transitions", async ({ page 
     Claim: "Locked"
   });
 
+  // Note: the "Finalise Intent" heading is always mounted in the horizontal
+  // strip, so it cannot signal prove success — poll the step tracker instead.
   const proveButton = page.getByRole("button", { name: /^\d+(\.\d+)?\s+USDC$/ }).first();
+  const proveDoneStep = page.getByRole("button", { name: "Prove (Done)" });
   let reachedFinalise = false;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     await expect(proveButton).toBeVisible({ timeout: UI_TIMEOUT_MS });
     await expect(proveButton).toBeEnabled({ timeout: UI_TIMEOUT_MS });
     await proveButton.click();
     try {
-      await expect(page.getByRole("heading", { name: "Finalise Intent" })).toBeVisible({
-        timeout: PROVE_ATTEMPT_TIMEOUT_MS
-      });
+      await expect(proveDoneStep).toBeVisible({ timeout: PROVE_ATTEMPT_TIMEOUT_MS });
       reachedFinalise = true;
       break;
     } catch {

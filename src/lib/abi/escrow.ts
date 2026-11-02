@@ -408,7 +408,7 @@ export const SETTLER_ESCROW_ABI = [
       }
     ],
     outputs: [],
-    stateMutability: "nonpayable"
+    stateMutability: "payable"
   },
   {
     type: "function",

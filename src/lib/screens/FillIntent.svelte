@@ -11,9 +11,13 @@
   import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
+  import { isTronBase58Address } from "$lib/utils/chainType";
+  import { isValidTxRef, normalizeTxRef, txRefError, txRefPlaceholder } from "$lib/utils/txRef";
+  import { tronBase58ToHex } from "@lifi/intent";
 
   let {
     scroll,
+    defaultSolver,
     orderContainer,
     account,
     preHook,
@@ -24,16 +28,42 @@
     preHook?: (chainId: number) => Promise<any>;
     postHook: () => Promise<any>;
     account: () => `0x${string}`;
+    /** Source-chain identity used as the recorded solver when no override is
+     * set — the input settler only lets that identity finalise. */
+    defaultSolver: () => `0x${string}`;
   } = $props();
 
   let refreshValidation = $state(0);
   let autoScrolledOrderId = $state<`0x${string}` | null>(null);
   let fillRun = 0;
+  // true = filled. Undefined means "not checked yet", which the UI
+  // distinguishes from "checked and not filled".
   let fillStatuses = $state<Record<string, boolean>>({});
   let manualFillTxInputs = $state<Record<string, string>>({});
   let manualFillTxSaving = $state<Record<string, boolean>>({});
   let manualFillTxSaved = $state<Record<string, boolean>>({});
   let manualFillTxErrors = $state<Record<string, string>>({});
+  let solverOverride = $state("");
+  const parsedSolver = $derived.by((): `0x${string}` | undefined => {
+    const trimmed = solverOverride.trim();
+    if (!trimmed) return undefined;
+    if (/^0x[0-9a-fA-F]{40}$/.test(trimmed)) return trimmed as `0x${string}`;
+    if (isTronBase58Address(trimmed)) return tronBase58ToHex(trimmed);
+    if (/^41[0-9a-fA-F]{40}$/.test(trimmed)) return `0x${trimmed.slice(2)}` as `0x${string}`;
+    return undefined;
+  });
+  const solverGetter = $derived(parsedSolver ? () => parsedSolver : undefined);
+  // The recorded solver must be an identity that can finalise on the SOURCE
+  // chain; the signing wallet (output chain) is the wrong default for
+  // cross-namespace fills.
+  const solverForFill = $derived(solverGetter ?? defaultSolver);
+  const safePlaceholder = $derived.by(() => {
+    try {
+      return defaultSolver();
+    } catch {
+      return "solver address";
+    }
+  });
   const postHookScroll = async () => {
     await postHook();
     invalidateRpcPrefix("progress:filled:");
@@ -57,10 +87,12 @@
     }
     return arrMap;
   }
-  // Stellar explorers show transaction hashes without the 0x prefix.
-  const normalizeFillTxHash = (value: string): `0x${string}` | undefined => {
-    const hex = value.startsWith("0x") ? value.slice(2) : value;
-    return /^[0-9a-fA-F]{64}$/.test(hex) ? `0x${hex}` : undefined;
+  // Explorers for Tron and Stellar show transaction hashes without the 0x
+  // prefix; normalising before validation accepts both forms.
+  const normalizedFillTxRef = (value: string | undefined, chainId: bigint) => {
+    if (!value) return undefined;
+    const normalized = normalizeTxRef(value, chainId);
+    return isValidTxRef(normalized, chainId) ? normalized : undefined;
   };
   const getManualFillTxInputValue = (output: MandateOutput) => {
     const key = outputKey(output);
@@ -68,17 +100,17 @@
   };
   const saveManualFillTransaction = async (output: MandateOutput) => {
     const key = outputKey(output);
-    const txHash = normalizeFillTxHash(getManualFillTxInputValue(output).trim());
-    if (!txHash) {
-      manualFillTxErrors[key] = "Use a 64-hex-char tx hash (0x optional).";
+    const normalizedHash = normalizedFillTxRef(getManualFillTxInputValue(output), output.chainId);
+    if (!normalizedHash) {
+      manualFillTxErrors[key] = txRefError(output.chainId);
       manualFillTxSaved[key] = false;
       return;
     }
     manualFillTxSaving[key] = true;
     manualFillTxErrors[key] = "";
     try {
-      store.fillTransactions[key] = txHash;
-      await store.saveFillTransaction(key, txHash);
+      store.fillTransactions[key] = normalizedHash;
+      await store.saveFillTransaction(key, normalizedHash);
       manualFillTxSaved[key] = true;
       refreshValidation += 1;
     } catch (error) {
@@ -137,6 +169,23 @@
   description="Catamaran may fill externally. Supply its fill transaction hash to inspect proof progress; no solver wallet connection is required for reads."
 >
   <div class="space-y-2">
+    <SectionCard compact title="Solver Address">
+      <div class="flex items-center gap-2">
+        <input
+          type="text"
+          class="h-7 min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 font-mono text-xs text-gray-700 outline-none focus:border-sky-300"
+          placeholder={safePlaceholder}
+          bind:value={solverOverride}
+        />
+        {#if solverOverride.trim() && !solverGetter}
+          <span class="text-[11px] font-semibold text-rose-600">Invalid address</span>
+        {:else if solverGetter}
+          <span class="text-[11px] font-semibold text-emerald-700">Override active</span>
+        {:else}
+          <span class="text-[11px] text-gray-400">Using connected wallet</span>
+        {/if}
+      </div>
+    </SectionCard>
     <SectionCard compact title="Add Fill Tx Hash">
       <div class="space-y-2">
         {#each orderContainer.order.outputs as output}
@@ -149,12 +198,12 @@
                 getCoin({ address: output.token, chainId: output.chainId }).decimals
               )}
               symbol={getCoin({ address: output.token, chainId: output.chainId }).name}
-              tone={normalizeFillTxHash(currentHash ?? "") ? "success" : "warning"}
+              tone={isValidTxRef(currentHash, output.chainId) ? "success" : "warning"}
             />
             <input
               type="text"
               class="h-7 min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-sky-300"
-              placeholder="0x... fill tx hash"
+              placeholder={`${txRefPlaceholder(output.chainId)} fill tx`}
               value={getManualFillTxInputValue(output)}
               oninput={(event) => {
                 const value = (event.currentTarget as HTMLInputElement).value;
@@ -210,7 +259,8 @@
                         {
                           preHook,
                           postHook: postHookScroll,
-                          account
+                          account,
+                          solver: solverForFill
                         }
                       )
                     )
@@ -237,7 +287,7 @@
                   }).decimals
                 )}
                 symbol={getCoin({ address: output.token, chainId: output.chainId }).name}
-                tone={filled === undefined ? "muted" : !filled ? "neutral" : "success"}
+                tone={filled === undefined ? "muted" : filled ? "success" : "neutral"}
               />
             {/each}
           {/snippet}

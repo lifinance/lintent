@@ -76,8 +76,7 @@
   });
 
   const progressSteps = $derived.by(() => {
-    const flowAccessible =
-      browsing || !!store.stellarAccount || (!!store.connectedAccount && !!store.walletClient);
+    const flowAccessible = browsing || !!store.stellarAccount || store.anyWalletConnected;
     if (!flowAccessible) {
       return [
         {
@@ -219,7 +218,7 @@
   });
 
   const progressConnectorPosition = $derived.by(() => {
-    if (!store.connectedAccount || !store.walletClient) return 0;
+    if (!store.anyWalletConnected) return 0;
     const maxIndex = Math.max(progressSteps.length - 1, 0);
     return Math.max(0, Math.min(scrollStepProgress, maxIndex));
   });

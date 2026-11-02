@@ -16,10 +16,24 @@ import {
 import { compact_type_hash } from "@lifi/intent";
 import { addressToBytes32 } from "@lifi/intent";
 import { signMultichainCompact, signStandardCompact } from "@lifi/intent";
-import { MultichainOrderIntent, StandardEVMIntent } from "@lifi/intent";
+import { MultichainOrderIntent, StandardEVMIntent, StandardSolanaIntent } from "@lifi/intent";
 import type { NoSignature, Signature } from "@lifi/intent";
 import type { TypedDataSigner } from "@lifi/intent";
 import { switchWalletChain } from "$lib/utils/walletClientRuntime";
+import { isTronChain } from "$lib/utils/chainType";
+import type { TxRef } from "$lib/utils/txRef";
+import { getTronReads, getTronSigner } from "$lib/tron/client";
+import { openEscrow as openTronEscrow } from "$lib/tron/writes";
+import { nativeValueOfInputs } from "$lib/tron/encode";
+import { getSolanaReads } from "$lib/solana/client";
+import { createSolanaPrograms } from "$lib/solana/program";
+import { getSolanaSigner } from "$lib/solana/wallet";
+import { openEscrow as openSolanaEscrow } from "$lib/solana/writes";
+
+/** The connected Solana wallet, needed so Anchor can populate signer accounts. */
+async function solanaAccount(chainId: bigint): Promise<string> {
+  return (await getSolanaSigner(chainId)).publicKey;
+}
 
 function combineSignatures(signatures: {
   sponsorSignature: Signature | NoSignature;
@@ -37,11 +51,17 @@ export function signIntentCompact(
   account: `0x${string}`,
   walletClient: WC
 ): Promise<`0x${string}`> {
-  const signer = walletClient as unknown as TypedDataSigner;
   if (intent instanceof StandardEVMIntent) {
     const order = intent.asOrder();
+    if (isTronChain(order.originChainId)) {
+      throw new Error(
+        "Tron compact signing not yet supported — pending protocol decision on EIP-712 alternative"
+      );
+    }
+    const signer = walletClient as unknown as TypedDataSigner;
     return signStandardCompact(account, signer, order.originChainId, intent.asBatchCompact());
   }
+  const signer = walletClient as unknown as TypedDataSigner;
   const order = intent.asOrder();
   return signMultichainCompact(
     account,
@@ -57,6 +77,9 @@ export async function depositAndRegisterCompact(
   walletClient: WC
 ): Promise<`0x${string}`> {
   const order = intent.asOrder();
+  if (isTronChain(order.originChainId)) {
+    throw new Error("Compact deposit and register is not supported for Tron intents");
+  }
   const chain = getChain(order.originChainId);
   return walletClient.writeContract({
     chain,
@@ -69,14 +92,38 @@ export async function depositAndRegisterCompact(
 }
 
 export async function openEscrowIntent(
-  intent: StandardEVMIntent | MultichainOrderIntent,
+  intent: StandardEVMIntent | StandardSolanaIntent | MultichainOrderIntent,
   account: `0x${string}`,
   walletClient: WC
-): Promise<`0x${string}`[]> {
+): Promise<TxRef[]> {
+  // Solana signatures are base58, not 0x-hashes, which is why this returns
+  // TxRef rather than `0x${string}`.
+  if (intent instanceof StandardSolanaIntent) {
+    const order = intent.asOrder();
+    const chainId = order.originChainId;
+    const [reads, programs] = await Promise.all([
+      getSolanaReads(chainId),
+      createSolanaPrograms({ chainId, publicKey: await solanaAccount(chainId) })
+    ]);
+    const signer = await getSolanaSigner(chainId);
+    const signature = await openSolanaEscrow(
+      { chainId, reads, signer, programs },
+      { order, orderId: intent.orderId() }
+    );
+    return [signature];
+  }
   if (intent instanceof StandardEVMIntent) {
     const order = intent.asOrder();
+    if (isTronChain(order.originChainId)) {
+      const txId = await openTronEscrow(
+        { reads: await getTronReads(), signer: getTronSigner() },
+        intent
+      );
+      return [`0x${txId.replace("0x", "")}` as `0x${string}`];
+    }
     await switchWalletChain(walletClient, Number(order.originChainId));
     const chain = getChain(order.originChainId);
+    const nativeValue = nativeValueOfInputs(order.inputs);
     return [
       await walletClient.writeContract({
         chain,
@@ -84,12 +131,27 @@ export async function openEscrowIntent(
         address: INPUT_SETTLER_ESCROW_LIFI,
         abi: SETTLER_ESCROW_ABI,
         functionName: "open",
-        args: [order]
+        args: [order],
+        ...(nativeValue > 0n ? { value: nativeValue } : {})
       })
     ];
   }
 
   const components = intent.asComponents();
+  // Every component below goes through the EVM wallet client — a Tron
+  // component cannot be opened this way (the library also rejects these at
+  // build time; this guards imported/stored orders).
+  const tronComponent = components.find(({ chainId }) => isTronChain(chainId));
+  if (tronComponent) {
+    throw new Error("Multichain orders with Tron inputs are not supported");
+  }
+  // The multichain settler's open is nonpayable, so native inputs cannot be escrowed.
+  const nativeComponent = components.find(
+    ({ orderComponent }) => nativeValueOfInputs(orderComponent.inputs) > 0n
+  );
+  if (nativeComponent) {
+    throw new Error("Multichain orders with native inputs are not supported");
+  }
   const results: `0x${string}`[] = [];
   for (const { chainId, orderComponent } of components) {
     const chain = getChain(chainId);

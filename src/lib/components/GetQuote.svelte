@@ -7,7 +7,7 @@
     type ApiQuoteContext,
     type SelectedApiQuote
   } from "$lib/libraries/apiQuote";
-  import { isStellarChain } from "$lib/config";
+  import { axelarCorridor, isStellarChain } from "$lib/config";
 
   let {
     exclusiveFor = $bindable(),
@@ -101,9 +101,11 @@
     message = "Requesting quote";
     try {
       const request = apiQuoteRequest(context);
-      const response = await new IntentApi(
-        corridor ? false : (useProductionApi ?? mainnet)
-      ).getQuotes(request);
+      const production = corridor
+        ? axelarCorridor(context.inputs[0].token.chainId, context.outputs[0].token.chainId).network
+            .productionApi
+        : (useProductionApi ?? mainnet);
+      const response = await new IntentApi(production).getQuotes(request);
       if (id !== generation) return;
       const quote = response.quotes[0];
       if (!quote) {

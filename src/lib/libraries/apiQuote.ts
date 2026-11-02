@@ -11,19 +11,8 @@ import {
 import { xdr, scValToNative } from "@stellar/stellar-sdk";
 import { bytesToHex, decodeFunctionData } from "viem";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
-import {
-  AXELAR_ORACLE,
-  isStellarChain,
-  stellarTestnetConfig,
-  stellarDeployment,
-  requireAlignedAxelar
-} from "$lib/config";
-import {
-  BASE_TESTNET_USDC,
-  STELLAR_TESTNET_ID,
-  STELLAR_TESTNET_USDC,
-  stellarContractHex
-} from "$lib/stellarTestnet";
+import { AXELAR_ORACLE, axelarCorridor, isStellarChain, type AxelarCorridor } from "$lib/config";
+import { stellarContractHex } from "$lib/axelarNetworks";
 import type { AppTokenContext } from "$lib/appTypes";
 
 export type SelectedApiQuote = Awaited<ReturnType<IntentApi["getQuotes"]>>["quotes"][number];
@@ -48,31 +37,34 @@ export function apiQuoteRequest(context: ApiQuoteContext): GetQuoteOptions {
   if (!user || !recipient)
     throw new Error("Connect the origin wallet and choose a destination recipient");
   const stellar = [...inputs, ...outputs].some(({ token }) => isStellarChain(token.chainId));
+  let corridor: AxelarCorridor | undefined;
   if (stellar) {
-    if (context.mainnet)
-      throw new Error("Switch to Testnet before requesting or executing this corridor");
     if (
       (context.verifier !== undefined && context.verifier !== "axelar") ||
       (context.lockType !== undefined && context.lockType !== "escrow")
     )
-      throw new Error("Testnet API quotes require Axelar escrow");
+      throw new Error("Stellar API quotes require Axelar escrow");
     if (inputs.length !== 1 || outputs.length !== 1)
-      throw new Error("Testnet corridor requires one USDC input and output");
-    requireAlignedAxelar(inputs[0].token.chainId, outputs[0].token.chainId);
+      throw new Error("Stellar corridor requires one USDC input and output");
+    corridor = axelarCorridor(inputs[0].token.chainId, outputs[0].token.chainId);
+    const { network } = corridor;
+    if (context.mainnet !== undefined && context.mainnet !== network.mainnet)
+      throw new Error(
+        `Switch to ${network.mainnet ? "Mainnet" : "Testnet"} before requesting or executing this corridor`
+      );
     for (const { token } of [...inputs, ...outputs]) {
       const expected = isStellarChain(token.chainId)
-        ? stellarContractHex(STELLAR_TESTNET_USDC)
-        : BASE_TESTNET_USDC;
+        ? stellarContractHex(network.stellar.usdc)
+        : corridor.evm.usdc;
       if (
         token.address.toLowerCase() !== expected.toLowerCase() ||
         token.decimals !== (isStellarChain(token.chainId) ? 7 : 6)
       )
-        throw new Error("Only the configured testnet USDC assets are supported");
+        throw new Error("Only the configured USDC assets are supported");
     }
   }
   const namespace = (id: number) =>
     isStellarChain(id) ? ("stellar" as const) : ("eip155" as const);
-  const deployment = stellarTestnetConfig.deployment;
   return {
     user,
     userChainId: inputs[0].token.chainId,
@@ -92,18 +84,18 @@ export function apiQuoteRequest(context: ApiQuoteContext): GetQuoteOptions {
       namespace: namespace(token.chainId),
       amount: 0n
     })),
-    ...(stellar && deployment
+    ...(corridor
       ? {
           oracle: [
             {
-              chainId: STELLAR_TESTNET_ID,
+              chainId: corridor.network.stellar.chainId,
               namespace: "stellar" as const,
-              address: deployment.stellar.axelarOracle
+              address: corridor.network.stellar.oracle
             },
             {
-              chainId: 84532,
+              chainId: corridor.evmChainId,
               namespace: "eip155" as const,
-              address: deployment.baseSepolia.axelarOracle
+              address: corridor.evm.oracle.toLowerCase()
             }
           ]
         }
@@ -231,7 +223,7 @@ export function validateApiQuote(
   apiQuoteRequest(context);
   const input = context.inputs[0];
   const output = context.outputs[0];
-  requireAlignedAxelar(input.token.chainId, output.token.chainId);
+  const { stellar } = axelarCorridor(input.token.chainId, output.token.chainId).network;
   if (
     quote.order.type !== "oif-user-open-v0" ||
     !quote.quoteId ||
@@ -244,7 +236,7 @@ export function validateApiQuote(
   const tx = quote.order.openIntentTx;
   const expectedChain = `${isStellarChain(input.token.chainId) ? "stellar" : "eip155"}:${input.token.chainId}`;
   const inputSettler = isStellarChain(input.token.chainId)
-    ? bytes32ToStellarContract(stellarDeployment(BigInt(input.token.chainId))!.inputEscrow)
+    ? stellar.inputEscrow
     : BASE_INPUT_ESCROW;
   if (tx.chain !== expectedChain || !same(tx.to, inputSettler))
     throw new Error("Quote origin chain/escrow differs from request");
@@ -275,7 +267,7 @@ export function validateApiQuote(
   const order = decoded.order;
   const out = order.outputs[0];
   const expectedOutputSettler = isStellarChain(output.token.chainId)
-    ? stellarDeployment(BigInt(output.token.chainId))!.outputSettler
+    ? stellar.outputSettler
     : BASE_OUTPUT_SETTLER;
   if (
     !same(order.user, context.user) ||

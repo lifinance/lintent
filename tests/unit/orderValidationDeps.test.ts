@@ -7,7 +7,9 @@ import {
   outputSettlerForStellar,
   stellarStrkeyToBytes32,
   STELLAR_TESTNET_CHAIN_ID,
-  validateOrderWithReason
+  validateOrderWithReason,
+  type OrderContainer,
+  type StandardOrder
 } from "@lifi/intent";
 import {
   CHAIN_ID_BASE,
@@ -17,12 +19,9 @@ import {
   makeStandardOrder
 } from "../fixtures/orderFixtures";
 import { orderValidationDeps } from "../../src/lib/libraries/coreDeps";
-import { loadStellarTestnet, parseStellarTestnetDeployment } from "../../src/lib/stellarTestnet";
-import { StrKey } from "@stellar/stellar-sdk";
 import { axelarActionBlocker } from "../../src/lib/libraries/coreDeps";
-import { getAddress } from "viem";
 import { getCoin } from "../../src/lib/config";
-import { STELLAR_TESTNET_USDC } from "../../src/lib/stellarTestnet";
+import { AXELAR_NETWORKS } from "../../src/lib/axelarNetworks";
 
 const BASE_AXELAR_ORACLE = "0xb7eA767b54aF5Dd8AD12Df648A399F9075D93FeE" as const;
 const STELLAR_AXELAR_ORACLE =
@@ -130,97 +129,15 @@ describe("orderValidationDeps unknown-chain handling", () => {
   });
 });
 
-describe("Stellar testnet configuration safety", () => {
-  const synthetic = {
-    schemaVersion: 1,
-    corridor: "stellar-testnet-base-sepolia",
-    addressProvenance: "predicted",
-    stellar: {
-      inputEscrow: StrKey.encodeContract(Buffer.alloc(32, 1)),
-      outputSettler: StrKey.encodeContract(Buffer.alloc(32, 2)),
-      axelarOracle: StrKey.encodeContract(Buffer.alloc(32, 3))
-    },
-    baseSepolia: { axelarOracle: "0x123456789012345678901234567890123456789a" }
-  };
-  it("requires deployment-record provenance only when enabled", () => {
-    expect(loadStellarTestnet().enabled).toBe(false);
-    expect(orderValidationDeps.allowedOutputSettlers(STELLAR_TESTNET_CHAIN_ID)).toEqual([]);
-    expect(
-      orderValidationDeps.allowedInputOracles({
-        chainId: STELLAR_TESTNET_CHAIN_ID,
-        sameChainFill: false
-      })
-    ).toBeUndefined();
-    expect(
-      loadStellarTestnet("false", JSON.stringify(synthetic)).deployment?.addressProvenance
-    ).toBe("predicted");
-    expect(() => loadStellarTestnet("true", JSON.stringify(synthetic))).toThrow(
-      "deployment-record"
-    );
-    expect(() => loadStellarTestnet("true")).toThrow("deployment-record");
-    expect(
-      loadStellarTestnet(
-        "true",
-        JSON.stringify({ ...synthetic, addressProvenance: "deployment-record" })
-      ).enabled
-    ).toBe(true);
+describe("Stellar corridor configuration", () => {
+  const container = (order: StandardOrder): OrderContainer => ({
+    order,
+    inputSettler: "0x0000000000000000000000000000000000000001",
+    sponsorSignature: { type: "None", payload: "0x" },
+    allocatorSignature: { type: "None", payload: "0x" }
   });
-  it("rejects malformed supplied configuration even when disabled", () => {
-    for (const text of [
-      "",
-      "{",
-      "null",
-      JSON.stringify({ ...synthetic, schemaVersion: 2 }),
-      JSON.stringify({ ...synthetic, secret: "not-allowed" })
-    ])
-      expect(() => loadStellarTestnet("false", text)).toThrow();
-    expect(() => loadStellarTestnet("yes")).toThrow();
-  });
-  it("rejects every known Stellar mainnet deployment in every contract role", () => {
-    const mainnet = [
-      "CA5GTK5U5LYGWIJSAG6LD724NUDFONHVEHYOHOH5KWCKCX5I442QYLUN",
-      "CBNYANRIUUUTAZJSEA2FEYUHFPUNRRYPUP6URIZIG2PZXTWWYSXLL3SX",
-      "CCIJYT5LJBNO5WHW5OJILTLQXSPC5CZWGCNT5B2MSXD2FDV6VIU7UMPT",
-      "CAVJORXN3EOHH5GGHOK66YTPBUFNICWGSAO3UBUG6SS75VSMGWIEQX4V"
-    ];
-    for (const role of ["inputEscrow", "outputSettler", "axelarOracle"])
-      for (const address of [
-        ...mainnet,
-        StrKey.encodeContract(Buffer.alloc(32)),
-        StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 1))
-      ])
-        expect(() =>
-          parseStellarTestnetDeployment(
-            JSON.stringify({ ...synthetic, stellar: { ...synthetic.stellar, [role]: address } })
-          )
-        ).toThrow();
-  });
-  it("normalizes lowercase EVM input and rejects zero/mainnet/malformed oracles", () => {
-    expect(parseStellarTestnetDeployment(JSON.stringify(synthetic)).baseSepolia.axelarOracle).toBe(
-      "0x123456789012345678901234567890123456789a"
-    );
-    expect(
-      parseStellarTestnetDeployment(
-        JSON.stringify({
-          ...synthetic,
-          baseSepolia: { axelarOracle: getAddress(synthetic.baseSepolia.axelarOracle) }
-        })
-      ).baseSepolia.axelarOracle
-    ).toBe("0x123456789012345678901234567890123456789a");
-    for (const address of [
-      "0x0000000000000000000000000000000000000000",
-      "0xb7eA767b54aF5Dd8AD12Df648A399F9075D93FeE",
-      "0x1234",
-      "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96044"
-    ])
-      expect(() =>
-        parseStellarTestnetDeployment(
-          JSON.stringify({ ...synthetic, baseSepolia: { axelarOracle: address } })
-        )
-      ).toThrow();
-  });
-  it("retains historical validation but blocks old Axelar writes", () => {
-    const order = makeStandardOrder({
+  it("keeps Axelar writes open on the mainnet corridor and blocks unsupported pairs", () => {
+    const toStellar = makeStandardOrder({
       originChainId: CHAIN_ID_BASE,
       inputOracle: BASE_AXELAR_ORACLE,
       outputs: [
@@ -230,17 +147,16 @@ describe("Stellar testnet configuration safety", () => {
         })
       ]
     });
-    expect(
-      axelarActionBlocker({
-        order,
-        inputSettler: "0x0000000000000000000000000000000000000001",
-        sponsorSignature: { type: "None", payload: "0x" },
-        allocatorSignature: { type: "None", payload: "0x" }
-      })
-    ).toContain("old-ABI");
+    expect(axelarActionBlocker(container(toStellar))).toBeUndefined();
+    const toTestnet = makeStandardOrder({
+      originChainId: CHAIN_ID_BASE,
+      inputOracle: BASE_AXELAR_ORACLE,
+      outputs: [makeMandateOutput(STELLAR_TESTNET_CHAIN_ID, 1n, { oracle: STELLAR_AXELAR_ORACLE })]
+    });
+    expect(axelarActionBlocker(container(toTestnet))).toContain("Unsupported Axelar corridor");
   });
   it("keeps full-width testnet SAC identity and seven decimals in historical display", () => {
-    const address = stellarStrkeyToBytes32(STELLAR_TESTNET_USDC);
+    const address = stellarStrkeyToBytes32(AXELAR_NETWORKS.testnet.stellar.usdc);
     const token = getCoin({ chainId: STELLAR_TESTNET_CHAIN_ID, address });
     expect(token.address).toBe(address);
     expect(token.decimals).toBe(7);

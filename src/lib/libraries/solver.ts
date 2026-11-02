@@ -2,25 +2,18 @@ import {
   AXELAR_ORACLE,
   BYTES32_ZERO,
   COIN_FILLER,
+  axelarCorridor,
   getChain,
   getClient,
   getOracle,
   isStellarChain,
-  requireAlignedAxelar,
-  AXELAR_CHAIN_NAMES,
   type WC
 } from "$lib/config";
-import { maxUint256, padHex, stringToHex } from "viem";
+import { keccak256, maxUint256, padHex, stringToHex } from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
-import {
-  addressToBytes32,
-  bytes32ToAddress,
-  StandardSolanaIntent,
-  StandardStellarIntent,
-  bytes32ToStellarContract
-} from "@lifi/intent";
+import { bytes32ToAddress, StandardSolanaIntent, StandardStellarIntent } from "@lifi/intent";
 import axios from "axios";
-import { AXELAR_ORACLE_ABI } from "$lib/abi/axelaroracle";
+import { AXELAR_ORACLE_ABI, LEGACY_AXELAR_ORACLE_ABI } from "$lib/abi/axelaroracle";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { ERC20_ABI } from "$lib/abi/erc20";
@@ -31,6 +24,7 @@ import { axelarGasFee } from "./axelar";
 import { findOutputFilledLog, getFillInfo, persistReceipt, solverIdentityFor } from "./fillInfo";
 import { getOutputStorageKey } from "./flowProgress";
 import { fillStellarOutputs, finaliseStellarIntent, submitStellarAxelar } from "./stellar";
+import { axelarSubmitRoute, evmAxelarSubmitData } from "./axelarSubmit";
 
 /**
  * @notice Class for solving intents. Functions called by solvers.
@@ -190,7 +184,7 @@ export class Solver {
             fillTransactionHash: fillHash
           });
           // The proof travels from the output chain to the input chain.
-          requireAlignedAxelar(output.chainId, sourceChainId);
+          const route = axelarSubmitRoute(output.chainId, sourceChainId, order.inputOracle);
           const fee = await axelarGasFee(
             output.chainId,
             sourceChainId,
@@ -199,16 +193,11 @@ export class Solver {
               Number(isStellarChain(sourceChainId) ? sourceChainId : output.chainId)
             ]
           );
-          const destinationChainId = BigInt(sourceChainId);
-          const recipientOracle = isStellarChain(sourceChainId)
-            ? bytes32ToStellarContract(order.inputOracle)
-            : bytes32ToAddress(addressToBytes32(order.inputOracle));
 
           if (isStellarChain(output.chainId)) {
             const submit = await submitStellarAxelar({
               chainId: output.chainId,
-              destinationChainId,
-              recipientOracle,
+              route,
               payloads: [payload],
               gasAmount: fee,
               source: store.stellarAccounts[Number(output.chainId)]
@@ -222,44 +211,54 @@ export class Solver {
           if (preHook) await preHook(Number(output.chainId));
           const client = getClient(output.chainId);
           const anchor = await client.getBlock({ blockTag: "safe" });
-          const key = BigInt(
-            padHex(stringToHex(AXELAR_CHAIN_NAMES[Number(sourceChainId)]!), {
-              size: 32,
-              dir: "right"
-            })
-          );
-          const [forward, reverse] = await Promise.all([
-            client.readContract({
-              address: outputOracle,
-              abi: AXELAR_ORACLE_ABI,
-              functionName: "chainIdMap",
-              args: [key],
-              blockNumber: anchor.number
-            }),
-            client.readContract({
-              address: outputOracle,
-              abi: AXELAR_ORACLE_ABI,
-              functionName: "reverseChainIdMap",
-              args: [destinationChainId],
-              blockNumber: anchor.number
-            })
-          ]);
-          if (forward !== destinationChainId || reverse !== key)
-            throw new Error("Axelar forward/reverse chain map mismatch");
-          const submitTxHash = await walletClient.writeContract({
+          const name = route.destinationName;
+          const destinationChainId = route.destinationChainId;
+          let aligned: boolean;
+          if (route.generation === "legacy") {
+            const [forward, reverse] = await Promise.all([
+              client.readContract({
+                address: outputOracle,
+                abi: LEGACY_AXELAR_ORACLE_ABI,
+                functionName: "route",
+                args: [name],
+                blockNumber: anchor.number
+              }),
+              client.readContract({
+                address: outputOracle,
+                abi: LEGACY_AXELAR_ORACLE_ABI,
+                functionName: "reverseChainIdMap",
+                args: [destinationChainId],
+                blockNumber: anchor.number
+              })
+            ]);
+            aligned =
+              forward.chainId === destinationChainId && reverse === keccak256(stringToHex(name));
+          } else {
+            const key = BigInt(padHex(stringToHex(name), { size: 32, dir: "right" }));
+            const [forward, reverse] = await Promise.all([
+              client.readContract({
+                address: outputOracle,
+                abi: AXELAR_ORACLE_ABI,
+                functionName: "chainIdMap",
+                args: [key],
+                blockNumber: anchor.number
+              }),
+              client.readContract({
+                address: outputOracle,
+                abi: AXELAR_ORACLE_ABI,
+                functionName: "reverseChainIdMap",
+                args: [destinationChainId],
+                blockNumber: anchor.number
+              })
+            ]);
+            aligned = forward === destinationChainId && reverse === key;
+          }
+          if (!aligned) throw new Error("Axelar forward/reverse chain map mismatch");
+          const submitTxHash = await walletClient.sendTransaction({
             chain: getChain(output.chainId),
             account: account(),
-            address: outputOracle,
-            abi: AXELAR_ORACLE_ABI,
-            functionName: "submit",
-            args: [
-              destinationChainId,
-              recipientOracle,
-              bytes32ToAddress(output.settler),
-              [payload],
-              BYTES32_ZERO,
-              0 // DeliveryMode.Relayed
-            ],
+            to: outputOracle,
+            data: evmAxelarSubmitData(route, bytes32ToAddress(output.settler), [payload]),
             value: fee
           });
           const result = await getClient(output.chainId).waitForTransactionReceipt({
@@ -386,7 +385,7 @@ export class Solver {
       const { orderContainer, fillTransactionHashes, sourceChainId } = args;
       const { order } = orderContainer;
       if (AXELAR_ORACLE[Number(sourceChainId)]?.toLowerCase() === order.inputOracle.toLowerCase())
-        for (const output of order.outputs) requireAlignedAxelar(output.chainId, sourceChainId);
+        for (const output of order.outputs) axelarCorridor(output.chainId, sourceChainId);
       const intent = containerToIntent(orderContainer);
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Finalise is not supported for Solana input intents.");

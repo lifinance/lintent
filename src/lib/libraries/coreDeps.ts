@@ -1,4 +1,5 @@
 import {
+  AXELAR_NETWORKS,
   AXELAR_ORACLE,
   COIN_FILLER,
   INPUT_SETTLER_COMPACT_LIFI,
@@ -6,12 +7,10 @@ import {
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   POLYMER_ORACLE,
   WORMHOLE_ORACLE,
-  stellarDeployment,
-  requireAlignedAxelar,
-  stellarTestnetConfig,
-  STELLAR_TESTNET_ID
+  axelarCorridor,
+  stellarSettlers
 } from "$lib/config";
-import { outputSettlerForStellar, type OrderContainer } from "@lifi/intent";
+import { outputSettlerForStellar, stellarStrkeyToBytes32, type OrderContainer } from "@lifi/intent";
 import type { IntentDeps, OrderContainerValidationDeps } from "@lifi/intent";
 
 function isNonZeroAddress(value: string | undefined): value is `0x${string}` {
@@ -19,7 +18,7 @@ function isNonZeroAddress(value: string | undefined): value is `0x${string}` {
 }
 
 export const intentDeps: IntentDeps = {
-  getStellarDeployment: stellarDeployment,
+  getStellarDeployment: stellarSettlers,
   getOracle(verifier, chainId) {
     const key = Number(chainId);
     if (!Number.isFinite(key)) return undefined;
@@ -36,9 +35,7 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
   inputSettlers: [
     INPUT_SETTLER_COMPACT_LIFI,
     MULTICHAIN_INPUT_SETTLER_COMPACT,
-    ...(stellarTestnetConfig.enabled
-      ? [stellarDeployment(BigInt(STELLAR_TESTNET_ID))!.inputEscrow]
-      : [])
+    stellarStrkeyToBytes32(AXELAR_NETWORKS.testnet.stellar.inputEscrow)
   ],
   allowedInputOracles({ chainId, sameChainFill }) {
     const key = Number(chainId);
@@ -69,23 +66,20 @@ export const orderValidationDeps: OrderContainerValidationDeps = {
     return allowed;
   },
   allowedOutputSettlers(chainId) {
-    if (!isStellarChain(chainId)) return [COIN_FILLER];
-    try {
-      return [outputSettlerForStellar(BigInt(chainId), stellarDeployment)];
-    } catch {
-      return [];
-    }
+    return isStellarChain(chainId)
+      ? [outputSettlerForStellar(BigInt(chainId), stellarSettlers)]
+      : [COIN_FILLER];
   }
 };
 
-/** Legacy oracle identities remain readable; only the configured ABI-aligned pair is writable. */
+/** Axelar orders stay readable; only supported corridors are writable. */
 export function axelarActionBlocker(container: OrderContainer): string | undefined {
   const order = container.order;
   if (!("originChainId" in order)) return undefined;
   if (AXELAR_ORACLE[Number(order.originChainId)]?.toLowerCase() !== order.inputOracle.toLowerCase())
     return undefined;
   try {
-    for (const output of order.outputs) requireAlignedAxelar(order.originChainId, output.chainId);
+    for (const output of order.outputs) axelarCorridor(order.originChainId, output.chainId);
   } catch (error) {
     return (error as Error).message;
   }

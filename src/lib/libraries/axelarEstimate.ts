@@ -5,8 +5,8 @@ import {
   AXELAR_ORACLE,
   AXELAR_CHAIN_NAMES,
   ADDRESS_ZERO,
-  stellarDeployment,
-  requireAlignedAxelar,
+  axelarCorridor,
+  stellarSettlers,
   isStellarChain
 } from "$lib/config";
 import { BASE_OUTPUT_SETTLER } from "./apiQuote";
@@ -22,13 +22,13 @@ export type AxelarGasRequest = {
   executeData: string;
 };
 /** Estimate-only IDs; these bytes never enter submit/approval/authentication. */
-export function buildTestnetGasRequest(
+export function buildAxelarGasRequest(
   source: number,
   destination: number,
   payloads: `0x${string}`[],
   stellarExecutor?: string
 ): AxelarGasRequest {
-  requireAlignedAxelar(source, destination);
+  axelarCorridor(source, destination);
   if (
     !Array.isArray(payloads) ||
     payloads.length < 1 ||
@@ -39,7 +39,7 @@ export function buildTestnetGasRequest(
   )
     throw new Error("Axelar Stellar message exceeds 1–4 × 684-byte payload bounds");
   const application = isStellarChain(source)
-    ? stellarDeployment(BigInt(source))!.outputSettler
+    ? stellarSettlers(BigInt(source))!.outputSettler
     : addressToBytes32(BASE_OUTPUT_SETTLER);
   const message = concatHex([
     application,
@@ -57,7 +57,7 @@ export function buildTestnetGasRequest(
   let executeData: string;
   if (isStellarChain(destination)) {
     if (!stellarExecutor || !StrKey.isValidEd25519PublicKey(stellarExecutor))
-      throw new Error("Choose a Stellar Testnet relayer account to estimate receiving execution");
+      throw new Error("Choose a Stellar relayer account to estimate receiving execution");
     const op = Operation.invokeContractFunction({
       source: stellarExecutor,
       contract: receiver,
@@ -100,7 +100,8 @@ function record(value: unknown): Record<string, unknown> {
     throw new Error("Invalid Axelar response object");
   return value as Record<string, unknown>;
 }
-export function parseTestnetGasResponse(raw: unknown, request: AxelarGasRequest, decimals: 7 | 18) {
+/** Only the request's own keys are bound; the echo also carries `showDetailedFees`. */
+export function parseAxelarGasResponse(raw: unknown, request: AxelarGasRequest, decimals: 7 | 18) {
   const value = record(raw);
   if (!Array.isArray(value.details) || value.details.length !== 1)
     throw new Error("Invalid Axelar estimate hop count");
@@ -110,7 +111,6 @@ export function parseTestnetGasResponse(raw: unknown, request: AxelarGasRequest,
   const token = record(record(echo.result).source_token);
   if (
     echo.method !== "getFees" ||
-    Object.keys(params).length !== Object.keys(request).length ||
     Object.entries(request).some(([key, expected]) => params[key] !== expected) ||
     detail.gasLimit !== request.gasLimit ||
     detail.executeData !== request.executeData ||
@@ -125,12 +125,13 @@ export function parseTestnetGasResponse(raw: unknown, request: AxelarGasRequest,
     throw new Error("Invalid Axelar estimate total");
   return total;
 }
-export async function estimateTestnetGas(
+export async function estimateAxelarGas(
   request: AxelarGasRequest,
+  estimatorUrl: string,
   decimals: 7 | 18,
   fetcher: typeof fetch = fetch
 ) {
-  const response = await fetcher("https://testnet.api.axelarscan.io/gmp/estimateGasFeeForNHops", {
+  const response = await fetcher(estimatorUrl, {
     method: "POST",
     redirect: "error",
     signal: AbortSignal.timeout(10_000),
@@ -140,5 +141,5 @@ export async function estimateTestnetGas(
   if (!response.ok) throw new Error(`Axelar estimator HTTP ${response.status}`);
   const text = await response.text();
   if (text.length > 262144) throw new Error("Axelar gas response too large");
-  return parseTestnetGasResponse(JSON.parse(text), request, decimals);
+  return parseAxelarGasResponse(JSON.parse(text), request, decimals);
 }

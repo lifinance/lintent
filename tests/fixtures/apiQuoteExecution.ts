@@ -11,11 +11,7 @@ import {
 import { addressToBytes32, encodeStellarOrder, stellarStrkeyToBytes32 } from "@lifi/intent";
 import { encodeFunctionData } from "viem";
 import { SETTLER_ESCROW_ABI } from "../../src/lib/abi/escrow";
-import {
-  STELLAR_TESTNET_ID,
-  STELLAR_TESTNET_USDC,
-  BASE_TESTNET_USDC
-} from "../../src/lib/stellarTestnet";
+import { AXELAR_NETWORKS, STELLAR_TESTNET_ID } from "../../src/lib/axelarNetworks";
 import type { ApiQuoteContext, SelectedApiQuote } from "../../src/lib/libraries/apiQuote";
 import type { WC } from "../../src/lib/config";
 import { makeStandardOrder } from "./orderFixtures";
@@ -43,23 +39,8 @@ export async function runExecutionScenario(window: ExecutionWindow, mutation: Se
   spyOn(globalThis, "fetch").mockImplementation(
     Object.assign(async () => rejectNetwork(), { preconnect: rejectNetwork })
   );
-  const deployment = {
-    schemaVersion: 1,
-    corridor: "stellar-testnet-base-sepolia",
-    addressProvenance: "deployment-record",
-    stellar: {
-      inputEscrow: StrKey.encodeContract(Buffer.alloc(32, 1)),
-      outputSettler: StrKey.encodeContract(Buffer.alloc(32, 2)),
-      axelarOracle: StrKey.encodeContract(Buffer.alloc(32, 3))
-    },
-    baseSepolia: { axelarOracle: "0x7777777777777777777777777777777777777777" }
-  };
-  mock.module("$env/dynamic/public", () => ({
-    env: {
-      PUBLIC_STELLAR_TESTNET_ENABLED: "true",
-      PUBLIC_STELLAR_TESTNET_DEPLOYMENT_JSON: JSON.stringify(deployment)
-    }
-  }));
+  const testnet = AXELAR_NETWORKS.testnet;
+  const baseSepolia = testnet.evm[84532]!;
   const config = { ...(await import("../../src/lib/config")) };
   const stellarOrigin = window.startsWith("stellar");
   const evmUser = "0x1111111111111111111111111111111111111111" as const;
@@ -74,8 +55,8 @@ export async function runExecutionScenario(window: ExecutionWindow, mutation: Se
       : addressToBytes32(value as `0x${string}`);
   const baseEscrow = "0x00fc00edbe7c003b006f870068c548940000223e";
   const baseSettler = "0x75220b7600c300005038432a0000f308e0000068";
-  const inputAsset = stellarOrigin ? STELLAR_TESTNET_USDC : BASE_TESTNET_USDC;
-  const outputAsset = stellarOrigin ? BASE_TESTNET_USDC : STELLAR_TESTNET_USDC;
+  const inputAsset = stellarOrigin ? testnet.stellar.usdc : baseSepolia.usdc;
+  const outputAsset = stellarOrigin ? baseSepolia.usdc : testnet.stellar.usdc;
   const inputAmount = stellarOrigin ? 1000000n : 100000n;
   const outputAmount = stellarOrigin ? 100000n : 1000000n;
   const order = makeStandardOrder({
@@ -84,19 +65,15 @@ export async function runExecutionScenario(window: ExecutionWindow, mutation: Se
     originChainId: BigInt(inputChain),
     expires: 1_800_003_600,
     fillDeadline: 1_800_003_000,
-    inputOracle: stellarOrigin
-      ? wire(deployment.stellar.axelarOracle)
-      : (deployment.baseSepolia.axelarOracle as `0x${string}`),
+    inputOracle: stellarOrigin ? wire(testnet.stellar.oracle) : baseSepolia.oracle,
     inputs: [[BigInt(wire(inputAsset)), inputAmount]],
     outputs: [
       {
         chainId: BigInt(outputChain),
         token: wire(outputAsset),
         amount: outputAmount,
-        oracle: wire(
-          stellarOrigin ? deployment.baseSepolia.axelarOracle : deployment.stellar.axelarOracle
-        ),
-        settler: wire(stellarOrigin ? baseSettler : deployment.stellar.outputSettler),
+        oracle: wire(stellarOrigin ? baseSepolia.oracle : testnet.stellar.oracle),
+        settler: wire(stellarOrigin ? baseSettler : testnet.stellar.outputSettler),
         recipient: wire(recipient),
         callbackData: "0x",
         context: stellarOrigin ? "0x" : "0x00"
@@ -130,7 +107,7 @@ export async function runExecutionScenario(window: ExecutionWindow, mutation: Se
       openIntentTx: stellarOrigin
         ? {
             chain: `stellar:${inputChain}`,
-            to: deployment.stellar.inputEscrow,
+            to: testnet.stellar.inputEscrow,
             data: Buffer.from(encodeStellarOrder(order)).toString("base64")
           }
         : {

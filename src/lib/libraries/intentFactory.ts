@@ -10,7 +10,7 @@ import {
   getClient,
   INPUT_SETTLER_COMPACT_LIFI,
   INPUT_SETTLER_ESCROW_LIFI,
-  requireAlignedAxelar,
+  axelarCorridor,
   isStellarChain,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
   type WC
@@ -100,7 +100,7 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
   const account = opts.account();
   if (opts.verifier === "axelar") {
     for (const output of opts.outputTokens)
-      requireAlignedAxelar(opts.inputTokens[0].token.chainId, output.token.chainId);
+      axelarCorridor(opts.inputTokens[0].token.chainId, output.token.chainId);
   }
   if (opts.lock.type === "compact") {
     return {

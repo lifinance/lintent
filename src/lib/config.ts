@@ -1,25 +1,14 @@
-import { env } from "$env/dynamic/public";
-import {
-  loadStellarTestnet,
-  stellarContractHex,
+import { AXELAR_NETWORKS, stellarContractHex, STELLAR_TESTNET_ID } from "./axelarNetworks";
+export {
+  AXELAR_NETWORKS,
   STELLAR_TESTNET_ID,
-  STELLAR_TESTNET_USDC
-} from "./stellarTestnet";
-export { STELLAR_TESTNET_ID, isTestnetCorridor } from "./stellarTestnet";
-
-export const stellarTestnetConfig = (() => {
-  try {
-    return {
-      ...loadStellarTestnet(
-        env.PUBLIC_STELLAR_TESTNET_ENABLED,
-        env.PUBLIC_STELLAR_TESTNET_DEPLOYMENT_JSON
-      ),
-      error: undefined
-    };
-  } catch (error) {
-    return { enabled: false, deployment: undefined, error: String(error) };
-  }
-})();
+  axelarCorridor,
+  findAxelarCorridor,
+  stellarSettlers,
+  type AxelarCorridor,
+  type AxelarGeneration,
+  type AxelarNetwork
+} from "./axelarNetworks";
 
 import {
   COIN_FILLER,
@@ -101,26 +90,18 @@ export function isStellarChain(chainId: number | bigint | string) {
   return [STELLAR_CHAIN_ID, STELLAR_TESTNET_ID].includes(normalizeChainId(chainId));
 }
 
-// Axelar GMP oracles. EVM entries are addresses; the Stellar entry is the raw
-// 32-byte contract id (CAVJORXN3EOHH5GGHOK66YTPBUFNICWGSAO3UBUG6SS75VSMGWIEQX4V).
-export const AXELAR_ORACLE: Partial<Record<number, `0x${string}`>> = {
-  [base.id]: "0xb7eA767b54aF5Dd8AD12Df648A399F9075D93FeE",
-  [arbitrum.id]: "0x86dd17B49ebcE5773b44490951BB80692D905BC9",
-  [STELLAR_CHAIN_ID]: "0x2a9746edd91c73f4c63b95ef626f0d0ad40ac6901dba0686f4a5fed64c359048"
-};
-if (stellarTestnetConfig.enabled && stellarTestnetConfig.deployment) {
-  AXELAR_ORACLE[STELLAR_TESTNET_ID] = stellarContractHex(
-    stellarTestnetConfig.deployment.stellar.axelarOracle
-  );
-  AXELAR_ORACLE[84532] = stellarTestnetConfig.deployment.baseSepolia.axelarOracle;
+// Axelar GMP oracles and chain names, derived from AXELAR_NETWORKS. EVM entries are
+// addresses; Stellar entries are raw 32-byte contract ids.
+export const AXELAR_ORACLE: Partial<Record<number, `0x${string}`>> = {};
+export const AXELAR_CHAIN_NAMES: Partial<Record<number, string>> = {};
+for (const { stellar, evm } of Object.values(AXELAR_NETWORKS)) {
+  AXELAR_ORACLE[stellar.chainId] = stellarContractHex(stellar.oracle);
+  AXELAR_CHAIN_NAMES[stellar.chainId] = stellar.axelarName;
+  for (const [chainId, deployment] of Object.entries(evm)) {
+    AXELAR_ORACLE[Number(chainId)] = deployment!.oracle;
+    AXELAR_CHAIN_NAMES[Number(chainId)] = deployment!.axelarName;
+  }
 }
-export const AXELAR_CHAIN_NAMES: Partial<Record<number, string>> = {
-  [base.id]: "base",
-  [arbitrum.id]: "arbitrum",
-  [STELLAR_CHAIN_ID]: "stellar"
-};
-AXELAR_CHAIN_NAMES[STELLAR_TESTNET_ID] = "stellar-2026-q1-2";
-AXELAR_CHAIN_NAMES[84532] = "base-sepolia";
 
 export type ChainMeta = { id: number; name: string; rpc: string; passphrase: string };
 export function stellarNetwork(chainId: number | bigint): ChainMeta {
@@ -140,36 +121,6 @@ export function stellarNetwork(chainId: number | bigint): ChainMeta {
     };
   throw new Error(`Unknown Stellar network ${chainId}`);
 }
-export function stellarDeployment(chainId: bigint) {
-  if (chainId !== BigInt(STELLAR_TESTNET_ID)) return undefined;
-  const config = stellarTestnetConfig;
-  if (!config.enabled || !config.deployment)
-    throw new Error(
-      config.error ?? "Stellar testnet corridor disabled: missing deployment configuration"
-    );
-  return {
-    inputEscrow: stellarContractHex(config.deployment.stellar.inputEscrow),
-    outputSettler: stellarContractHex(config.deployment.stellar.outputSettler)
-  };
-}
-export function requireAlignedAxelar(a: number | bigint, b: number | bigint) {
-  if (
-    !(
-      (Number(a) === STELLAR_TESTNET_ID && Number(b) === 84532) ||
-      (Number(a) === 84532 && Number(b) === STELLAR_TESTNET_ID)
-    )
-  )
-    throw new Error(
-      "Unsupported old-ABI Axelar deployment: publication/claim disabled; historical reads/refunds remain available"
-    );
-  stellarDeployment(BigInt(STELLAR_TESTNET_ID));
-}
-// Minimum Axelar gas payment, in the SOURCE chain's base unit (wei / stroops).
-export const AXELAR_GAS_FLOOR: Partial<Record<number, bigint>> = {
-  [base.id]: 500000000000000n,
-  [arbitrum.id]: 500000000000000n,
-  [STELLAR_CHAIN_ID]: 50000000n
-};
 
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
 export type availableInputSettlers =
@@ -218,11 +169,7 @@ export const chainList = (mainnet: boolean) => {
 
 export const chainIdList = (mainnet: boolean): number[] => {
   const ids: number[] = chainList(mainnet).map((name) => chainMap[name].id);
-  return mainnet
-    ? [...ids, STELLAR_CHAIN_ID]
-    : stellarTestnetConfig.enabled
-      ? [...ids, STELLAR_TESTNET_ID]
-      : ids;
+  return [...ids, mainnet ? STELLAR_CHAIN_ID : STELLAR_TESTNET_ID];
 };
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
@@ -237,7 +184,7 @@ export type Token = {
   decimals: number;
 };
 export const STELLAR_TESTNET_TOKEN: Token = {
-  address: stellarContractHex(STELLAR_TESTNET_USDC),
+  address: stellarContractHex(AXELAR_NETWORKS.testnet.stellar.usdc),
   name: "usdc",
   chainId: STELLAR_TESTNET_ID,
   decimals: 7
@@ -375,7 +322,7 @@ export const coinList = (mainnet: boolean) => {
     ] as const;
   else
     return [
-      ...(stellarTestnetConfig.enabled ? [STELLAR_TESTNET_TOKEN] : []),
+      STELLAR_TESTNET_TOKEN,
       {
         address: `0x5fd84259d66Cd46123540766Be93DFE6D43130D7`,
         name: "usdc",

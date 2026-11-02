@@ -5,16 +5,16 @@
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
   import {
+    AXELAR_NETWORKS,
     AXELAR_ORACLE,
     POLYMER_ALLOCATOR,
     POLYMER_ORACLE,
+    axelarCorridor,
+    findAxelarCorridor,
     formatTokenAmount,
+    getChain,
     getChainName,
     isStellarChain,
-    stellarTestnetConfig,
-    requireAlignedAxelar,
-    isTestnetCorridor,
-    STELLAR_TESTNET_ID,
     coinList,
     type Verifier
   } from "$lib/config";
@@ -34,19 +34,25 @@
   import type { SelectedApiQuote, ApiQuoteContext } from "$lib/libraries/apiQuote";
   let selectedQuote = $state<SelectedApiQuote | undefined>();
   let quoteGeneration = $state(0);
-  const testnetPair = $derived(
-    isTestnetCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId)
+  const axelarPair = $derived(
+    findAxelarCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId) !==
+      undefined
   );
-  function selectTestnetDirection(stellarOrigin: boolean) {
-    const tokens = coinList(false);
-    const stellar = tokens.find((t) => t.chainId === STELLAR_TESTNET_ID)!;
-    const base = tokens.find((t) => t.chainId === 84532 && t.name === "usdc")!;
+  const axelarNetwork = $derived(store.mainnet ? AXELAR_NETWORKS.mainnet : AXELAR_NETWORKS.testnet);
+  const axelarEvmChains = $derived(Object.keys(axelarNetwork.evm).map(Number));
+  const stellarLabel = $derived(store.mainnet ? "Stellar" : "Stellar Testnet");
+  function selectAxelarDirection(evmChainId: number, stellarOrigin: boolean) {
+    const tokens = coinList(store.mainnet);
+    const stellar = tokens.find(
+      (t) => t.chainId === axelarNetwork.stellar.chainId && t.name === "usdc"
+    )!;
+    const evm = tokens.find((t) => t.chainId === evmChainId && t.name === "usdc")!;
     store.intentType = "escrow";
     store.verifier = "axelar";
     store.inputTokens = [
-      { token: stellarOrigin ? stellar : base, amount: stellarOrigin ? 1000000n : 100000n }
+      { token: stellarOrigin ? stellar : evm, amount: stellarOrigin ? 1000000n : 100000n }
     ];
-    store.outputTokens = [{ token: stellarOrigin ? base : stellar, amount: 0n }];
+    store.outputTokens = [{ token: stellarOrigin ? evm : stellar, amount: 0n }];
   }
 
   const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
@@ -282,8 +288,7 @@
     {
       value: "axelar",
       label: "Axelar",
-      enabled:
-        testnetPair && involvedChains.every((chainId) => AXELAR_ORACLE[chainId] !== undefined)
+      enabled: axelarPair && involvedChains.every((chainId) => AXELAR_ORACLE[chainId] !== undefined)
     },
     { value: "wormhole", label: "Wormhole", enabled: false }
   ]);
@@ -296,16 +301,13 @@
   const routeBlocker = $derived.by((): string | undefined => {
     if (stellarInvolved) {
       try {
-        requireAlignedAxelar(
-          store.inputTokens[0].token.chainId,
-          store.outputTokens[0].token.chainId
-        );
+        axelarCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId);
       } catch (error) {
         return (error as Error).message;
       }
-      if (store.intentType !== "escrow") return "Testnet API issuance requires escrow";
+      if (store.intentType !== "escrow") return "Stellar API issuance requires escrow";
       if (store.inputTokens.length !== 1 || store.outputTokens.length !== 1)
-        return "Testnet corridor supports one USDC input and output";
+        return "Stellar corridor supports one USDC input and output";
     }
     if (inputOnStellar && numInputChains > 1)
       return "Stellar inputs cannot be combined with other input chains";
@@ -348,29 +350,25 @@
   {/if}
 
   <div class="space-y-2">
-    {#if !store.mainnet}
-      {#if stellarTestnetConfig.error}
-        <p role="alert" data-testid="testnet-config-error" class="text-xs text-red-600">
-          {stellarTestnetConfig.error}
-        </p>
-      {:else if !stellarTestnetConfig.enabled}
-        <p data-testid="testnet-disabled" class="text-xs text-gray-600">
-          Stellar testnet corridor disabled: missing enabled deployment-record configuration.
-        </p>
-      {:else}
-        <div class="flex gap-2 text-xs" data-testid="testnet-routes">
-          <button class="rounded border px-2 py-1" onclick={() => selectTestnetDirection(true)}
-            >Stellar Testnet → Base Sepolia</button
-          >
-          <button class="rounded border px-2 py-1" onclick={() => selectTestnetDirection(false)}
-            >Base Sepolia → Stellar Testnet</button
-          >
-        </div>
-        <p class="text-xs text-gray-600">
-          Freighter: Testnet · Order dev API · USDC only · external Catamaran solver
-        </p>
-      {/if}
-    {/if}
+    <div class="flex flex-wrap gap-2 text-xs" data-testid="axelar-routes">
+      {#each axelarEvmChains as chainId (chainId)}
+        <button
+          class="rounded border px-2 py-1"
+          onclick={() => selectAxelarDirection(chainId, true)}
+          >{stellarLabel} → {getChain(chainId).name}</button
+        >
+        <button
+          class="rounded border px-2 py-1"
+          onclick={() => selectAxelarDirection(chainId, false)}
+          >{getChain(chainId).name} → {stellarLabel}</button
+        >
+      {/each}
+    </div>
+    <p class="text-xs text-gray-600">
+      Freighter: {store.mainnet ? "Mainnet" : "Testnet"} · {axelarNetwork.productionApi
+        ? "Order API"
+        : "Order dev API"} · USDC only · external Catamaran solver
+    </p>
     <SectionCard title="Intent pair" compact>
       {#snippet headerRight()}
         <GetQuote
@@ -525,7 +523,7 @@
         <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
           >Connect the origin EVM wallet</button
         >
-      {:else if testnetPair}
+      {:else if axelarPair}
         {#if !selectedQuote}
           <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
             >Select a valid API quote</button

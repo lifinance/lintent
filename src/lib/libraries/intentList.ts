@@ -7,7 +7,7 @@ import {
   isStellarChain,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
-  stellarDeployment
+  stellarSettlers
 } from "../config";
 import {
   bytes32ToAddress,
@@ -164,14 +164,12 @@ function normalizeAddress(value: string) {
 
 function mapInputScheme(inputSettler: `0x${string}`, chainId?: bigint): string | undefined {
   const settler = normalizeAddress(inputSettler);
-  if (chainId && isStellarChain(chainId)) {
-    try {
-      if (settler === normalizeAddress(inputSettlerForStellar(BigInt(chainId), stellarDeployment)))
-        return "Escrow";
-    } catch {
-      return undefined;
-    }
-  }
+  if (
+    chainId &&
+    isStellarChain(chainId) &&
+    settler === normalizeAddress(inputSettlerForStellar(chainId, stellarSettlers))
+  )
+    return "Escrow";
   if (settler === normalizeAddress(INPUT_SETTLER_ESCROW_LIFI)) return "Escrow";
   if (settler === normalizeAddress(inputSettlerForStellar(STELLAR_MAINNET_CHAIN_ID)))
     return "Escrow";

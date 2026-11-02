@@ -21,15 +21,9 @@ import {
   type StandardStellarIntent
 } from "@lifi/intent";
 import { bytesToHex, hexToBytes } from "viem";
-import {
-  AXELAR_ORACLE,
-  BYTES32_ZERO,
-  stellarNetwork,
-  stellarDeployment,
-  AXELAR_CHAIN_NAMES,
-  requireAlignedAxelar
-} from "$lib/config";
+import { AXELAR_ORACLE, stellarNetwork, stellarSettlers } from "$lib/config";
 import { signStellarTransaction } from "$lib/utils/stellarWallet";
+import { stellarAxelarSubmitArgs, type AxelarSubmitRoute } from "./axelarSubmit";
 
 const stellarServer = (chainId: number | bigint) => new rpc.Server(stellarNetwork(chainId).rpc);
 
@@ -41,9 +35,9 @@ const POLL_TIMEOUT_MS = 90_000;
 const APPROVAL_LEDGERS = 1_000;
 
 const escrow = (chainId: number | bigint) =>
-  bytes32ToStellarContract(inputSettlerForStellar(BigInt(chainId), stellarDeployment));
+  bytes32ToStellarContract(inputSettlerForStellar(BigInt(chainId), stellarSettlers));
 const outputSettler = (chainId: number | bigint) =>
-  bytes32ToStellarContract(outputSettlerForStellar(BigInt(chainId), stellarDeployment));
+  bytes32ToStellarContract(outputSettlerForStellar(BigInt(chainId), stellarSettlers));
 
 export type StellarTransaction = {
   hash: `0x${string}`;
@@ -387,39 +381,40 @@ export function finaliseStellarIntent(opts: {
 /** Stellar AxelarOracle `submit`: relays fill payloads proven by the OutputSettler. */
 export async function submitStellarAxelar(opts: {
   chainId: number | bigint;
-  destinationChainId: bigint;
-  recipientOracle: string;
+  route: AxelarSubmitRoute;
   payloads: `0x${string}`[];
   gasAmount: bigint;
   source: string | undefined;
 }) {
   const source = requireSource(opts.source);
-  requireAlignedAxelar(opts.chainId, opts.destinationChainId);
+  const { route } = opts;
   if (opts.gasAmount <= 0n) throw new Error("Paid Relayed gas must be positive");
   const oracle = bytes32ToStellarContract(AXELAR_ORACLE[Number(opts.chainId)]!);
-  const name = AXELAR_CHAIN_NAMES[Number(opts.destinationChainId)]!;
-  const domain = await simulateRead(opts.chainId, oracle, "route", [
-    nativeToScVal(name, { type: "string" })
-  ]);
+  const domain = scValToNative(
+    await simulateRead(opts.chainId, oracle, "route", [
+      nativeToScVal(route.destinationName, { type: "string" })
+    ])
+  );
   const reverse = await simulateRead(opts.chainId, oracle, "chain_name", [
-    nativeToScVal(opts.destinationChainId, { type: "u256" })
+    nativeToScVal(route.destinationChainId, { type: "u256" })
   ]);
-  if (BigInt(scValToNative(domain)) !== opts.destinationChainId || scValToNative(reverse) !== name)
+  // Legacy `route` returns the Chain struct; current returns the chain id.
+  const forward = route.generation === "legacy" ? domain.chain_id : domain;
+  if (
+    BigInt(forward) !== route.destinationChainId ||
+    scValToNative(reverse) !== route.destinationName
+  )
     throw new Error("Stellar Axelar forward/reverse chain map mismatch");
   return invokeStellar({
     chainId: opts.chainId,
     source,
-    contractId: bytes32ToStellarContract(AXELAR_ORACLE[Number(opts.chainId)]!),
+    contractId: oracle,
     method: "submit",
-    args: [
-      nativeToScVal(opts.destinationChainId, { type: "u256" }),
-      nativeToScVal(opts.recipientOracle, { type: "string" }),
-      scAddress(outputSettler(opts.chainId)),
-      xdr.ScVal.scvVec(opts.payloads.map(scBytes)),
-      scAddress(source),
-      scI128(opts.gasAmount),
-      scBytes(BYTES32_ZERO),
-      xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Relayed")])
-    ]
+    args: stellarAxelarSubmitArgs(route, {
+      source: outputSettler(opts.chainId),
+      payer: source,
+      payloads: opts.payloads,
+      gasAmount: opts.gasAmount
+    })
   });
 }

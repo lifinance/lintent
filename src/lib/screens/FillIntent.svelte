@@ -2,6 +2,8 @@
   import { formatTokenAmount, getChainName, getCoin } from "$lib/config";
   import type { MandateOutput, OrderContainer } from "@lifi/intent";
   import { Solver } from "$lib/libraries/solver";
+  import { getOutputStorageKey as outputKey, isOutputFilled } from "$lib/libraries/flowProgress";
+  import { invalidateRpcPrefix } from "$lib/libraries/rpcCache";
   import AwaitButton from "$lib/components/AwaitButton.svelte";
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
@@ -9,11 +11,8 @@
   import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
-  import { compactTypes } from "@lifi/intent";
-  import { hashStruct } from "viem";
   import { isTronBase58Address } from "$lib/utils/chainType";
   import { isValidTxRef, normalizeTxRef, txRefError, txRefPlaceholder } from "$lib/utils/txRef";
-  import { isOutputFilled } from "$lib/libraries/fillStatus";
   import { tronBase58ToHex } from "@lifi/intent";
 
   let {
@@ -67,6 +66,7 @@
   });
   const postHookScroll = async () => {
     await postHook();
+    invalidateRpcPrefix("progress:filled:");
     refreshValidation += 1;
   };
 
@@ -87,20 +87,21 @@
     }
     return arrMap;
   }
-  const outputKey = (output: MandateOutput) =>
-    hashStruct({
-      data: output,
-      types: compactTypes,
-      primaryType: "MandateOutput"
-    });
+  // Explorers for Tron and Stellar show transaction hashes without the 0x
+  // prefix; normalising before validation accepts both forms.
+  const normalizedFillTxRef = (value: string | undefined, chainId: bigint) => {
+    if (!value) return undefined;
+    const normalized = normalizeTxRef(value, chainId);
+    return isValidTxRef(normalized, chainId) ? normalized : undefined;
+  };
   const getManualFillTxInputValue = (output: MandateOutput) => {
     const key = outputKey(output);
     return manualFillTxInputs[key] ?? store.fillTransactions[key] ?? "";
   };
   const saveManualFillTransaction = async (output: MandateOutput) => {
     const key = outputKey(output);
-    const txHash = getManualFillTxInputValue(output).trim();
-    if (!isValidTxRef(txHash, output.chainId)) {
+    const normalizedHash = normalizedFillTxRef(getManualFillTxInputValue(output), output.chainId);
+    if (!normalizedHash) {
       manualFillTxErrors[key] = txRefError(output.chainId);
       manualFillTxSaved[key] = false;
       return;
@@ -108,7 +109,6 @@
     manualFillTxSaving[key] = true;
     manualFillTxErrors[key] = "";
     try {
-      const normalizedHash = normalizeTxRef(txHash, output.chainId);
       store.fillTransactions[key] = normalizedHash;
       await store.saveFillTransaction(key, normalizedHash);
       manualFillTxSaved[key] = true;
@@ -154,11 +154,7 @@
       const result = await func();
 
       for (const output of outputs) {
-        const outputHash = hashStruct({
-          data: output,
-          types: compactTypes,
-          primaryType: "MandateOutput"
-        });
+        const outputHash = outputKey(output);
         store.fillTransactions[outputHash] = result;
         store
           .saveFillTransaction(outputHash, result)
@@ -170,7 +166,7 @@
 
 <ScreenFrame
   title="Fill Intent"
-  description="Fill each chain once and continue to the right. If you refreshed the page provide your fill tx hash in the input box."
+  description="Catamaran may fill externally. Supply its fill transaction hash to inspect proof progress; no solver wallet connection is required for reads."
 >
   <div class="space-y-2">
     <SectionCard compact title="Solver Address">
@@ -250,8 +246,8 @@
               </button>
             {:else}
               <AwaitButton
-                variant={chainStatuses.every((v) => !v) ? "default" : "muted"}
-                buttonFunction={chainStatuses.every((v) => !v)
+                variant={chainStatuses.every((filled) => !filled) ? "default" : "muted"}
+                buttonFunction={chainStatuses.every((filled) => !filled)
                   ? fillWrapper(
                       chainIdAndOutputs[1],
                       Solver.fill(

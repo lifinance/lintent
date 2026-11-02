@@ -1,14 +1,35 @@
-import { BYTES32_ZERO, COIN_FILLER, getChain, getClient, getOracle, type WC } from "$lib/config";
-import { encodeFunctionData, hashStruct, hexToBytes, maxUint256, parseEventLogs } from "viem";
+import {
+  AXELAR_ORACLE,
+  BYTES32_ZERO,
+  COIN_FILLER,
+  axelarCorridor,
+  getChain,
+  getClient,
+  getOracle,
+  isStellarChain,
+  type WC
+} from "$lib/config";
+import {
+  encodeFunctionData,
+  hashStruct,
+  hexToBytes,
+  keccak256,
+  maxUint256,
+  padHex,
+  parseEventLogs,
+  stringToHex
+} from "viem";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import {
   addressToBytes32,
   bytes32ToAddress,
   bytes32ToSolanaBase58,
   StandardSolanaIntent,
+  StandardStellarIntent,
   TRON_LEGACY_POLYMER_ORACLES
 } from "@lifi/intent";
 import axios from "axios";
+import { AXELAR_ORACLE_ABI, LEGACY_AXELAR_ORACLE_ABI } from "$lib/abi/axelaroracle";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { ERC20_ABI } from "$lib/abi/erc20";
@@ -41,6 +62,10 @@ import {
   submitReceiveMessage as submitTronReceiveMessage
 } from "$lib/tron/writes";
 import type { TronDeps } from "$lib/tron/types";
+import { axelarGasFee } from "./axelar";
+import { getFillInfo, persistReceipt, solverIdentityFor } from "./fillInfo";
+import { fillStellarOutputs, finaliseStellarIntent, submitStellarAxelar } from "./stellar";
+import { axelarSubmitRoute, evmAxelarSubmitData } from "./axelarSubmit";
 
 async function tronDeps(): Promise<TronDeps> {
   return { reads: await getTronReads(), signer: getTronSigner() };
@@ -166,18 +191,6 @@ export class Solver {
     return String(error);
   }
 
-  private static async persistReceipt(
-    chainId: number | bigint,
-    txHash: `0x${string}`,
-    receipt: unknown
-  ) {
-    try {
-      await store.saveTransactionReceipt(chainId, txHash, receipt);
-    } catch (error) {
-      console.warn("saveTransactionReceipt error", { chainId: Number(chainId), txHash, error });
-    }
-  }
-
   static fill(
     walletClient: WC,
     args: {
@@ -199,6 +212,27 @@ export class Solver {
         outputs
       } = args;
       const orderId = containerToIntent(args.orderContainer).orderId();
+      // A Stellar escrow pays the claimant whose address commitment matches
+      // the fill, so a Stellar-input order always records that commitment.
+      const solverBytes32 =
+        "originChainId" in order && isStellarChain(order.originChainId)
+          ? solverIdentityFor(order)
+          : addressToBytes32(solverAddress);
+
+      if (isStellarChain(outputs[0].chainId)) {
+        if (outputs.some((output) => output.chainId !== outputs[0].chainId))
+          throw new Error("Filling outputs on multiple chains with single fill call not supported");
+        const fill = await fillStellarOutputs({
+          orderId,
+          outputs,
+          fillDeadline: order.fillDeadline,
+          solver: solverBytes32,
+          source: store.stellarAccounts[Number(outputs[0].chainId)]
+        });
+        await store.saveStellarTransaction(outputs[0].chainId, fill.hash, fill);
+        if (postHook) await postHook();
+        return fill.hash;
+      }
 
       const outputChainId = Number(outputs[0].chainId);
 
@@ -211,7 +245,7 @@ export class Solver {
           orderId,
           outputs,
           fillDeadline: Number(order.fillDeadline),
-          solverBytes32: addressToBytes32(solverAddress)
+          solverBytes32
         });
         if (postHook) await postHook();
         return signature;
@@ -222,7 +256,7 @@ export class Solver {
           orderId,
           outputs,
           fillDeadline: Number(order.fillDeadline),
-          solverBytes32: addressToBytes32(solverAddress)
+          solverBytes32
         });
         if (postHook) await postHook();
         return `0x${txId.replace("0x", "")}` as `0x${string}`;
@@ -268,7 +302,7 @@ export class Solver {
           const approveReceipt = await getClient(outputChain.id).waitForTransactionReceipt({
             hash: approveTransaction
           });
-          await Solver.persistReceipt(outputs[0].chainId, approveTransaction, approveReceipt);
+          await persistReceipt(outputs[0].chainId, approveTransaction, approveReceipt);
         }
       }
 
@@ -279,12 +313,12 @@ export class Solver {
         value,
         abi: COIN_FILLER_ABI,
         functionName: "fillOrderOutputs",
-        args: [orderId, outputs, order.fillDeadline, addressToBytes32(solverAddress)]
+        args: [orderId, outputs, order.fillDeadline, solverBytes32]
       });
       const fillReceipt = await getClient(outputChain.id).waitForTransactionReceipt({
         hash: transactionHash
       });
-      await Solver.persistReceipt(outputs[0].chainId, transactionHash, fillReceipt);
+      await persistReceipt(outputs[0].chainId, transactionHash, fillReceipt);
       if (postHook) await postHook();
       return transactionHash;
     };
@@ -331,6 +365,102 @@ export class Solver {
         }
 
         const orderId = containerToIntent(args.orderContainer).orderId();
+
+        if (
+          order.inputOracle.toLowerCase() === AXELAR_ORACLE[Number(sourceChainId)]?.toLowerCase()
+        ) {
+          const { payload } = await getFillInfo({
+            orderId,
+            output,
+            fillTransactionHash: fillTransactionHash as `0x${string}`
+          });
+          // The proof travels from the output chain to the input chain.
+          const route = axelarSubmitRoute(output.chainId, sourceChainId, order.inputOracle);
+          const fee = await axelarGasFee(
+            output.chainId,
+            sourceChainId,
+            [payload],
+            store.stellarAccounts[
+              Number(isStellarChain(sourceChainId) ? sourceChainId : output.chainId)
+            ]
+          );
+
+          if (isStellarChain(output.chainId)) {
+            const submit = await submitStellarAxelar({
+              chainId: output.chainId,
+              route,
+              payloads: [payload],
+              gasAmount: fee,
+              source: store.stellarAccounts[Number(output.chainId)]
+            });
+            if (postHook) await postHook();
+            return { submitTxHash: submit.hash };
+          }
+
+          const outputOracle = AXELAR_ORACLE[Number(output.chainId)];
+          if (!outputOracle) throw new Error(`No Axelar oracle on chain ${output.chainId}`);
+          if (preHook) await preHook(Number(output.chainId));
+          const client = getClient(output.chainId);
+          const anchor = await client.getBlock({ blockTag: "safe" });
+          const name = route.destinationName;
+          const destinationChainId = route.destinationChainId;
+          let aligned: boolean;
+          if (route.generation === "legacy") {
+            const [forward, reverse] = await Promise.all([
+              client.readContract({
+                address: outputOracle,
+                abi: LEGACY_AXELAR_ORACLE_ABI,
+                functionName: "route",
+                args: [name],
+                blockNumber: anchor.number
+              }),
+              client.readContract({
+                address: outputOracle,
+                abi: LEGACY_AXELAR_ORACLE_ABI,
+                functionName: "reverseChainIdMap",
+                args: [destinationChainId],
+                blockNumber: anchor.number
+              })
+            ]);
+            aligned =
+              forward.chainId === destinationChainId && reverse === keccak256(stringToHex(name));
+          } else {
+            const key = BigInt(padHex(stringToHex(name), { size: 32, dir: "right" }));
+            const [forward, reverse] = await Promise.all([
+              client.readContract({
+                address: outputOracle,
+                abi: AXELAR_ORACLE_ABI,
+                functionName: "chainIdMap",
+                args: [key],
+                blockNumber: anchor.number
+              }),
+              client.readContract({
+                address: outputOracle,
+                abi: AXELAR_ORACLE_ABI,
+                functionName: "reverseChainIdMap",
+                args: [destinationChainId],
+                blockNumber: anchor.number
+              })
+            ]);
+            aligned = forward === destinationChainId && reverse === key;
+          }
+          if (!aligned) throw new Error("Axelar forward/reverse chain map mismatch");
+          const submitTxHash = await walletClient.sendTransaction({
+            chain: getChain(output.chainId),
+            account: account(),
+            to: outputOracle,
+            data: evmAxelarSubmitData(route, bytes32ToAddress(output.settler), [payload]),
+            value: fee
+          });
+          const result = await getClient(output.chainId).waitForTransactionReceipt({
+            hash: submitTxHash,
+            timeout: 120_000,
+            pollingInterval: 2_000
+          });
+          await persistReceipt(output.chainId, submitTxHash, result);
+          if (postHook) await postHook();
+          return { submitTxHash };
+        }
 
         // A Solana OUTPUT is proven by submitting the fill to Polymer, which
         // reads the `Prove:` log the submit instruction writes. A same-chain
@@ -458,7 +588,7 @@ export class Solver {
             timeout: 120_000,
             pollingInterval: 2_000
           });
-          await Solver.persistReceipt(sourceChainId, transactionHash, result);
+          await persistReceipt(sourceChainId, transactionHash, result);
           if (postHook) await postHook();
           return result;
         }
@@ -634,7 +764,7 @@ export class Solver {
         timeout: 120_000,
         pollingInterval: 2_000
       });
-      await Solver.persistReceipt(sourceChainId, transactionHash, result);
+      await persistReceipt(sourceChainId, transactionHash, result);
       if (postHook) await postHook();
       return result;
     })();
@@ -657,6 +787,8 @@ export class Solver {
       const { preHook, postHook, account } = opts;
       const { orderContainer, fillTransactionHashes, sourceChainId } = args;
       const { order, inputSettler } = orderContainer;
+      if (AXELAR_ORACLE[Number(sourceChainId)]?.toLowerCase() === order.inputOracle.toLowerCase())
+        for (const output of order.outputs) axelarCorridor(output.chainId, sourceChainId);
       const intent = containerToIntent(orderContainer);
 
       if (fillTransactionHashes.length !== order.outputs.length) {
@@ -678,11 +810,14 @@ export class Solver {
       // solver is whatever fillerData proposed (which may be an override, not
       // the filling wallet), and the recorded timestamp is the exact value
       // hashed on-chain — deriving either from local context breaks finalise.
+      // Stellar fills are read from the Soroban fill event instead.
       const orderId = intent.orderId();
       const solveParams = await Promise.all(
         fillTransactionHashes.map(async (fth, i) => {
           const output = order.outputs[i];
-          const { solver, timestamp } = await getFillDetails(orderId, output, fth);
+          const { solver, timestamp } = isStellarChain(output.chainId)
+            ? await getFillInfo({ orderId, output, fillTransactionHash: fth as `0x${string}` })
+            : await getFillDetails(orderId, output, fth);
           return { timestamp, solver };
         })
       );
@@ -690,24 +825,39 @@ export class Solver {
       // The input settler derives the order owner from solveParams[0].solver
       // and requires the caller to be that owner.
       //
-      // Compared as bytes32 on Solana: a Solana solver identity IS 32 bytes, so
-      // truncating it to the low 20 (as the EVM comparison does) would never
-      // match the connected wallet and would reject the rightful solver.
+      // Compared as bytes32 on Solana and Stellar: a Solana solver identity IS
+      // 32 bytes and a Stellar claimant is an address commitment, so truncating
+      // either to the low 20 (as the EVM comparison does) would never match the
+      // connected wallet and would reject the rightful solver.
+      const stellarSource = isStellarChain(sourceChainId);
       const solverBytes32 = solveParams[0].solver;
-      const connected = account();
-      const ownerMatches = isSolanaChain(sourceChainId)
-        ? solverBytes32.toLowerCase() === connected.toLowerCase()
-        : bytes32ToAddress(solverBytes32).toLowerCase() === connected.toLowerCase();
+      const connected = stellarSource ? solverIdentityFor(order) : account();
+      const ownerMatches =
+        isSolanaChain(sourceChainId) || stellarSource
+          ? solverBytes32.toLowerCase() === connected.toLowerCase()
+          : bytes32ToAddress(solverBytes32).toLowerCase() === connected.toLowerCase();
       if (!ownerMatches) {
         const owner = isSolanaChain(sourceChainId)
           ? bytes32ToSolanaBase58(solverBytes32)
-          : bytes32ToAddress(solverBytes32);
+          : stellarSource
+            ? solverBytes32
+            : bytes32ToAddress(solverBytes32);
         const connectedDisplay = isSolanaChain(sourceChainId)
           ? bytes32ToSolanaBase58(connected)
           : connected;
         throw new Error(
           `This order was filled for solver ${owner} — connect that wallet to claim (connected: ${connectedDisplay}).`
         );
+      }
+
+      if (intent instanceof StandardStellarIntent) {
+        const finalise = await finaliseStellarIntent({
+          intent,
+          solves: solveParams,
+          source: store.stellarAccounts[Number(sourceChainId)]
+        });
+        if (postHook) await postHook();
+        return finalise;
       }
 
       if (isSolanaChain(sourceChainId)) {
@@ -782,7 +932,7 @@ export class Solver {
           { cause: error as Error }
         );
       }
-      await Solver.persistReceipt(sourceChainId, transactionHash, result);
+      await persistReceipt(sourceChainId, transactionHash, result);
       if (postHook) await postHook();
       return result;
     };

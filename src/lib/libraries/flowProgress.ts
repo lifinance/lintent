@@ -5,16 +5,15 @@ import {
   INPUT_SETTLER_ESCROW_LIFI,
   MULTICHAIN_INPUT_SETTLER_COMPACT,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
-  getClient
+  getClient,
+  isStellarChain
 } from "$lib/config";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
 import { COMPACT_ABI } from "$lib/abi/compact";
 import { hashStruct, keccak256 } from "viem";
-import { compactTypes } from "@lifi/intent";
-import { getOutputHash, encodeMandateOutput } from "@lifi/intent";
-import { bytes32ToAddress } from "@lifi/intent";
+import { bytes32ToAddress, compactTypes, encodeMandateOutput, getOutputHash } from "@lifi/intent";
 import { containerToIntent } from "$lib/utils/intent";
 import { getOrFetchRpc } from "$lib/libraries/rpcCache";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
@@ -30,10 +29,15 @@ import {
 import { getFillDetails } from "$lib/libraries/fillEvent";
 import { getTronReads } from "$lib/tron/client";
 import { readIsOutputFilled, readIsProven, readOrderStatus } from "$lib/tron/reads";
+import { getFillInfo } from "./fillInfo";
+import { stellarFillRecord, stellarIsProven, stellarOrderStatus } from "./stellar";
 
 const PROGRESS_TTL_MS = 30_000;
 const OrderStatus_Claimed = 2;
 const OrderStatus_Refunded = 3;
+// The Soroban escrow's OrderStatus has no `None` variant.
+const StellarOrderStatus_Claimed = 1;
+const StellarOrderStatus_Refunded = 2;
 
 export type FlowCheckState = {
   allFilled: boolean;
@@ -49,7 +53,7 @@ export function getOutputStorageKey(output: MandateOutput) {
   });
 }
 
-async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
+export async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
   const outputKey = getOutputStorageKey(output);
   const outputHash = getOutputHash(output);
   if (isSolanaChain(output.chainId)) {
@@ -70,8 +74,9 @@ async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
   return getOrFetchRpc(
     `progress:filled:${orderId}:${outputKey}`,
     async () => {
-      const outputClient = getClient(output.chainId);
-      const result = await outputClient.readContract({
+      if (isStellarChain(output.chainId))
+        return (await stellarFillRecord(output.chainId, orderId, outputHash)) !== undefined;
+      const result = await getClient(output.chainId).readContract({
         address: bytes32ToAddress(output.settler),
         abi: COIN_FILLER_ABI,
         functionName: "getFillRecord",
@@ -83,7 +88,7 @@ async function isOutputFilled(orderId: `0x${string}`, output: MandateOutput) {
   );
 }
 
-async function isOutputValidatedOnChain(
+export async function isOutputValidatedOnChain(
   orderId: `0x${string}`,
   inputChain: bigint,
   orderContainer: OrderContainer,
@@ -94,16 +99,26 @@ async function isOutputValidatedOnChain(
 
   // Solver and timestamp come from the OutputFilled event — the recorded
   // solver may be an override, not the transaction sender, and the recorded
-  // timestamp is the exact value hashed into the attested payload.
-  const { solver, timestamp } = await getFillDetails(orderId, output, fillTransactionHash);
+  // timestamp is the exact value hashed into the attested payload. Stellar
+  // fills are resolved from the Soroban fill event and cross-checked against
+  // the on-chain fill record.
+  const { solver, timestamp } = isStellarChain(output.chainId)
+    ? await getFillInfo({
+        orderId,
+        output,
+        fillTransactionHash: fillTransactionHash as `0x${string}`
+      })
+    : await getFillDetails(orderId, output, fillTransactionHash);
 
-  const encodedOutput = encodeMandateOutput({
-    solver,
-    orderId,
-    timestamp,
-    output
-  });
-  const outputHash = keccak256(encodedOutput);
+  const payloadHash = keccak256(
+    encodeMandateOutput({
+      solver,
+      orderId,
+      timestamp,
+      output
+    })
+  );
+  const { inputOracle } = orderContainer.order;
 
   const provenCacheKey = `progress:proven:${orderId}:${inputChain.toString()}:${outputKey}:${fillTransactionHash}`;
   if (isSolanaChain(inputChain)) {
@@ -122,9 +137,9 @@ async function isOutputValidatedOnChain(
           return readIsLocallyAttested(reads, { orderId, output, solver });
         }
         return readIsProvenOnSolana(reads, {
-          inputOracle: orderContainer.order.inputOracle,
+          inputOracle,
           output,
-          payloadHash: outputHash
+          payloadHash
         });
       },
       { ttlMs: PROGRESS_TTL_MS }
@@ -136,11 +151,11 @@ async function isOutputValidatedOnChain(
       async () =>
         readIsProven(
           await getTronReads(),
-          orderContainer.order.inputOracle,
+          inputOracle,
           output.chainId,
           output.oracle,
           output.settler,
-          outputHash
+          payloadHash
         ),
       { ttlMs: PROGRESS_TTL_MS }
     );
@@ -149,19 +164,28 @@ async function isOutputValidatedOnChain(
   return getOrFetchRpc(
     provenCacheKey,
     async () => {
-      const sourceChainClient = getClient(inputChain);
-      return sourceChainClient.readContract({
-        address: orderContainer.order.inputOracle,
+      if (isStellarChain(inputChain))
+        return stellarIsProven(
+          inputChain,
+          inputOracle,
+          output.chainId,
+          output.oracle,
+          output.settler,
+          payloadHash
+        );
+      // isProven is BaseInputOracle's, shared by the Polymer and Axelar oracles.
+      return getClient(inputChain).readContract({
+        address: inputOracle,
         abi: POLYMER_ORACLE_ABI,
         functionName: "isProven",
-        args: [output.chainId, output.oracle, output.settler, outputHash]
+        args: [output.chainId, output.oracle, output.settler, payloadHash]
       });
     },
     { ttlMs: PROGRESS_TTL_MS }
   );
 }
 
-async function isInputChainFinalised(chainId: bigint, container: OrderContainer) {
+export async function isInputChainFinalised(chainId: bigint, container: OrderContainer) {
   const { order, inputSettler } = container;
   const intent = containerToIntent(container);
   const orderId = intent.orderId();
@@ -186,6 +210,17 @@ async function isInputChainFinalised(chainId: bigint, container: OrderContainer)
         // (legacy) orders stay trackable.
         const status = await readOrderStatus(await getTronReads(), inputSettler, orderId);
         return status === OrderStatus_Claimed || status === OrderStatus_Refunded;
+      },
+      { ttlMs: PROGRESS_TTL_MS }
+    );
+  }
+
+  if (isStellarChain(chainId)) {
+    return getOrFetchRpc(
+      `progress:finalised:stellar:${chainId}:${orderId}`,
+      async () => {
+        const status = await stellarOrderStatus(chainId, orderId);
+        return status === StellarOrderStatus_Claimed || status === StellarOrderStatus_Refunded;
       },
       { ttlMs: PROGRESS_TTL_MS }
     );

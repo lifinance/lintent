@@ -2,10 +2,12 @@ import {
   orderToIntent,
   StandardEVMIntent,
   StandardSolanaIntent,
+  StandardStellarIntent,
   MultichainOrderIntent
 } from "@lifi/intent";
 import type { MandateOutput, OrderContainer } from "@lifi/intent";
 import { isSolanaChain, isTronChain } from "./chainType";
+import { isStellarChain } from "$lib/config";
 
 /**
  * Re-establish the `bigint` fields of an order that has been through JSON.
@@ -55,7 +57,7 @@ export function reviveOrderBigInts(order: OrderContainer["order"]): OrderContain
 
 export function containerToIntent(
   container: OrderContainer
-): StandardEVMIntent | StandardSolanaIntent | MultichainOrderIntent {
+): StandardEVMIntent | StandardSolanaIntent | StandardStellarIntent | MultichainOrderIntent {
   const { inputSettler, order } = container;
   if (!("originChainId" in order)) {
     return orderToIntent({ namespace: "eip155", inputSettler, order });
@@ -65,6 +67,9 @@ export function containerToIntent(
   }
   if (isTronChain(order.originChainId)) {
     return orderToIntent({ namespace: "tron", inputSettler, order });
+  }
+  if (isStellarChain(order.originChainId)) {
+    return orderToIntent({ namespace: "stellar", inputSettler, order });
   }
   return orderToIntent({ namespace: "eip155", inputSettler, order });
 }

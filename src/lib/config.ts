@@ -1,3 +1,15 @@
+import { AXELAR_NETWORKS, stellarContractHex, STELLAR_TESTNET_ID } from "./axelarNetworks";
+export {
+  AXELAR_NETWORKS,
+  STELLAR_TESTNET_ID,
+  axelarCorridor,
+  findAxelarCorridor,
+  stellarSettlers,
+  type AxelarCorridor,
+  type AxelarGeneration,
+  type AxelarNetwork
+} from "./axelarNetworks";
+
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from "viem";
 import type { HttpTransport } from "viem";
 import {
@@ -20,11 +32,18 @@ import {
   tron
 } from "viem/chains";
 import {
+  COIN_FILLER,
+  COMPACT,
+  INPUT_SETTLER_COMPACT_LIFI,
+  INPUT_SETTLER_ESCROW_LIFI,
+  MULTICHAIN_INPUT_SETTLER_COMPACT,
+  MULTICHAIN_INPUT_SETTLER_ESCROW,
   SOLANA_DEVNET_CHAIN_ID,
   SOLANA_MAINNET_CHAIN_ID,
   SOLANA_OUTPUT_SETTLER_PDA,
   SOLANA_POLYMER_ORACLE_PDA,
   SOLANA_POLYMER_ORACLE_PROGRAM,
+  STELLAR_MAINNET_CHAIN_ID,
   TRON_MAINNET_INPUT_SETTLER,
   TRON_MAINNET_OUTPUT_SETTLER,
   TRON_MAINNET_POLYMER_ORACLE,
@@ -53,16 +72,16 @@ export const pharos = defineChain({
 export const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000" as const;
 export const BYTES32_ZERO =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as const;
-export const COMPACT = "0x00000000000000171ede64904551eeDF3C6C9788" as const;
-export const INPUT_SETTLER_COMPACT_LIFI = "0x0000000000cd5f7fDEc90a03a31F79E5Fbc6A9Cf" as const;
-export const INPUT_SETTLER_ESCROW_LIFI = "0x00fC00edbe7C003b006f870068c548940000223e" as const;
-export const MULTICHAIN_INPUT_SETTLER_ESCROW =
-  "0xb912b4c38ab54b94D45Ac001484dEBcbb519Bc2B" as const;
-export const MULTICHAIN_INPUT_SETTLER_COMPACT =
-  "0x1fccC0807F25A58eB531a0B5b4bf3dCE88808Ed7" as const;
+export {
+  COIN_FILLER,
+  COMPACT,
+  INPUT_SETTLER_COMPACT_LIFI,
+  INPUT_SETTLER_ESCROW_LIFI,
+  MULTICHAIN_INPUT_SETTLER_COMPACT,
+  MULTICHAIN_INPUT_SETTLER_ESCROW
+};
 export const ALWAYS_OK_ALLOCATOR = "281773970620737143753120258" as const;
 export const POLYMER_ALLOCATOR = "116450367070547927622991121" as const; // 0x02ecC89C25A5DCB1206053530c58E002a737BD11 signing by 0x934244C8cd6BeBDBd0696A659D77C9BDfE86Efe6
-export const COIN_FILLER = "0x75220B7600c300005038432a0000f308e0000068" as const;
 export { TRON_MAINNET_INPUT_SETTLER, TRON_MAINNET_OUTPUT_SETTLER };
 export const WORMHOLE_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [ethereum.id]: "0x0000000000000000000000000000000000000000",
@@ -127,6 +146,48 @@ export const POLYMER_ORACLE: Partial<Record<number, `0x${string}`>> = {
   [arcTestnet.id]: "0xe15b438C6267B0011aDa1e40fD8757Aa8Fe1E5a0"
 };
 
+// Stellar mainnet (intent-soroban). Not a viem chain: Stellar code paths must
+// branch on isStellarChain before touching chainMap/clients/getClient.
+export const STELLAR_CHAIN_ID = Number(STELLAR_MAINNET_CHAIN_ID);
+export const STELLAR_RPC_URL = "https://mainnet.sorobanrpc.com";
+export const STELLAR_NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015";
+
+export function isStellarChain(chainId: number | bigint | string) {
+  return [STELLAR_CHAIN_ID, STELLAR_TESTNET_ID].includes(normalizeChainId(chainId));
+}
+
+// Axelar GMP oracles and chain names, derived from AXELAR_NETWORKS. EVM entries are
+// addresses; Stellar entries are raw 32-byte contract ids.
+export const AXELAR_ORACLE: Partial<Record<number, `0x${string}`>> = {};
+export const AXELAR_CHAIN_NAMES: Partial<Record<number, string>> = {};
+for (const { stellar, evm } of Object.values(AXELAR_NETWORKS)) {
+  AXELAR_ORACLE[stellar.chainId] = stellarContractHex(stellar.oracle);
+  AXELAR_CHAIN_NAMES[stellar.chainId] = stellar.axelarName;
+  for (const [chainId, deployment] of Object.entries(evm)) {
+    AXELAR_ORACLE[Number(chainId)] = deployment!.oracle;
+    AXELAR_CHAIN_NAMES[Number(chainId)] = deployment!.axelarName;
+  }
+}
+
+export type StellarNetworkMeta = { id: number; name: string; rpc: string; passphrase: string };
+export function stellarNetwork(chainId: number | bigint): StellarNetworkMeta {
+  if (Number(chainId) === STELLAR_CHAIN_ID)
+    return {
+      id: STELLAR_CHAIN_ID,
+      name: "Mainnet",
+      rpc: STELLAR_RPC_URL,
+      passphrase: STELLAR_NETWORK_PASSPHRASE
+    };
+  if (Number(chainId) === STELLAR_TESTNET_ID)
+    return {
+      id: STELLAR_TESTNET_ID,
+      name: "Testnet",
+      rpc: "https://soroban-testnet.stellar.org",
+      passphrase: "Test SDF Network ; September 2015"
+    };
+  throw new Error(`Unknown Stellar network ${chainId}`);
+}
+
 export type availableAllocators = typeof ALWAYS_OK_ALLOCATOR | typeof POLYMER_ALLOCATOR;
 export type availableInputSettlers =
   | typeof INPUT_SETTLER_COMPACT_LIFI
@@ -182,12 +243,16 @@ export const chainList = (mainnet: boolean) => {
     ] as ChainName[];
 };
 
-export const chainIdList = (mainnet: boolean) => {
-  const evm = chainList(mainnet).map((name) => chainMap[name].id);
-  // Solana is not in `chainMap` (see the ChainMeta note below), so it is
-  // appended here. Both clusters run the same deployment, verified on chain:
-  // see the "Verified on chain" table in tests/fixtures/solana/PREFLIGHT.md.
-  return [...evm, Number(mainnet ? SOLANA_MAINNET_CHAIN_ID : SOLANA_DEVNET_CHAIN_ID)];
+export const chainIdList = (mainnet: boolean): number[] => {
+  const evm: number[] = chainList(mainnet).map((name) => chainMap[name].id);
+  // Solana and Stellar are not in `chainMap` (see the ChainMeta note below), so
+  // they are appended here. Both Solana clusters run the same deployment, verified
+  // on chain: see the "Verified on chain" table in tests/fixtures/solana/PREFLIGHT.md.
+  return [
+    ...evm,
+    Number(mainnet ? SOLANA_MAINNET_CHAIN_ID : SOLANA_DEVNET_CHAIN_ID),
+    mainnet ? STELLAR_CHAIN_ID : STELLAR_TESTNET_ID
+  ];
 };
 
 const chainEntries = chains.map((name) => [chainMap[name].id, chainMap[name]] as const);
@@ -200,6 +265,12 @@ export type Token = {
   name: string;
   chainId: number;
   decimals: number;
+};
+export const STELLAR_TESTNET_TOKEN: Token = {
+  address: stellarContractHex(AXELAR_NETWORKS.testnet.stellar.usdc),
+  name: "usdc",
+  chainId: STELLAR_TESTNET_ID,
+  decimals: 7
 };
 
 export const coinList = (mainnet: boolean) => {
@@ -397,10 +468,23 @@ export const coinList = (mainnet: boolean) => {
         name: "wsol",
         chainId: Number(SOLANA_MAINNET_CHAIN_ID),
         decimals: 9
+      },
+      {
+        address: `0x25b4fcd859aec2fa6348438c489b3c3c10c98b6d21be4fd3cb30cb68953ef977`,
+        name: "xlm",
+        chainId: STELLAR_CHAIN_ID,
+        decimals: 7
+      },
+      {
+        address: `0xadefce59aee52968f76061d494c2525b75659fa4296a65f499ef29e56477e496`,
+        name: "usdc",
+        chainId: STELLAR_CHAIN_ID,
+        decimals: 7
       }
     ] as const;
   else
     return [
+      STELLAR_TESTNET_TOKEN,
       {
         address: `0x5fd84259d66Cd46123540766Be93DFE6D43130D7`,
         name: "usdc",
@@ -553,7 +637,7 @@ export const polymerChainIds = {
   tron: tron.id
 } as const;
 
-export type Verifier = "wormhole" | "polymer";
+export type Verifier = "wormhole" | "polymer" | "axelar";
 
 export function getCoin(
   args:
@@ -567,16 +651,24 @@ export function getCoin(
   const { name = undefined, address = undefined } = args;
   const chainId = normalizeChainId(args.chainId);
   // EVM and Tron token ids are uint256-widened 20-byte addresses, so the low
-  // 20 bytes are the address. Solana mints are genuinely 32 bytes — truncating
-  // one would match the wrong token (or nothing) — so compare them whole.
-  const concatedAddress = isSolanaChain(chainId)
-    ? address
-    : "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
+  // 20 bytes are the address. Solana mints and Stellar contract ids are genuinely
+  // 32 bytes — truncating one would match the wrong token (or nothing) — so
+  // compare them whole.
+  const comparedAddress =
+    isSolanaChain(chainId) || isStellarChain(chainId)
+      ? address
+      : "0x" + address?.replace("0x", "")?.slice(address.length - 42, address.length);
+  if (
+    chainId === STELLAR_TESTNET_ID &&
+    (name?.toLowerCase() === "usdc" ||
+      comparedAddress?.toLowerCase() === STELLAR_TESTNET_TOKEN.address.toLowerCase())
+  )
+    return STELLAR_TESTNET_TOKEN;
   for (const token of coinList(!isChainIdTestnet(chainId))) {
     // check chain first.
     if (token.chainId === chainId) {
       if (name === undefined) {
-        if (concatedAddress?.toLowerCase() === token.address.toLowerCase()) return token;
+        if (comparedAddress?.toLowerCase() === token.address.toLowerCase()) return token;
       }
       if (name?.toLowerCase() === token.name.toLowerCase()) return token;
     }
@@ -598,6 +690,8 @@ function normalizeChainId(chainId: number | bigint | string) {
 
 export function isChainIdTestnet(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
+  if (normalized === STELLAR_CHAIN_ID) return false;
+  if (normalized === STELLAR_TESTNET_ID) return true;
   const meta = chainMetaById[normalized];
   if (!meta) throw new Error(`Chain is not known: ${normalized}`);
   return meta.testnet;
@@ -605,6 +699,8 @@ export function isChainIdTestnet(chainId: number | bigint | string) {
 
 export function getChainName(chainId: number | bigint | string) {
   const normalized = normalizeChainId(chainId);
+  if (normalized === STELLAR_CHAIN_ID) return "stellar";
+  if (normalized === STELLAR_TESTNET_ID) return "stellarTestnet";
   const meta = chainMetaById[normalized];
   if (!meta) throw new Error(`Chain is not known: ${normalized}`);
   return meta.name;
@@ -624,6 +720,7 @@ export function getOracle(verifier: Verifier, chainId: number | bigint | string)
   const normalized = normalizeChainId(chainId);
   if (verifier === "polymer") return POLYMER_ORACLE[normalized];
   if (verifier === "wormhole") return WORMHOLE_ORACLE[normalized];
+  if (verifier === "axelar") return AXELAR_ORACLE[normalized];
   return undefined;
 }
 

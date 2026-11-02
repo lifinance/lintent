@@ -7,31 +7,18 @@
 
   import { Solver } from "$lib/libraries/solver";
   import type { OrderContainer } from "@lifi/intent";
-  import {
-    COMPACT,
-    formatTokenAmount,
-    getChainName,
-    getClient,
-    getCoin,
-    INPUT_SETTLER_COMPACT_LIFI,
-    INPUT_SETTLER_ESCROW_LIFI,
-    MULTICHAIN_INPUT_SETTLER_COMPACT,
-    MULTICHAIN_INPUT_SETTLER_ESCROW
-  } from "$lib/config";
-  import { COMPACT_ABI } from "$lib/abi/compact";
-  import { SETTLER_ESCROW_ABI } from "$lib/abi/escrow";
+  import { formatTokenAmount, getChainName, getCoin, isStellarChain } from "$lib/config";
   import { idToToken } from "@lifi/intent";
+  import { toHex } from "viem";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
-  import { hashStruct } from "viem";
-  import { compactTypes } from "@lifi/intent";
-  import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
   import { isValidTxRef } from "$lib/utils/txRef";
-  import { getSolanaReads } from "$lib/solana/client";
-  import { readIsOrderFinalised } from "$lib/solana/reads";
-  import { getTronReads } from "$lib/tron/client";
-  import { readOrderStatus } from "$lib/tron/reads";
-  import { getOrFetchRpc } from "$lib/libraries/rpcCache";
+  import {
+    getOutputStorageKey as outputKey,
+    isInputChainFinalised
+  } from "$lib/libraries/flowProgress";
+  import { invalidateRpcPrefix } from "$lib/libraries/rpcCache";
+  import { axelarActionBlocker } from "$lib/libraries/coreDeps";
 
   let {
     orderContainer,
@@ -44,6 +31,7 @@
     postHook?: () => Promise<any>;
     account: () => `0x${string}`;
   } = $props();
+  const actionBlocker = $derived(axelarActionBlocker(orderContainer));
 
   let refreshClaimed = $state(0);
   let claimedByChain = $state<Record<string, boolean>>({});
@@ -52,9 +40,12 @@
   const getInputsForChain = (container: OrderContainer, inputChain: bigint): [bigint, bigint][] => {
     const { order } = container;
     if ("originChainId" in order) {
-      return order.originChainId === inputChain ? order.inputs : [];
+      return BigInt(order.originChainId) === BigInt(inputChain) ? order.inputs : [];
     }
-    return order.inputs.find((chainInput) => chainInput.chainId === inputChain)?.inputs ?? [];
+    return (
+      order.inputs.find((chainInput) => BigInt(chainInput.chainId) === BigInt(inputChain))
+        ?.inputs ?? []
+    );
   };
   const allFinalised = $derived(
     inputChains.length > 0 &&
@@ -70,15 +61,9 @@
 
   const postHookRefreshValidate = async () => {
     if (postHook) await postHook();
+    invalidateRpcPrefix("progress:finalised:");
     refreshClaimed += 1;
   };
-
-  const outputKey = (output: (typeof orderContainer.order.outputs)[number]) =>
-    hashStruct({
-      data: output,
-      types: compactTypes,
-      primaryType: "MandateOutput"
-    });
 
   const fillTransactionHashesFor = (container: OrderContainer) =>
     container.order.outputs.map((output) => store.fillTransactions[outputKey(output)]);
@@ -100,75 +85,10 @@
       isValidFillTxHash(store.fillTransactions[outputKey(output)], output.chainId)
     );
 
-  // Order status enum
-  const OrderStatus_None = 0;
-  const OrderStatus_Deposited = 1;
-  const OrderStatus_Claimed = 2;
-  const OrderStatus_Refunded = 3;
-
-  async function isClaimed(chainId: bigint, container: OrderContainer, _: any) {
-    const { order, inputSettler } = container;
-    const intent = containerToIntent(container);
-    const orderId = intent.orderId();
-
-    if (isSolanaChain(chainId)) {
-      // No status enum on Solana: finalise and refund both close order_context,
-      // so its absence (with consumed_order still present) is the terminal
-      // signal — the same Claimed-or-Refunded conflation as the branches below.
-      return getOrFetchRpc(
-        `claim:solana:${orderId}`,
-        async () => readIsOrderFinalised(await getSolanaReads(chainId), orderId),
-        { ttlMs: 30_000 }
-      );
-    }
-
-    if (isTronChain(chainId)) {
-      const orderStatus = await getOrFetchRpc(
-        `claim:tron:${orderId}`,
-        async () => readOrderStatus(await getTronReads(), inputSettler, orderId),
-        { ttlMs: 30_000 }
-      );
-      return orderStatus === OrderStatus_Claimed || orderStatus === OrderStatus_Refunded;
-    }
-
-    const inputChainClient = getClient(chainId);
-    // Determine the order type.
-    if (
-      inputSettler === INPUT_SETTLER_ESCROW_LIFI ||
-      inputSettler === MULTICHAIN_INPUT_SETTLER_ESCROW
-    ) {
-      // Check order status
-      const orderStatus = await inputChainClient.readContract({
-        address: inputSettler,
-        abi: SETTLER_ESCROW_ABI,
-        functionName: "orderStatus",
-        args: [orderId]
-      });
-      return orderStatus === OrderStatus_Claimed || orderStatus === OrderStatus_Refunded;
-    } else if (
-      inputSettler === INPUT_SETTLER_COMPACT_LIFI ||
-      inputSettler === MULTICHAIN_INPUT_SETTLER_COMPACT
-    ) {
-      // Check claim status
-      const flattenedInputs = "originChainId" in order ? order.inputs : order.inputs[0]?.inputs;
-      if (!flattenedInputs || flattenedInputs.length === 0) return false;
-
-      const [token, allocator, resetPeriod, scope] = await inputChainClient.readContract({
-        address: COMPACT,
-        abi: COMPACT_ABI,
-        functionName: "getLockDetails",
-        args: [flattenedInputs[0][0]]
-      });
-      // Check if nonce is spent.
-      return await inputChainClient.readContract({
-        address: COMPACT,
-        abi: COMPACT_ABI,
-        functionName: "hasConsumedAllocatorNonce",
-        args: [order.nonce, allocator]
-      });
-    }
-    return false;
-  }
+  // Stellar input ids are raw 32-byte contract ids, not EVM token ids.
+  // Orders reloaded from the DB carry bigints as decimal strings.
+  const inputTokenAddress = (inputChain: bigint, tokenId: bigint) =>
+    isStellarChain(inputChain) ? toHex(BigInt(tokenId), { size: 32 }) : idToToken(tokenId);
 
   $effect(() => {
     refreshClaimed;
@@ -176,10 +96,7 @@
     Promise.all(
       inputChains.map(
         async (inputChain) =>
-          [
-            inputChain.toString(),
-            await isClaimed(inputChain, orderContainer, refreshClaimed)
-          ] as const
+          [inputChain.toString(), await isInputChainFinalised(inputChain, orderContainer)] as const
       )
     )
       .then((entries) => {
@@ -200,6 +117,11 @@
 
 <ScreenFrame title="Finalise Intent" description="Finalise the order to receive the input assets.">
   <div class="relative space-y-2">
+    <p class="text-xs text-gray-600">
+      External Catamaran fills and claims are observed independently of your wallet. Only the fill
+      claimant may finalise.
+    </p>
+    {#if actionBlocker}<p role="alert" class="text-xs text-red-600">{actionBlocker}</p>{/if}
     {#if allFinalised}
       <div class="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true">
         {#each confettiPieces as piece, i}
@@ -223,7 +145,9 @@
         <ChainActionRow chainLabel={getChainName(inputChain)}>
           {#snippet action()}
             {@const isClaimedStatus = claimedByChain[inputChain.toString()]}
-            {#if isClaimedStatus === undefined}
+            {#if actionBlocker}
+              <button disabled class="rounded border px-2 text-xs">Unsupported deployment</button>
+            {:else if isClaimedStatus === undefined}
               <button
                 type="button"
                 class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
@@ -282,12 +206,12 @@
                 amountText={formatTokenAmount(
                   input[1],
                   getCoin({
-                    address: idToToken(input[0]),
+                    address: inputTokenAddress(inputChain, input[0]),
                     chainId: inputChain
                   }).decimals
                 )}
                 symbol={getCoin({
-                  address: idToToken(input[0]),
+                  address: inputTokenAddress(inputChain, input[0]),
                   chainId: inputChain
                 }).name}
                 tone="neutral"

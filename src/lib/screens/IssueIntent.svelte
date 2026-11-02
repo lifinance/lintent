@@ -4,16 +4,58 @@
   import FormControl from "$lib/components/ui/FormControl.svelte";
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
-  import { POLYMER_ALLOCATOR, formatTokenAmount, getChainName } from "$lib/config";
+  import {
+    AXELAR_NETWORKS,
+    AXELAR_ORACLE,
+    POLYMER_ALLOCATOR,
+    POLYMER_ORACLE,
+    axelarCorridor,
+    findAxelarCorridor,
+    formatTokenAmount,
+    getChain,
+    getChainName,
+    isStellarChain,
+    coinList,
+    type Verifier
+  } from "$lib/config";
   import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
   import { CompactLib } from "$lib/libraries/compactLib";
   import store from "$lib/state.svelte";
   import InputTokenModal from "../components/InputTokenModal.svelte";
   import OutputTokenModal from "$lib/components/OutputTokenModal.svelte";
-  import { ResetPeriod } from "@lifi/intent";
+  import {
+    ResetPeriod,
+    isStellarAccount,
+    isStellarContract,
+    stellarStrkeyToBytes32
+  } from "@lifi/intent";
   import type { AppCreateIntentOptions } from "$lib/appTypes";
   import { resolveAddressForChainType } from "$lib/utils/address";
-  import { formatAddressForChain, getChainType } from "$lib/utils/chainType";
+  import { formatAddressForChain, getChainType, type ChainType } from "$lib/utils/chainType";
+  import { resolveDemoQuoteParams } from "$lib/libraries/demoQuote";
+  import type { SelectedApiQuote, ApiQuoteContext } from "$lib/libraries/apiQuote";
+  let selectedQuote = $state<SelectedApiQuote | undefined>();
+  let quoteGeneration = $state(0);
+  const axelarPair = $derived(
+    findAxelarCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId) !==
+      undefined
+  );
+  const axelarNetwork = $derived(store.mainnet ? AXELAR_NETWORKS.mainnet : AXELAR_NETWORKS.testnet);
+  const axelarEvmChains = $derived(Object.keys(axelarNetwork.evm).map(Number));
+  const stellarLabel = $derived(store.mainnet ? "Stellar" : "Stellar Testnet");
+  function selectAxelarDirection(evmChainId: number, stellarOrigin: boolean) {
+    const tokens = coinList(store.mainnet);
+    const stellar = tokens.find(
+      (t) => t.chainId === axelarNetwork.stellar.chainId && t.name === "usdc"
+    )!;
+    const evm = tokens.find((t) => t.chainId === evmChainId && t.name === "usdc")!;
+    store.intentType = "escrow";
+    store.verifier = "axelar";
+    store.inputTokens = [
+      { token: stellarOrigin ? stellar : evm, amount: stellarOrigin ? 1000000n : 100000n }
+    ];
+    store.outputTokens = [{ token: stellarOrigin ? evm : stellar, amount: 0n }];
+  }
 
   const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
   const REQUIRED_INPUT_USDC_RAW = 100n;
@@ -33,24 +75,55 @@
   let inputTokenSelectorActive = $state<boolean>(false);
   let outputTokenSelectorActive = $state<boolean>(false);
 
+  const inputOnStellar = $derived(
+    store.inputTokens.some(({ token }) => isStellarChain(token.chainId))
+  );
+  const outputsOnStellar = $derived(
+    store.outputTokens.some(({ token }) => isStellarChain(token.chainId))
+  );
+  const outputsOnEvm = $derived(
+    store.outputTokens.some(({ token }) => !isStellarChain(token.chainId))
+  );
+  const stellarInvolved = $derived(inputOnStellar || outputsOnStellar);
+
+  // Address namespaces for form validation. Stellar is not one of the app's
+  // `ChainType`s (it never reaches the EVM/Tron/Solana code paths), so it is
+  // classified here before falling through to `getChainType`.
+  type AddressNamespace = ChainType | "stellar";
+  const addressNamespace = (chainId: number | bigint): AddressNamespace =>
+    isStellarChain(chainId) ? "stellar" : getChainType(chainId);
+  // Stellar recipients are accounts (`G…`) or contracts (`C…`), as their 32-byte key.
+  const resolveAddressForNamespace = (
+    value: string,
+    namespace: AddressNamespace
+  ): `0x${string}` | undefined => {
+    if (namespace !== "stellar") return resolveAddressForChainType(value, namespace);
+    const trimmed = value.trim();
+    if (isStellarAccount(trimmed) || isStellarContract(trimmed))
+      return stellarStrkeyToBytes32(trimmed);
+    return undefined;
+  };
+
   // The exclusive solver is resolved against the INPUT chain's namespace, never
   // chain-agnostically: it is the input settler that pays the solver out, so it
   // is the input chain that has to recognise the identity. A 0x address padded
   // into a Solana-origin order names a key nobody can sign `finalise` with — the
   // order opens, escrows the input, gets filled, and can then never be settled.
-  const inputChainType = $derived.by((): ReturnType<typeof getChainType> | undefined => {
+  const inputChainType = $derived.by((): ChainType | undefined => {
     const inputChain = store.inputTokens[0]?.token.chainId;
     // A multichain order opens every component through the EVM wallet client,
     // so its inputs are all EVM and the first one speaks for the rest.
     return inputChain === undefined ? undefined : getChainType(inputChain);
   });
 
+  // Exclusivity is not supported for Stellar inputs; the field is disabled and ignored.
   const resolvedExclusiveFor = $derived.by((): `0x${string}` | undefined => {
+    if (inputOnStellar) return undefined;
     if (store.exclusiveFor.trim().length === 0 || inputChainType === undefined) return undefined;
     return resolveAddressForChainType(store.exclusiveFor, inputChainType);
   });
 
-  const EXCLUSIVE_FOR_FORMAT_HINT: Record<ReturnType<typeof getChainType>, string> = {
+  const EXCLUSIVE_FOR_FORMAT_HINT: Record<ChainType, string> = {
     solana:
       "Exclusive solver must be a base58 Solana address — a 0x address would be padded into a key that cannot sign finalise, so the order could be filled but never settled.",
     tron: "Exclusive solver must be a Tron (T...) or 0x address.",
@@ -58,10 +131,44 @@
   };
 
   const exclusiveForProblem = $derived.by((): string | undefined => {
+    if (inputOnStellar) return undefined;
     if (store.exclusiveFor.trim().length === 0) return undefined;
     if (resolvedExclusiveFor !== undefined) return undefined;
     return EXCLUSIVE_FOR_FORMAT_HINT[inputChainType ?? "evm"];
   });
+
+  const outputNamespaces = $derived([
+    ...new Set(store.outputTokens.map((o) => addressNamespace(o.token.chainId)))
+  ]);
+
+  // Resolved against the OUTPUT chain's namespace, never chain-agnostically:
+  // `@lifi/intent` zero-pads a 20-byte EVM address into a Solana pubkey nobody
+  // controls, and the EVM settler truncates a 32-byte Solana key to its low 20
+  // bytes — either way a wrong-namespace recipient silently burns the output.
+  const resolvedRecipient = $derived.by((): `0x${string}` | undefined => {
+    if (store.recipient.trim().length === 0) return undefined;
+    const resolutions = outputNamespaces.map((namespace) =>
+      resolveAddressForNamespace(store.recipient, namespace)
+    );
+    if (resolutions.length === 0 || resolutions.some((r) => r === undefined)) return undefined;
+    // Distinct namespaces resolve disjoint formats, so all-defined means
+    // every entry is the same value.
+    return resolutions[0];
+  });
+
+  // Stellar corridors default the recipient to the connected wallet on the
+  // output side, since the source-chain account has no meaning there.
+  const defaultRecipient = $derived.by((): `0x${string}` | undefined => {
+    if (outputsOnStellar && !inputOnStellar)
+      return store.stellarAccount ? stellarStrkeyToBytes32(store.stellarAccount) : undefined;
+    if (inputOnStellar && outputsOnEvm)
+      return store.accountForChain(store.outputTokens[0].token.chainId);
+    return undefined;
+  });
+
+  const outputRecipient = $derived(
+    store.recipient.trim().length > 0 ? resolvedRecipient : defaultRecipient
+  );
 
   // Cross-namespace orders (e.g. EVM -> Tron) must name their recipient: the
   // default recipient is the source-chain account, which only a plain EOA key
@@ -71,47 +178,37 @@
     const inputChain = store.inputTokens[0]?.token.chainId;
     if (inputChain === undefined) return false;
     return store.outputTokens.some(
-      (o) => getChainType(o.token.chainId) !== getChainType(inputChain)
+      (o) => addressNamespace(o.token.chainId) !== addressNamespace(inputChain)
     );
   });
 
-  const outputChainTypes = $derived([
-    ...new Set(store.outputTokens.map((o) => getChainType(o.token.chainId)))
-  ]);
-
-  // Resolved against the OUTPUT chain's namespace, never chain-agnostically:
-  // `@lifi/intent` zero-pads a 20-byte EVM address into a Solana pubkey nobody
-  // controls, and the EVM settler truncates a 32-byte Solana key to its low 20
-  // bytes — either way a wrong-namespace recipient silently burns the output.
-  const resolvedRecipient = $derived.by((): `0x${string}` | undefined => {
-    if (store.recipient.trim().length === 0) return undefined;
-    const resolutions = outputChainTypes.map((chainType) =>
-      resolveAddressForChainType(store.recipient, chainType)
-    );
-    if (resolutions.length === 0 || resolutions.some((r) => r === undefined)) return undefined;
-    // Distinct chain types resolve disjoint formats, so all-defined means
-    // every entry is the same value.
-    return resolutions[0];
-  });
-
-  const RECIPIENT_FORMAT_HINT: Record<ReturnType<typeof getChainType>, string> = {
+  const RECIPIENT_FORMAT_HINT: Record<AddressNamespace, string> = {
     solana:
       "Recipient must be a base58 Solana address — a 0x address would be padded into a Solana key nobody controls.",
     tron: "Recipient must be a Tron (T...) or 0x address.",
-    evm: "Recipient must be a 0x or Tron (T...) address — a Solana key would be truncated to 20 bytes on payout."
+    evm: "Recipient must be a 0x or Tron (T...) address — a Solana key would be truncated to 20 bytes on payout.",
+    stellar: "Recipient must be a Stellar account (G...) or contract (C...) address."
   };
 
   const recipientProblem = $derived.by((): string | undefined => {
     if (store.recipient.trim().length === 0) {
-      return recipientRequired
+      return recipientRequired && defaultRecipient === undefined
         ? "This order pays out on a different chain type than it is opened on — enter a recipient address for the output chain."
         : undefined;
     }
     if (resolvedRecipient !== undefined) return undefined;
-    if (outputChainTypes.length > 1) {
+    if (outputNamespaces.length > 1) {
       return "No single recipient is valid on every output chain type — use outputs from one chain type.";
     }
-    return RECIPIENT_FORMAT_HINT[outputChainTypes[0] ?? "evm"];
+    return RECIPIENT_FORMAT_HINT[outputNamespaces[0] ?? "evm"];
+  });
+
+  // Shown in the form each chain's explorers and wallets use.
+  const recipientDisplay = $derived.by((): string | undefined => {
+    if (resolvedRecipient === undefined) return undefined;
+    const outputChain = store.outputTokens[0].token.chainId;
+    if (isStellarChain(outputChain)) return store.recipient.trim();
+    return formatAddressForChain(resolvedRecipient, outputChain);
   });
 
   // Solana fills batch all of a chain's outputs into ONE transaction — the fill
@@ -136,6 +233,47 @@
         : undefined)
   );
 
+  const originAccountConnected = $derived(
+    inputOnStellar
+      ? !!store.stellarAccount
+      : !!store.accountForChain(store.inputTokens[0].token.chainId)
+  );
+
+  // Every party in a quote is named in its own chain's namespace: the user on
+  // the input chain, the recipient (override, else the destination wallet) on
+  // the output chain. Stellar parties are passed as strkeys.
+  const quoteDemoParams = $derived(
+    resolveDemoQuoteParams({
+      use11Demo: store.use11Demo,
+      integratorKey: store.integratorKey,
+      useExclusiveForQuoteRequest: store.useExclusiveForQuoteRequest,
+      exclusiveFor: store.exclusiveFor,
+      inputChainType: inputChainType ?? "evm"
+    })
+  );
+  const quoteRecipient = $derived.by((): string => {
+    const typed = store.recipient.trim();
+    if (typed.length > 0) {
+      if (resolvedRecipient === undefined) return "";
+      return outputsOnStellar ? typed : resolvedRecipient;
+    }
+    if (outputsOnStellar) return store.stellarAccount ?? "";
+    return store.accountForChain(store.outputTokens[0].token.chainId) ?? "";
+  });
+  const quoteContext = $derived<ApiQuoteContext>({
+    inputs: store.inputTokens,
+    outputs: store.outputTokens,
+    mainnet: store.mainnet,
+    verifier: store.verifier,
+    lockType: store.intentType,
+    user: inputOnStellar
+      ? (store.stellarAccount ?? "")
+      : (store.accountForChain(store.inputTokens[0].token.chainId) ?? ""),
+    recipient: quoteRecipient,
+    exclusiveFor: inputOnStellar ? undefined : quoteDemoParams.exclusiveFor,
+    integratorKey: quoteDemoParams.integratorKey
+  });
+
   const intentOptions = $derived.by(
     (): AppCreateIntentOptions => ({
       // Whatever the quote named as its exclusive solver, in every mode. The
@@ -146,7 +284,7 @@
       inputTokens: store.inputTokens,
       outputTokens: store.outputTokens,
       verifier: store.verifier,
-      outputRecipient: resolvedRecipient,
+      outputRecipient,
       lock:
         store.intentType === "compact"
           ? {
@@ -155,7 +293,7 @@
               resetPeriod: ResetPeriod.OneDay
             }
           : { type: "escrow" },
-      account
+      account: inputOnStellar ? () => stellarStrkeyToBytes32(store.stellarAccount!) : account
     })
   );
 
@@ -176,6 +314,8 @@
       mainnet: store.mainnet,
       useProductionApi: store.useProductionApi,
       walletClient: store.walletClient,
+      apiQuoteContext: () => quoteContext,
+      apiQuoteSelection: () => ({ quote: selectedQuote, generation: quoteGeneration }),
       preHook,
       postHook: postHookScroll,
       ordersPointer: store.orders
@@ -294,6 +434,52 @@
     return inputChain === outputChain;
   });
 
+  const involvedChains = $derived([
+    ...store.inputTokens.map(({ token }) => token.chainId),
+    ...store.outputTokens.map(({ token }) => token.chainId)
+  ]);
+  const verifierOptions = $derived<{ value: Verifier; label: string; enabled: boolean }[]>([
+    {
+      value: "polymer",
+      label: "Polymer",
+      enabled: involvedChains.every((chainId) => POLYMER_ORACLE[chainId] !== undefined)
+    },
+    {
+      value: "axelar",
+      label: "Axelar",
+      enabled: axelarPair && involvedChains.every((chainId) => AXELAR_ORACLE[chainId] !== undefined)
+    },
+    { value: "wormhole", label: "Wormhole", enabled: false }
+  ]);
+  $effect(() => {
+    if (verifierOptions.some((o) => o.value === store.verifier && o.enabled)) return;
+    const fallback = verifierOptions.find((o) => o.enabled);
+    if (fallback) store.verifier = fallback.value;
+  });
+
+  const routeBlocker = $derived.by((): string | undefined => {
+    if (stellarInvolved) {
+      try {
+        axelarCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      if (store.intentType !== "escrow") return "Stellar API issuance requires escrow";
+      if (store.inputTokens.length !== 1 || store.outputTokens.length !== 1)
+        return "Stellar corridor supports one USDC input and output";
+    }
+    if (inputOnStellar && numInputChains > 1)
+      return "Stellar inputs cannot be combined with other input chains";
+    if (inputOnStellar && store.intentType === "compact")
+      return "Stellar inputs only support escrow";
+    if (outputsOnStellar && outputsOnEvm)
+      return "Stellar outputs cannot be combined with outputs on other chains";
+    if (inputOnStellar && outputsOnStellar) return "Stellar to Stellar orders are not supported";
+    if (!sameChain && !verifierOptions.some((o) => o.enabled))
+      return "No verifier is deployed on all chains of this route";
+    return undefined;
+  });
+
   // const inputSecurityCheck = $derived.by(() => {
   // 	if (store.inputTokens.length === 0) return false;
   // 	const usdcOnly = store.inputTokens.every(({ token }) => token.name.toLowerCase() === "usdc");
@@ -323,22 +509,38 @@
   {/if}
 
   <div class="space-y-2">
+    <div class="flex flex-wrap gap-2 text-xs" data-testid="axelar-routes">
+      {#each axelarEvmChains as chainId (chainId)}
+        <button
+          class="rounded border px-2 py-1"
+          onclick={() => selectAxelarDirection(chainId, true)}
+          >{stellarLabel} → {getChain(chainId).name}</button
+        >
+        <button
+          class="rounded border px-2 py-1"
+          onclick={() => selectAxelarDirection(chainId, false)}
+          >{getChain(chainId).name} → {stellarLabel}</button
+        >
+      {/each}
+    </div>
+    <p class="text-xs text-gray-600">
+      Freighter: {store.mainnet ? "Mainnet" : "Testnet"} · {axelarNetwork.productionApi
+        ? "Order API"
+        : "Order dev API"} · USDC only · external Catamaran solver
+    </p>
     <SectionCard title="Intent pair" compact>
       {#snippet headerRight()}
-        <div class="w-20">
-          <GetQuote
-            bind:exclusiveFor={store.exclusiveFor}
-            useExclusiveForQuoteRequest={store.useExclusiveForQuoteRequest}
-            use11Demo={store.use11Demo}
-            integratorKey={store.integratorKey}
-            mainnet={store.mainnet}
-            useProductionApi={store.useProductionApi}
-            inputTokens={store.inputTokens}
-            bind:outputTokens={store.outputTokens}
-            accountForChain={(chainId) => store.accountForChain(chainId)}
-            outputRecipient={resolvedRecipient}
-          ></GetQuote>
-        </div>
+        <GetQuote
+          bind:exclusiveFor={store.exclusiveFor}
+          bind:selectedQuote
+          bind:generation={quoteGeneration}
+          context={quoteContext}
+          blocked={!!routeBlocker}
+          mainnet={store.mainnet}
+          useProductionApi={store.useProductionApi}
+          scope={`${store.walletConnection.chainId}:${store.intentType}:${store.verifier}:${store.allocatorId}:${store.useExclusiveForQuoteRequest}:${store.use11Demo}`}
+          bind:outputTokens={store.outputTokens}
+        />
       {/snippet}
       <div class="flex w-full flex-row justify-evenly gap-2">
         <div class="flex flex-col justify-center space-y-1">
@@ -409,16 +611,16 @@
             type="text"
             size="sm"
             className="flex-1"
-            placeholder="0x... or T... (optional)"
+            placeholder="0x…, T… or G… (optional)"
             state={recipientProblem !== undefined ? "error" : "default"}
             bind:value={store.recipient}
           />
         </div>
-        {#if resolvedRecipient !== undefined}
+        {#if recipientDisplay !== undefined}
           <p class="text-[11px] break-all text-gray-500">
             Pays out to
             <span class="font-medium text-gray-600">
-              {formatAddressForChain(resolvedRecipient, store.outputTokens[0].token.chainId)}
+              {recipientDisplay}
             </span>
             on {getChainName(store.outputTokens[0].token.chainId)}
           </p>
@@ -432,9 +634,10 @@
               <option selected disabled>Settler</option>
             </FormControl>
           {:else}
-            <FormControl as="select" id="verified-by" size="sm">
-              <option value="polymer" selected>Polymer</option>
-              <option value="wormhole" disabled>Wormhole</option>
+            <FormControl as="select" id="verified-by" size="sm" bind:value={store.verifier}>
+              {#each verifierOptions as option (option.value)}
+                <option value={option.value} disabled={!option.enabled}>{option.label}</option>
+              {/each}
             </FormControl>
           {/if}
         </div>
@@ -444,7 +647,11 @@
             type="text"
             size="sm"
             className="flex-1"
-            placeholder="0x / base58 (optional)"
+            placeholder={inputOnStellar
+              ? "Not supported for Stellar inputs"
+              : "0x / base58 (optional)"}
+            state={inputOnStellar ? "disabled" : "default"}
+            disabled={inputOnStellar}
             bind:value={store.exclusiveFor}
           />
           <label
@@ -482,8 +689,19 @@
       </div>
     </SectionCard>
 
+    {#if routeBlocker}
+      <p class="mx-auto w-4/5 text-center text-xs font-semibold text-red-600">{routeBlocker}</p>
+    {/if}
     <div class="mt-2 flex justify-center">
-      {#if issueBlocker !== undefined}
+      {#if routeBlocker}
+        <button
+          type="button"
+          class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+          disabled
+        >
+          Unsupported route
+        </button>
+      {:else if issueBlocker !== undefined}
         <!-- Before the allowance branch: an order that can never be issued
              must not prompt for an approval transaction first. -->
         <button
@@ -493,6 +711,30 @@
         >
           Cannot Issue
         </button>
+      {:else if inputOnStellar && !store.stellarAccount}
+        <AwaitButton buttonFunction={() => store.connectStellar()}>
+          {#snippet name()}
+            Connect Freighter ({store.mainnet ? "Mainnet" : "Testnet"})
+          {/snippet}
+          {#snippet awaiting()}
+            Connecting...
+          {/snippet}
+        </AwaitButton>
+      {:else if !originAccountConnected}
+        <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
+          >Connect the origin wallet</button
+        >
+      {:else if axelarPair}
+        {#if !selectedQuote}
+          <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
+            >Select a valid API quote</button
+          >
+        {:else}
+          <AwaitButton buttonFunction={() => intentFactory.executeApiQuote(selectedQuote!)}>
+            {#snippet name()}Execute API quote{/snippet}
+            {#snippet awaiting()}Waiting for transaction…{/snippet}
+          </AwaitButton>
+        {/if}
       {:else if !allowanceCheck}
         <AwaitButton buttonFunction={approveFunction}>
           {#snippet name()}

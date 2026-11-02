@@ -13,12 +13,21 @@ import {
   MULTICHAIN_INPUT_SETTLER_ESCROW,
   TRON_MAINNET_INPUT_SETTLER,
   isChainIdTestnet,
+  isStellarChain,
+  STELLAR_CHAIN_ID,
+  STELLAR_TESTNET_ID,
   type availableAllocators,
   type Token,
   type Verifier,
   type WC
 } from "./config";
 import { getAllowance, getBalance, getCompactBalance } from "./libraries/token";
+import { stellarTokenBalance } from "./libraries/stellar";
+import {
+  connectStellarWallet,
+  disconnectStellarWallet,
+  restoreStellarWallet
+} from "./utils/stellarWallet";
 import { browser } from "$app/environment";
 import { initDb, db } from "./db";
 import {
@@ -243,12 +252,42 @@ class Store {
     }
   }
 
+  /** Stellar transactions share the receipt cache, keyed by the Stellar chain id. */
+  async saveStellarTransaction(
+    chainId: number | bigint,
+    hash: `0x${string}`,
+    data: { ledger: number; createdAt: number }
+  ) {
+    await this.saveTransactionReceipt(chainId, hash, data);
+  }
+
+  getStellarTransaction(chainId: number | bigint, hash: `0x${string}`) {
+    const serialized = this.transactionReceipts[`${chainId}:${hash}`];
+    if (!serialized) return undefined;
+    return JSON.parse(serialized) as { ledger: number; createdAt: number };
+  }
+
   walletConnection = $state<WalletConnection>(getCurrentConnection());
   connectedAccount = $derived(
     this.walletConnection.status === "connected"
       ? { address: this.walletConnection.address }
       : undefined
   );
+  /** Connected Stellar account (`G…`), used for every Stellar-side action. */
+  stellarAccounts = $state<Record<number, string | undefined>>({});
+  stellarChainId = $derived(this.mainnet ? STELLAR_CHAIN_ID : STELLAR_TESTNET_ID);
+  stellarAccount = $derived(this.stellarAccounts[this.stellarChainId]);
+
+  async connectStellar() {
+    const chainId = this.stellarChainId;
+    this.stellarAccounts[chainId] = await connectStellarWallet(chainId);
+  }
+
+  async disconnectStellar() {
+    await disconnectStellarWallet(this.stellarChainId);
+    this.stellarAccounts[this.stellarChainId] = undefined;
+  }
+
   walletClient = $state<WC>(undefined as unknown as WC);
   _unwatchWalletConnection?: () => void;
 
@@ -286,8 +325,13 @@ class Store {
    * Solana returns the 32-byte form of the pubkey rather than base58, because
    * bytes32 is the app's canonical internal identity everywhere else
    * (order.user, solveParams.solver). Use `accountDisplayForChain` for UI.
+   *
+   * Stellar returns undefined: its account is a `G…` strkey with no hex form
+   * here, and falling through to the EVM account would act as the wrong user.
+   * Stellar paths use `stellarAccounts[chainId]` / `stellarAccount` directly.
    */
   accountForChain(chainId: number | bigint): `0x${string}` | undefined {
+    if (isStellarChain(chainId)) return undefined;
     if (isTronChain(chainId)) return this.tronConnectedAccount?.address;
     if (isSolanaChain(chainId)) return this.solanaConnectedAccount?.address;
     return this.connectedAccount?.address;
@@ -295,6 +339,7 @@ class Store {
 
   /** The same account in the form that chain's explorers and wallets show. */
   accountDisplayForChain(chainId: number | bigint): string | undefined {
+    if (isStellarChain(chainId)) return this.stellarAccounts[Number(chainId)];
     if (isTronChain(chainId)) return this.tronConnectedAccount?.base58Address;
     if (isSolanaChain(chainId)) return this.solanaConnectedAccount?.base58Address;
     return this.connectedAccount?.address;
@@ -318,6 +363,7 @@ class Store {
     const evmAccount = this.connectedAccount?.address;
     const tronAccount = this.tronConnectedAccount?.address;
     const solanaAccount = this.solanaConnectedAccount?.base58Address;
+    const stellarAccount = this.stellarAccount;
     return this.mapOverCoinsCached({
       bucket: "balance",
       ttlMs: 30_000,
@@ -325,7 +371,7 @@ class Store {
       isMainnet: this.mainnet,
       // Every connected account is in the scope key: without the Solana one,
       // cached balances would leak across a Solana wallet switch.
-      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${solanaAccount ?? "none"}`,
+      scopeKey: `${evmAccount ?? "none"}:${tronAccount ?? "none"}:${solanaAccount ?? "none"}:${stellarAccount ?? "none"}`,
       fetcher: async (asset, client, chainId) => {
         if (isSolanaChain(chainId)) {
           if (!solanaAccount) return 0n;
@@ -344,7 +390,11 @@ class Store {
             : getTrc20Balance(reads, asset, account);
         }
         return getBalance(account, asset, client);
-      }
+      },
+      stellarFetcher: (asset, chainId) =>
+        this.stellarAccounts[chainId]
+          ? stellarTokenBalance(chainId, asset, this.stellarAccounts[chainId]!)
+          : Promise.resolve(0n)
     });
   });
 
@@ -377,7 +427,9 @@ class Store {
           return getTrc20Allowance(reads, asset, account, TRON_MAINNET_INPUT_SETTLER);
         }
         return getAllowance(spender)(account, asset, client);
-      }
+      },
+      // The Stellar escrow pulls inputs with an authorised transfer; no approval exists.
+      stellarFetcher: () => Promise.resolve(maxUint256)
     });
   });
 
@@ -394,7 +446,9 @@ class Store {
         // Neither Tron nor Solana has a Compact deployment.
         if (isTronChain(chainId) || isSolanaChain(chainId)) return Promise.resolve(0n);
         return getCompactBalance(account, asset, client, allocatorId);
-      }
+      },
+      // Nor does Stellar.
+      stellarFetcher: () => Promise.resolve(0n)
     });
   });
 
@@ -494,6 +548,16 @@ class Store {
     this.stopRpcRefreshLoop();
     this._rpcRefreshHandle = setInterval(() => {
       this.refreshWalletReads();
+      if (this.stellarAccount) {
+        const chainId = this.stellarChainId;
+        restoreStellarWallet(chainId)
+          .then((address) => {
+            this.stellarAccounts[chainId] = address;
+          })
+          .catch(() => {
+            this.stellarAccounts[chainId] = undefined;
+          });
+      }
     }, intervalMs ?? this.rpcRefreshMs);
   }
 
@@ -509,6 +573,7 @@ class Store {
     if (!db) await initDb();
     if (!db) return;
     const rows = await db!.select().from(tokensTable).where(eq(tokensTable.isTestnet, !mainnet));
+    if (this.mainnet !== mainnet) return;
     this.availableTokens = rows.map((r) => ({
       address: r.address as `0x${string}`,
       name: r.name,
@@ -618,6 +683,9 @@ class Store {
   }
 
   async syncTokensForNetwork(mainnet: boolean) {
+    this.availableTokens = [...coinList(mainnet)];
+    await this.dbReady;
+    if (this.mainnet !== mainnet) return;
     await this.loadTokensFromDb(mainnet);
   }
 
@@ -661,8 +729,9 @@ class Store {
       client: (typeof clientsById)[keyof typeof clientsById],
       chainId: number
     ) => Promise<T>;
+    stellarFetcher: (asset: `0x${string}`, chainId: number) => Promise<T>;
   }) {
-    const { bucket, ttlMs, tronTtlMs, isMainnet, scopeKey, fetcher } = opts;
+    const { bucket, ttlMs, tronTtlMs, isMainnet, scopeKey, fetcher, stellarFetcher } = opts;
     const resolved: Record<number, Record<`0x${string}`, Promise<T>>> = {};
     for (const token of this.availableTokens) {
       if (!resolved[token.chainId]) resolved[token.chainId] = {};
@@ -670,7 +739,10 @@ class Store {
       const effectiveTtl = tronTtlMs && isTronChain(token.chainId) ? tronTtlMs : ttlMs;
       resolved[token.chainId][token.address] = getOrFetchRpc(
         key,
-        () => fetcher(token.address, clientsById[token.chainId], token.chainId),
+        () =>
+          isStellarChain(token.chainId)
+            ? stellarFetcher(token.address, token.chainId)
+            : fetcher(token.address, clientsById[token.chainId], token.chainId),
         { ttlMs: effectiveTtl }
       );
     }
@@ -706,6 +778,12 @@ class Store {
       this._unwatchSolanaConnection = watchSolanaConnection((connection) => {
         this.solanaWalletConnection = connection;
       });
+
+      for (const chainId of [STELLAR_CHAIN_ID, STELLAR_TESTNET_ID]) {
+        restoreStellarWallet(chainId)
+          .then((address) => (this.stellarAccounts[chainId] = address))
+          .catch((error) => console.warn("restoreStellarWallet failed", error));
+      }
     }
 
     this.startRpcRefreshLoop();

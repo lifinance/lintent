@@ -1,8 +1,17 @@
 import {
+  validateApiQuoteExecution,
+  type ApiQuoteContext,
+  type ApiQuoteSelection,
+  type SelectedApiQuote
+} from "./apiQuote";
+import { openStellarApiOrder, openStellarIntent } from "./stellar";
+import {
   getChain,
   getClient,
   INPUT_SETTLER_COMPACT_LIFI,
   INPUT_SETTLER_ESCROW_LIFI,
+  axelarCorridor,
+  isStellarChain,
   MULTICHAIN_INPUT_SETTLER_ESCROW,
   TRON_MAINNET_INPUT_SETTLER,
   type WC
@@ -17,7 +26,13 @@ import type {
   Signature,
   StandardOrder
 } from "@lifi/intent";
-import { Intent, IntentApi, StandardSolanaIntent, addressToBytes32 } from "@lifi/intent";
+import {
+  Intent,
+  IntentApi,
+  StandardSolanaIntent,
+  StandardStellarIntent,
+  addressToBytes32
+} from "@lifi/intent";
 import {
   getChainType,
   isSolanaChain,
@@ -107,7 +122,7 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
       name: input.token.name,
       chainId,
       decimals: input.token.decimals,
-      chainNamespace: namespaceForChain(chainId)
+      chainNamespace: isStellarChain(chainId) ? "stellar" : namespaceForChain(chainId)
     },
     amount: input.amount
   };
@@ -115,6 +130,10 @@ function toCoreTokenContext(input: AppTokenContext): TokenContext {
 
 function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOptions {
   const account = opts.account();
+  if (opts.verifier === "axelar") {
+    for (const output of opts.outputTokens)
+      axelarCorridor(opts.inputTokens[0].token.chainId, output.token.chainId);
+  }
   if (opts.lock.type === "compact") {
     return {
       exclusiveFor: opts.exclusiveFor,
@@ -152,6 +171,8 @@ export class IntentFactory {
   intentApi: IntentApi;
 
   walletClient: WC;
+  apiQuoteContext?: () => ApiQuoteContext;
+  apiQuoteSelection?: () => ApiQuoteSelection;
 
   preHook?: (chainId: number) => Promise<any>;
   postHook?: () => Promise<any>;
@@ -162,6 +183,8 @@ export class IntentFactory {
     mainnet: boolean;
     useProductionApi?: boolean | null;
     walletClient: WC;
+    apiQuoteContext?: () => ApiQuoteContext;
+    apiQuoteSelection?: () => ApiQuoteSelection;
     preHook?: (chainId: number) => Promise<any>;
     postHook?: () => Promise<any>;
     ordersPointer?: OrderContainer[];
@@ -170,6 +193,8 @@ export class IntentFactory {
     this.mainnet = mainnet;
     this.intentApi = new IntentApi(useProductionApi ?? mainnet);
     this.walletClient = walletClient;
+    this.apiQuoteContext = options.apiQuoteContext;
+    this.apiQuoteSelection = options.apiQuoteSelection;
 
     this.preHook = preHook;
     this.postHook = postHook;
@@ -177,16 +202,104 @@ export class IntentFactory {
     if (ordersPointer) this.orders = ordersPointer;
   }
 
+  async executeApiQuote(quote: SelectedApiQuote) {
+    const getContext = this.apiQuoteContext;
+    const getSelection = this.apiQuoteSelection;
+    if (!getContext || !getSelection) throw new Error("Missing API quote selection context");
+    const generation = getSelection().generation;
+    const validateCurrentQuote = () => {
+      const current = getSelection();
+      if (current.quote !== quote || current.generation !== generation)
+        throw new Error("API quote selection changed");
+      return validateApiQuoteExecution(quote, getContext());
+    };
+    const context = getContext();
+    const chainId = context.inputs[0].token.chainId;
+    let validated = validateCurrentQuote();
+    const tx = quote.order.openIntentTx;
+    let hash: `0x${string}`;
+    if (isStellarChain(chainId)) {
+      const source = store.stellarAccounts[chainId];
+      if (source !== context.user || !validated.scval)
+        throw new Error("Stellar quote account changed");
+      const receipt = await openStellarApiOrder(chainId, tx.to, validated.scval, source, () => {
+        validateCurrentQuote();
+        if (store.stellarAccounts[chainId] !== source)
+          throw new Error("Stellar quote account changed");
+      });
+      hash = receipt.hash;
+      await store.saveStellarTransaction(chainId, hash, receipt);
+    } else {
+      if (this.preHook) await this.preHook(chainId);
+      const [address] = await this.walletClient.getAddresses();
+      if (
+        address?.toLowerCase() !== context.user.toLowerCase() ||
+        (await this.walletClient.getChainId()) !== chainId
+      )
+        throw new Error("Quote wallet account/network changed");
+      for (const allowance of quote.order.checks.allowances) {
+        validated = validateCurrentQuote();
+        const client = getClient(chainId);
+        const token = allowance.token as `0x${string}`;
+        const spender = allowance.spender as `0x${string}`;
+        const current = await client.readContract({
+          address: token,
+          abi: ERC20_ABI,
+          functionName: "allowance",
+          args: [address, spender]
+        });
+        if (current < BigInt(allowance.required)) {
+          validateCurrentQuote();
+          const approval = await this.walletClient.writeContract({
+            chain: getChain(chainId),
+            account: address,
+            address: token,
+            abi: ERC20_ABI,
+            functionName: "approve",
+            args: [spender, BigInt(allowance.required)]
+          });
+          await client.waitForTransactionReceipt({ hash: approval });
+        }
+      }
+      const [currentAddress] = await this.walletClient.getAddresses();
+      if (
+        currentAddress?.toLowerCase() !== address.toLowerCase() ||
+        (await this.walletClient.getChainId()) !== chainId
+      )
+        throw new Error("Quote wallet account/network changed before signing");
+      validated = validateCurrentQuote();
+      hash = await this.walletClient.sendTransaction({
+        chain: getChain(chainId),
+        account: address,
+        to: tx.to as `0x${string}`,
+        data: tx.data as `0x${string}`,
+        value: BigInt(tx.value ?? "0")
+      });
+      const receipt = await getClient(chainId).waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("API quote open reverted");
+      await store.saveTransactionReceipt(chainId, hash, receipt);
+    }
+    await this.saveOrder({
+      order: validated.order,
+      inputSettler: isStellarChain(chainId) ? validated.inputSettler : (tx.to as `0x${string}`),
+      apiQuote: quote
+    });
+    if (this.postHook) await this.postHook();
+    return hash;
+  }
+
   private async saveOrder(options: {
     order: StandardOrder | MultichainOrder;
     inputSettler: `0x${string}`;
     sponsorSignature?: Signature | NoSignature;
     allocatorSignature?: Signature | NoSignature;
+    apiQuote?: SelectedApiQuote;
   }) {
-    const { order, inputSettler, sponsorSignature, allocatorSignature } = options;
+    const { order, inputSettler, sponsorSignature, allocatorSignature, apiQuote } = options;
 
-    const orderContainer: OrderContainer = {
+    const orderContainer: OrderContainer & { apiQuote?: SelectedApiQuote } = {
       order,
+      ...(apiQuote ? { apiQuote } : {}),
       inputSettler,
       sponsorSignature: sponsorSignature ?? {
         type: "None",
@@ -217,6 +330,8 @@ export class IntentFactory {
       const intent = intentInstance.order();
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Compact signing is not supported for Solana intents.");
+      if (intent instanceof StandardStellarIntent)
+        throw new Error("Stellar inputs only support escrow");
       applyExclusivityOverride(intent, opts.exclusiveFor, sameChain, getChainType(inputChain));
 
       const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
@@ -266,6 +381,8 @@ export class IntentFactory {
       const intent = intentInstance2.singlechain();
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Compact deposit and register is not supported for Solana intents.");
+      if (intent instanceof StandardStellarIntent)
+        throw new Error("Stellar inputs only support escrow");
       applyExclusivityOverride(
         intent,
         opts.exclusiveFor,
@@ -310,6 +427,13 @@ export class IntentFactory {
       applyIntentTimings(intentInstance3);
       const sameChain3 = intentInstance3.isSameChain();
       const intent = intentInstance3.order();
+      if (intent instanceof StandardStellarIntent) {
+        const open = await openStellarIntent(intent, store.stellarAccount);
+        if (this.postHook) await this.postHook();
+        await this.saveOrder({ order: intent.asOrder(), inputSettler: intent.inputSettler });
+        return [open.hash];
+      }
+
       applyExclusivityOverride(
         intent,
         opts.exclusiveFor,
@@ -323,12 +447,6 @@ export class IntentFactory {
       // Execute the open.
       const transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
       console.log({ tsh: transactionHashes });
-
-      // for (const hash of transactionHashes) {
-      // 	await clients[inputChain].waitForTransactionReceipt({
-      // 		hash: await hash
-      // 	});
-      // }
 
       if (this.postHook) await this.postHook();
 
@@ -357,6 +475,8 @@ export function escrowApprove(
     const { preHook, postHook, inputTokens, account } = opts;
     for (let i = 0; i < inputTokens.length; ++i) {
       const { token, amount } = inputTokens[i];
+      // The Stellar escrow pulls inputs with an authorised transfer; nothing to approve.
+      if (isStellarChain(token.chainId)) continue;
       if (preHook) await preHook(token.chainId);
 
       // Solana has no approval step at all: `open` debits the user's ATA under

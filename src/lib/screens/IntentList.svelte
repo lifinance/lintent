@@ -89,6 +89,8 @@
   onDestroy(() => clearInterval(clock));
 
   async function handleSelectActive(row: TimedIntentRow) {
+    // Orders touching chains without app config cannot be opened in the flow screens.
+    if (row.unsupportedChains.length > 0) return;
     selectedOrder = row.orderContainer;
     await tick();
     scroll(3)();
@@ -170,10 +172,11 @@
         <div class="relative">
           <div
             role="button"
-            tabindex="0"
+            tabindex={row.unsupportedChains.length > 0 ? -1 : 0}
+            aria-disabled={row.unsupportedChains.length > 0}
             class:border-amber-300={row.status === "expiring"}
             class:bg-amber-50={row.status === "expiring"}
-            class="w-full cursor-pointer rounded border border-gray-200 bg-white px-2 py-2 text-left transition-shadow ease-linear select-none hover:shadow-md focus:outline-none focus-visible:outline-none"
+            class="w-full cursor-pointer rounded border border-gray-200 bg-white px-2 py-2 text-left transition-shadow ease-linear select-none hover:shadow-md focus:outline-none focus-visible:outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-60 aria-disabled:hover:shadow-none"
             style="-webkit-tap-highlight-color: transparent;"
             onclick={() => handleSelectActive(row)}
             onkeydown={(event) => handleCardKeydown(event, () => handleSelectActive(row))}

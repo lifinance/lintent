@@ -68,7 +68,7 @@ export const AXELAR_NETWORKS: { mainnet: AxelarNetwork; testnet: AxelarNetwork }
   testnet: {
     mainnet: false,
     generation: "current",
-    productionApi: false,
+    productionApi: true,
     estimatorUrl: "https://testnet.api.axelarscan.io/gmp/estimateGasFeeForNHops",
     stellar: {
       chainId: STELLAR_TESTNET_ID,

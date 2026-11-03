@@ -7,7 +7,8 @@
     type ApiQuoteContext,
     type SelectedApiQuote
   } from "$lib/libraries/apiQuote";
-  import { axelarCorridor, isStellarChain } from "$lib/config";
+  import { isStellarChain } from "$lib/config";
+  import { resolveProductionApi } from "$lib/utils/intentApiEnv";
 
   let {
     exclusiveFor = $bindable(),
@@ -59,7 +60,8 @@
     )
   );
   let loading = $state(false);
-  let message = $state("No quote selected");
+  // Only failures are surfaced; idle / loading / success states speak through the button.
+  let error = $state<string | undefined>();
   let expires = $state(0);
   let now = $state(Date.now());
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -72,7 +74,7 @@
     requestKey;
     revokeQuote();
     loading = false;
-    message = blocked ? "Route unavailable" : "No quote selected";
+    error = undefined;
     // A missing counterparty identity is an ordinary UI state (connect a wallet
     // or name a recipient), not a failed request.
     if (blocked || !context.user || !context.recipient) return;
@@ -86,7 +88,6 @@
       now = Date.now();
       if (expires && now >= expires) {
         revokeQuote();
-        message = "Quote expired";
       }
     }, 1000);
     return () => clearInterval(timer);
@@ -103,7 +104,6 @@
       )
     ) {
       revokeQuote();
-      message = "Quote invalidated by amount change";
     }
   });
   export async function updateQuote() {
@@ -111,20 +111,15 @@
     const id = generation;
     if (blocked) return;
     loading = true;
-    message = "Requesting quote";
+    error = undefined;
     try {
       const request = apiQuoteRequest(context);
-      const production = corridor
-        ? axelarCorridor(context.inputs[0].token.chainId, context.outputs[0].token.chainId).network
-            .productionApi
-        : (useProductionApi ?? mainnet);
-      const response = await new IntentApi(production).getQuotes(request);
+      const response = await new IntentApi(resolveProductionApi(useProductionApi)).getQuotes(
+        request
+      );
       if (id !== generation) return;
       const quote = response.quotes[0];
-      if (!quote) {
-        message = "No quote available";
-        return;
-      }
+      if (!quote) return;
       const validated = corridor ? validateApiQuote(quote, context) : undefined;
       selectedQuote = quote;
       expires = Math.min(
@@ -134,9 +129,8 @@
       outputTokens[0].amount = BigInt(quote.preview.outputs[0].amount);
       // Locked exclusivity is a request input; do not overwrite it with the response.
       if (!context.exclusiveFor) exclusiveFor = quote.metadata.exclusiveFor ?? "";
-      message = `Quote ${quote.quoteId}`;
-    } catch (error) {
-      if (id === generation) message = error instanceof Error ? error.message : String(error);
+    } catch (err) {
+      if (id === generation) error = err instanceof Error ? err.message : String(err);
     } finally {
       if (id === generation) loading = false;
     }
@@ -152,10 +146,15 @@
   >
     {loading ? "Quoting…" : selectedQuote ? "Refresh quote" : "Get quote"}
   </button>
-  <p data-testid="quote-state">
-    {message}{selectedQuote ? ` · ${Math.max(0, Math.ceil((expires - now) / 1000))}s` : ""}
-  </p>
-  {#if selectedQuote}<p class="max-w-48 truncate" title={selectedQuote.metadata.quoteReference}>
-      Reference: {selectedQuote.metadata.quoteReference}
-    </p>{/if}
+  {#if error}
+    <p data-testid="quote-state" class="max-w-48 truncate text-red-600" title={error}>{error}</p>
+  {:else if selectedQuote}
+    <p
+      data-testid="quote-state"
+      class="text-gray-500"
+      title={selectedQuote.metadata.quoteReference}
+    >
+      {Math.max(0, Math.ceil((expires - now) / 1000))}s
+    </p>
+  {/if}
 </div>

@@ -3,6 +3,7 @@
   import { onDestroy } from "svelte";
   import Introduction from "$lib/components/Introduction.svelte";
   import { IntentApi } from "@lifi/intent";
+  import { resolveProductionApi } from "$lib/utils/intentApiEnv";
   import ManageDeposit from "$lib/screens/ManageDeposit.svelte";
   import IssueIntent from "$lib/screens/IssueIntent.svelte";
   import IntentList from "$lib/screens/IntentList.svelte";
@@ -40,20 +41,18 @@
       .catch((error) => console.warn("network tokens unavailable", error));
   });
 
-  // Production also serves testnet orders (e.g. the Stellar testnet ↔ Base Sepolia corridor),
-  // so "Auto" uses it on both networks; the API toggle can still select staging.
-  const intentApi = $derived(new IntentApi(store.useProductionApi ?? true));
+  const intentApi = $derived(new IntentApi(resolveProductionApi(store.useProductionApi)));
 
   let disconnectWs: (() => void) | undefined;
 
-  async function initiatePage() {
+  async function initiatePage(api: IntentApi) {
     if (disconnectWs) disconnectWs();
 
     // Wait for DB to finish loading so WS orders don't race with DB load
     await store.dbReady;
 
     // Connect to websocket server
-    const connection = intentApi.connectIntentApiSocket((order: OrderPackage) => {
+    const connection = api.connectIntentApiSocket((order: OrderPackage) => {
       try {
         const allocatorSignature = order.allocatorSignature
           ? ({
@@ -99,8 +98,10 @@
   }
 
   $effect(() => {
+    // Reconnect when the network or the Intent API toggle changes. The API is
+    // passed in because initiatePage only uses it after an await (untracked).
     store.mainnet;
-    initiatePage();
+    initiatePage(intentApi);
   });
 
   onDestroy(() => {

@@ -5,17 +5,14 @@
   import ScreenFrame from "$lib/components/ui/ScreenFrame.svelte";
   import SectionCard from "$lib/components/ui/SectionCard.svelte";
   import {
-    AXELAR_NETWORKS,
     AXELAR_ORACLE,
     POLYMER_ALLOCATOR,
     POLYMER_ORACLE,
     axelarCorridor,
     findAxelarCorridor,
     formatTokenAmount,
-    getChain,
     getChainName,
     isStellarChain,
-    coinList,
     type Verifier
   } from "$lib/config";
   import { IntentFactory, escrowApprove } from "$lib/libraries/intentFactory";
@@ -40,23 +37,6 @@
     findAxelarCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId) !==
       undefined
   );
-  const axelarNetwork = $derived(store.mainnet ? AXELAR_NETWORKS.mainnet : AXELAR_NETWORKS.testnet);
-  const axelarEvmChains = $derived(Object.keys(axelarNetwork.evm).map(Number));
-  const stellarLabel = $derived(store.mainnet ? "Stellar" : "Stellar Testnet");
-  function selectAxelarDirection(evmChainId: number, stellarOrigin: boolean) {
-    const tokens = coinList(store.mainnet);
-    const stellar = tokens.find(
-      (t) => t.chainId === axelarNetwork.stellar.chainId && t.name === "usdc"
-    )!;
-    const evm = tokens.find((t) => t.chainId === evmChainId && t.name === "usdc")!;
-    store.intentType = "escrow";
-    store.verifier = "axelar";
-    store.inputTokens = [
-      { token: stellarOrigin ? stellar : evm, amount: stellarOrigin ? 1000000n : 100000n }
-    ];
-    store.outputTokens = [{ token: stellarOrigin ? evm : stellar, amount: 0n }];
-  }
-
   const bigIntSum = (...nums: bigint[]) => nums.reduce((a, b) => a + b, 0n);
   const REQUIRED_INPUT_USDC_RAW = 100n;
 
@@ -311,7 +291,6 @@
 
   const intentFactory = $derived(
     new IntentFactory({
-      mainnet: store.mainnet,
       useProductionApi: store.useProductionApi,
       walletClient: store.walletClient,
       apiQuoteContext: () => quoteContext,
@@ -509,25 +488,6 @@
   {/if}
 
   <div class="space-y-2">
-    <div class="flex flex-wrap gap-2 text-xs" data-testid="axelar-routes">
-      {#each axelarEvmChains as chainId (chainId)}
-        <button
-          class="rounded border px-2 py-1"
-          onclick={() => selectAxelarDirection(chainId, true)}
-          >{stellarLabel} → {getChain(chainId).name}</button
-        >
-        <button
-          class="rounded border px-2 py-1"
-          onclick={() => selectAxelarDirection(chainId, false)}
-          >{getChain(chainId).name} → {stellarLabel}</button
-        >
-      {/each}
-    </div>
-    <p class="text-xs text-gray-600">
-      Freighter: {store.mainnet ? "Mainnet" : "Testnet"} · {axelarNetwork.productionApi
-        ? "Order API"
-        : "Order dev API"} · USDC only · external Catamaran solver
-    </p>
     <SectionCard title="Intent pair" compact>
       {#snippet headerRight()}
         <GetQuote
@@ -694,13 +654,7 @@
     {/if}
     <div class="mt-2 flex justify-center">
       {#if routeBlocker}
-        <button
-          type="button"
-          class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
-          disabled
-        >
-          Unsupported route
-        </button>
+        <!-- The reason is shown above; no duplicate disabled button. -->
       {:else if issueBlocker !== undefined}
         <!-- Before the allowance branch: an order that can never be issued
              must not prompt for an approval transaction first. -->
@@ -714,7 +668,7 @@
       {:else if inputOnStellar && !store.stellarAccount}
         <AwaitButton buttonFunction={() => store.connectStellar()}>
           {#snippet name()}
-            Connect Freighter ({store.mainnet ? "Mainnet" : "Testnet"})
+            Connect Freighter
           {/snippet}
           {#snippet awaiting()}
             Connecting...
@@ -727,7 +681,7 @@
       {:else if axelarPair}
         {#if !selectedQuote}
           <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
-            >Select a valid API quote</button
+            >Get a quote first</button
           >
         {:else}
           <AwaitButton buttonFunction={() => intentFactory.executeApiQuote(selectedQuote!)}>

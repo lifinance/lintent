@@ -164,10 +164,7 @@
   };
 </script>
 
-<ScreenFrame
-  title="Fill Intent"
-  description="Catamaran may fill externally. Supply its fill transaction hash to inspect proof progress; no solver wallet connection is required for reads."
->
+<ScreenFrame title="Fill Intent" description="Fill each output, or paste an existing fill tx hash.">
   <div class="space-y-2">
     <SectionCard compact title="Solver Address">
       <div class="flex items-center gap-2">

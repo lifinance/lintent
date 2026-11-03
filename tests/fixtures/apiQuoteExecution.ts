@@ -259,7 +259,6 @@ export async function runExecutionScenario(window: ExecutionWindow, mutation: Se
   };
   const { IntentFactory } = await import("../../src/lib/libraries/intentFactory");
   const factory = new IntentFactory({
-    mainnet: false,
     walletClient: wallet,
     apiQuoteContext: () => context,
     apiQuoteSelection: () => selection

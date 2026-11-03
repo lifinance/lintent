@@ -21,8 +21,6 @@ export type AxelarEvmDeployment = {
 export type AxelarNetwork = {
   mainnet: boolean;
   generation: AxelarGeneration;
-  /** `new IntentApi(productionApi)`: order.li.fi when true, order-dev.li.fi otherwise. */
-  productionApi: boolean;
   estimatorUrl: string;
   /** Stellar contracts are C-strkeys. */
   stellar: {
@@ -42,7 +40,6 @@ export const AXELAR_NETWORKS: { mainnet: AxelarNetwork; testnet: AxelarNetwork }
   mainnet: {
     mainnet: true,
     generation: "legacy",
-    productionApi: true,
     estimatorUrl: "https://api.axelarscan.io/gmp/estimateGasFeeForNHops",
     stellar: {
       chainId: Number(STELLAR_MAINNET_CHAIN_ID),
@@ -68,7 +65,6 @@ export const AXELAR_NETWORKS: { mainnet: AxelarNetwork; testnet: AxelarNetwork }
   testnet: {
     mainnet: false,
     generation: "current",
-    productionApi: true,
     estimatorUrl: "https://testnet.api.axelarscan.io/gmp/estimateGasFeeForNHops",
     stellar: {
       chainId: STELLAR_TESTNET_ID,

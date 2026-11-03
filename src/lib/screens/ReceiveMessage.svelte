@@ -15,7 +15,6 @@
   import TokenAmountChip from "$lib/components/ui/TokenAmountChip.svelte";
   import store from "$lib/state.svelte";
   import { containerToIntent } from "$lib/utils/intent";
-  import { isSolanaChain } from "$lib/utils/chainType";
   import { isValidTxRef } from "$lib/utils/txRef";
   import { axelarActionBlocker } from "$lib/libraries/coreDeps";
   import { getFillInfo } from "$lib/libraries/fillInfo";
@@ -199,22 +198,6 @@
       scroll(5)();
     });
   });
-
-  /**
-   * Chains this row will actually ask for a signature on, other than the input
-   * chain it is labelled with.
-   *
-   * Proving a Solana output runs `submit` on Solana rather than
-   * `receiveMessage` on the input chain (Solver.validate branches on
-   * `output.chainId` before it looks at the source chain), so a Base-labelled
-   * row can legitimately open a Solana wallet.
-   */
-  function proofChains(inputChain: bigint | number): bigint[] {
-    const elsewhere = orderContainer.order.outputs
-      .filter((output) => isSolanaChain(output.chainId) && output.chainId !== BigInt(inputChain))
-      .map((output) => output.chainId);
-    return [...new Set(elsewhere)];
-  }
 </script>
 
 <ScreenFrame
@@ -230,18 +213,6 @@
         <ChainActionRow chainLabel={getChainName(inputChain)}>
           {#snippet action()}
             <div class="text-[11px] font-semibold text-gray-500 uppercase">Validate outputs</div>
-            <!--
-              The row is grouped by INPUT chain, but validating a Solana output
-              submits the fill to the Solana oracle — so the signature comes
-              from the Solana wallet, not the wallet for the chain named above.
-              Said out loud, because an unexplained Solflare prompt on a row
-              labelled "Base" reads as a bug.
-            -->
-            {#each proofChains(inputChain) as proofChain (proofChain)}
-              <div class="text-[10px] text-gray-400 normal-case">
-                signs on {getChainName(proofChain)}
-              </div>
-            {/each}
           {/snippet}
           {#snippet chips()}
             {#each orderContainer.order.outputs as output}
@@ -250,9 +221,9 @@
               {#if actionBlocker}
                 <span class="text-xs text-red-600">Unsupported deployment</span>
               {:else if usesAxelar && !status && !feeEstimates[validationKey(inputChain, output)]?.fee}
-                <button disabled class="rounded border px-2 text-xs text-gray-400"
-                  >Manual publication disabled: {feeEstimates[validationKey(inputChain, output)]
-                    ?.error ?? "Awaiting gas estimate"}</button
+                {@const gasError = feeEstimates[validationKey(inputChain, output)]?.error}
+                <button disabled class="rounded border px-2 text-xs text-gray-400" title={gasError}
+                  >{gasError ? "Gas estimate failed" : "Estimating gas…"}</button
                 >
               {:else if status === undefined}
                 <TokenAmountChip

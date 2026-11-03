@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { StrKey, scValToNative } from "@stellar/stellar-sdk";
-import { COIN_FILLER, STELLAR_MAINNET_CHAIN_ID } from "@lifi/intent";
+import { COIN_FILLER, IntentApi, STELLAR_MAINNET_CHAIN_ID } from "@lifi/intent";
 import { bytesToHex, decodeFunctionData } from "viem";
 import { AXELAR_ORACLE_ABI, LEGACY_AXELAR_ORACLE_ABI } from "../../src/lib/abi/axelaroracle";
 import {
@@ -42,6 +42,17 @@ describe("Axelar corridor lookup", () => {
     ]) {
       expect(findAxelarCorridor(a, b)).toBeUndefined();
       expect(() => axelarCorridor(a, b)).toThrow("Unsupported Axelar corridor");
+    }
+  });
+  it("requests quotes for every corridor, including testnet, from production order.li.fi", () => {
+    for (const [a, b] of [
+      [STELLAR_MAINNET_ID, 8453],
+      [STELLAR_TESTNET_ID, 84532],
+      [84532, STELLAR_TESTNET_ID]
+    ]) {
+      const { productionApi } = axelarCorridor(a, b).network;
+      expect(productionApi).toBe(true);
+      expect(IntentApi.getIntentApiUrl(productionApi)).toBe("https://order.li.fi");
     }
   });
 });

@@ -23,8 +23,8 @@ wallet or authorize transactions. Freighter must use the selected network's
 passphrase.
 
 Quotes come from the network's order API, irrespective of the general API
-toggle: `new IntentApi(true)` (`https://order.li.fi`) on mainnet and
-`new IntentApi(false)` (`https://order-dev.li.fi`) on testnet. The accept-list
+toggle: `new IntentApi(true)` (`https://order.li.fi`) on both mainnet and
+testnet. The accept-list
 contains exactly the corridor's two Axelar oracles with `stellar:`/`eip155:`
 namespaces. Quote ID/reference, validity, oracle metadata, allowances and exact
 `openIntentTx` remain bound to the selection and are saved alongside an executed

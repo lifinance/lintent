@@ -40,7 +40,9 @@
       .catch((error) => console.warn("network tokens unavailable", error));
   });
 
-  const intentApi = $derived(new IntentApi(store.useProductionApi ?? store.mainnet));
+  // Production also serves testnet orders (e.g. the Stellar testnet ↔ Base Sepolia corridor),
+  // so "Auto" uses it on both networks; the API toggle can still select staging.
+  const intentApi = $derived(new IntentApi(store.useProductionApi ?? true));
 
   let disconnectWs: (() => void) | undefined;
 

@@ -16,6 +16,7 @@ import {
   stellarAxelarSubmitArgs,
   type AxelarSubmitRoute
 } from "../../src/lib/libraries/axelarSubmit";
+import { resolveProductionApi } from "../../src/lib/utils/intentApiEnv";
 import {
   buildAxelarGasRequest,
   parseAxelarGasResponse
@@ -44,16 +45,12 @@ describe("Axelar corridor lookup", () => {
       expect(() => axelarCorridor(a, b)).toThrow("Unsupported Axelar corridor");
     }
   });
-  it("requests quotes for every corridor, including testnet, from production order.li.fi", () => {
-    for (const [a, b] of [
-      [STELLAR_MAINNET_ID, 8453],
-      [STELLAR_TESTNET_ID, 84532],
-      [84532, STELLAR_TESTNET_ID]
-    ]) {
-      const { productionApi } = axelarCorridor(a, b).network;
-      expect(productionApi).toBe(true);
-      expect(IntentApi.getIntentApiUrl(productionApi)).toBe("https://order.li.fi");
-    }
+  it("lets the Intent API toggle choose the backend; Default is production on every network", () => {
+    // The toggle is network-independent, so corridors (mainnet and testnet alike)
+    // follow it exactly like every other route.
+    expect(IntentApi.getIntentApiUrl(resolveProductionApi(null))).toBe("https://order.li.fi");
+    expect(IntentApi.getIntentApiUrl(resolveProductionApi(true))).toBe("https://order.li.fi");
+    expect(IntentApi.getIntentApiUrl(resolveProductionApi(false))).not.toBe("https://order.li.fi");
   });
 });
 

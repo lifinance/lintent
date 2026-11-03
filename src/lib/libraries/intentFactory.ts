@@ -41,6 +41,7 @@ import {
   type ChainType
 } from "$lib/utils/chainType";
 import { isBytes32ForChainType } from "$lib/utils/address";
+import { resolveProductionApi } from "$lib/utils/intentApiEnv";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
 import { store } from "$lib/state.svelte";
@@ -167,7 +168,6 @@ function toCoreCreateIntentOptions(opts: AppCreateIntentOptions): CreateIntentOp
  * @notice Factory class for creating and managing intents. Functions called by integrators.
  */
 export class IntentFactory {
-  mainnet: boolean;
   intentApi: IntentApi;
 
   walletClient: WC;
@@ -180,7 +180,6 @@ export class IntentFactory {
   orders: OrderContainer[] = [];
 
   constructor(options: {
-    mainnet: boolean;
     useProductionApi?: boolean | null;
     walletClient: WC;
     apiQuoteContext?: () => ApiQuoteContext;
@@ -189,9 +188,8 @@ export class IntentFactory {
     postHook?: () => Promise<any>;
     ordersPointer?: OrderContainer[];
   }) {
-    const { mainnet, useProductionApi, walletClient, preHook, postHook, ordersPointer } = options;
-    this.mainnet = mainnet;
-    this.intentApi = new IntentApi(useProductionApi ?? mainnet);
+    const { useProductionApi, walletClient, preHook, postHook, ordersPointer } = options;
+    this.intentApi = new IntentApi(resolveProductionApi(useProductionApi));
     this.walletClient = walletClient;
     this.apiQuoteContext = options.apiQuoteContext;
     this.apiQuoteSelection = options.apiQuoteSelection;

@@ -117,10 +117,7 @@
 
 <ScreenFrame title="Finalise Intent" description="Finalise the order to receive the input assets.">
   <div class="relative space-y-2">
-    <p class="text-xs text-gray-600">
-      External Catamaran fills and claims are observed independently of your wallet. Only the fill
-      claimant may finalise.
-    </p>
+    <p class="text-xs text-gray-600">Only the fill claimant can finalise.</p>
     {#if actionBlocker}<p role="alert" class="text-xs text-red-600">{actionBlocker}</p>{/if}
     {#if allFinalised}
       <div class="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true">

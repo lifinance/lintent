@@ -30,9 +30,25 @@
   import { resolveAddressForChainType } from "$lib/utils/address";
   import { formatAddressForChain, getChainType, type ChainType } from "$lib/utils/chainType";
   import { resolveDemoQuoteParams } from "$lib/libraries/demoQuote";
-  import type { SelectedApiQuote, ApiQuoteContext } from "$lib/libraries/apiQuote";
+  import type { SelectedApiQuote, ApiQuoteContext, ApiQuoteStatus } from "$lib/libraries/apiQuote";
   let selectedQuote = $state<SelectedApiQuote | undefined>();
   let quoteGeneration = $state(0);
+  let quoteStatus = $state<ApiQuoteStatus>("idle");
+  let quoter = $state<ReturnType<typeof GetQuote>>();
+  // Set for the whole execution, so the quote can't be swapped out (and the
+  // pending button unmounted, re-enabling Execute) while a transaction is live.
+  let executingQuote = $state(false);
+  async function executeSelectedQuote() {
+    if (executingQuote || !selectedQuote) return;
+    executingQuote = true;
+    try {
+      await intentFactory.executeApiQuote(selectedQuote!);
+    } finally {
+      executingQuote = false;
+    }
+    // An executed quote is spent; fetch a fresh one rather than allow a repeat.
+    await quoter?.updateQuote();
+  }
   const axelarPair = $derived(
     findAxelarCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId) !==
       undefined
@@ -491,14 +507,18 @@
     <SectionCard title="Intent pair" compact>
       {#snippet headerRight()}
         <GetQuote
+          bind:this={quoter}
+          bind:status={quoteStatus}
           bind:exclusiveFor={store.exclusiveFor}
           bind:selectedQuote
           bind:generation={quoteGeneration}
           context={quoteContext}
           blocked={!!routeBlocker}
+          required={axelarPair}
+          paused={executingQuote}
           mainnet={store.mainnet}
           useProductionApi={store.useProductionApi}
-          scope={`${store.walletConnection.chainId}:${store.intentType}:${store.verifier}:${store.allocatorId}:${store.useExclusiveForQuoteRequest}:${store.use11Demo}`}
+          scope={`${store.intentType}:${store.verifier}:${store.allocatorId}:${store.useExclusiveForQuoteRequest}:${store.use11Demo}`}
           bind:outputTokens={store.outputTokens}
         />
       {/snippet}
@@ -653,7 +673,13 @@
       <p class="mx-auto w-4/5 text-center text-xs font-semibold text-red-600">{routeBlocker}</p>
     {/if}
     <div class="mt-2 flex justify-center">
-      {#if routeBlocker}
+      {#if executingQuote}
+        <!-- First, so no other state can swap in a fresh, enabled Execute button
+             while a quote's transaction is still in flight. -->
+        <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
+          >Waiting for transaction…</button
+        >
+      {:else if routeBlocker}
         <!-- The reason is shown above; no duplicate disabled button. -->
       {:else if issueBlocker !== undefined}
         <!-- Before the allowance branch: an order that can never be issued
@@ -679,15 +705,30 @@
           >Connect the origin wallet</button
         >
       {:else if axelarPair}
-        {#if !selectedQuote}
-          <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
-            >Get a quote first</button
-          >
-        {:else}
-          <AwaitButton buttonFunction={() => intentFactory.executeApiQuote(selectedQuote!)}>
-            {#snippet name()}Execute API quote{/snippet}
+        {#if selectedQuote}
+          <AwaitButton buttonFunction={executeSelectedQuote}>
+            {#snippet name()}Execute quote{/snippet}
             {#snippet awaiting()}Waiting for transaction…{/snippet}
           </AwaitButton>
+        {:else if quoteStatus === "loading"}
+          <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
+            >Fetching quote…</button
+          >
+        {:else if quoteStatus === "needs-party"}
+          <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
+            >Enter a recipient</button
+          >
+        {:else}
+          <button
+            type="button"
+            class="rounded border px-3 py-1 text-sm hover:border-sky-300 hover:text-sky-700"
+            onclick={() => quoter?.updateQuote()}
+            >{quoteStatus === "empty"
+              ? "No quote available · Retry"
+              : quoteStatus === "error"
+                ? "Retry quote"
+                : "Get quote"}</button
+          >
         {/if}
       {:else if !allowanceCheck}
         <AwaitButton buttonFunction={approveFunction}>

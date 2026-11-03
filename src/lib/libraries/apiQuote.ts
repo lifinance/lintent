@@ -21,6 +21,15 @@ export type ApiQuoteSelection = {
   quote: SelectedApiQuote | undefined;
   generation: number;
 };
+/** Where the quote for the current form stands, for the issue button to act on. */
+export type ApiQuoteStatus =
+  | "blocked"
+  | "needs-party"
+  | "idle"
+  | "loading"
+  | "ready"
+  | "empty"
+  | "error";
 export type ApiQuoteContext = {
   inputs: AppTokenContext[];
   outputs: AppTokenContext[];
@@ -32,6 +41,22 @@ export type ApiQuoteContext = {
   verifier?: string;
   lockType?: "escrow" | "compact";
 };
+/**
+ * When a quote stops being executable, in ms. It is the earliest of the API's
+ * `validUntil` and, for decoded orders, every deadline `validateApiQuote`
+ * rejects once elapsed (`expires`, `fillDeadline`). Quotes without a decoded
+ * order fall back to a 30s window.
+ */
+export function apiQuoteDeadlineMs(
+  quote: { validUntil?: number | null },
+  order: { expires: number; fillDeadline: number } | undefined,
+  now = Date.now()
+): number {
+  return Math.min(
+    quote.validUntil ? quote.validUntil * 1000 : Infinity,
+    order ? Math.min(order.expires, order.fillDeadline) * 1000 : now + 30_000
+  );
+}
 export const BASE_INPUT_ESCROW = "0x00fc00edbe7c003b006f870068c548940000223e" as const;
 export const BASE_OUTPUT_SETTLER = "0x75220b7600c300005038432a0000f308e0000068" as const;
 export function apiQuoteRequest(context: ApiQuoteContext): GetQuoteOptions {

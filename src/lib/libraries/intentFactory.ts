@@ -16,7 +16,7 @@ import {
   TRON_MAINNET_INPUT_SETTLER,
   type WC
 } from "$lib/config";
-import { encodePacked, maxUint256 } from "viem";
+import { maxUint256 } from "viem";
 import type {
   CreateIntentOptions,
   TokenContext,
@@ -26,21 +26,8 @@ import type {
   Signature,
   StandardOrder
 } from "@lifi/intent";
-import {
-  Intent,
-  IntentApi,
-  StandardSolanaIntent,
-  StandardStellarIntent,
-  addressToBytes32
-} from "@lifi/intent";
-import {
-  getChainType,
-  isSolanaChain,
-  isTronChain,
-  namespaceForChain,
-  type ChainType
-} from "$lib/utils/chainType";
-import { isBytes32ForChainType } from "$lib/utils/address";
+import { Intent, IntentApi, StandardSolanaIntent, StandardStellarIntent } from "@lifi/intent";
+import { isSolanaChain, isTronChain, namespaceForChain } from "$lib/utils/chainType";
 import { resolveProductionApi } from "$lib/utils/intentApiEnv";
 import type { AppCreateIntentOptions, AppTokenContext } from "$lib/appTypes";
 import { ERC20_ABI } from "$lib/abi/erc20";
@@ -59,60 +46,24 @@ const FILL_DEADLINE_SECONDS = 10 * 60; // 10 minutes
 const SAME_CHAIN_DURATION_SECONDS = 20 * 60; // 20 minutes
 const SAME_CHAIN_EXCLUSIVITY_SECONDS = 12 * 3; // 36 seconds
 // SOLV-544 widened the exclusivity window to 5 minutes so solvers have time to
-// fill before exclusivity ends. @lifi/intent 0.2.1 still encodes ONE_MINUTE in
-// `encodeOutputs`, so re-apply it here; drop this once the library default is
-// raised and this app depends on that release.
+// fill before exclusivity ends; @lifi/intent still defaults to one minute.
 const CROSS_CHAIN_EXCLUSIVITY_SECONDS = 5 * 60; // 5 minutes
 
 function applyIntentTimings(intent: Intent): void {
-  const mutable = intent as unknown as { expiry: number; fillDeadline: number };
   // Every intent gets a 10 minute fill deadline, overriding the `@lifi/intent`
   // default of 44h (set by EXP-432 to match lifi-backend). `expiry` is left on
   // the library default for cross-chain intents so the reclaim window still
   // clears settlement; same-chain intents shorten it to match below.
-  mutable.fillDeadline = FILL_DEADLINE_SECONDS;
-  if (!intent.isSameChain()) return;
-  mutable.expiry = SAME_CHAIN_DURATION_SECONDS;
-}
-
-// TODO: delete this function once the app depends on a `@lifi/intent` release
-// that takes the exclusivity window as an option (`exclusivity`) — the library
-// then encodes the context itself and this override, along with the shape check
-// it has to repeat, goes away.
-function applyExclusivityOverride(
-  orderIntent: ReturnType<Intent["order"]>,
-  exclusiveFor: `0x${string}` | undefined,
-  isSameChain: boolean,
-  inputChainType: ChainType
-): void {
-  if (!exclusiveFor) return;
-  // The exclusive solver is paid out by the INPUT settler, so its identity must
-  // live in the input chain's address space: a Solana escrow finalises only for
-  // the signer named in the fill (`solve_params[0].solver == solver.key()`), and
-  // a zero-padded EVM address is a key nobody can sign with — the order opens,
-  // gets filled, and can then never be settled. Caller resolves the value
-  // against the input chain (see `resolveAddressForChainType`); this is the
-  // last line of defence, and it must never pad.
-  const exclusiveForBytes32 = addressToBytes32(exclusiveFor);
-  if (!isBytes32ForChainType(exclusiveForBytes32, inputChainType)) {
-    throw new Error(
-      `Exclusive solver ${exclusiveFor} is not a ${inputChainType} address: the exclusive solver must be named in the input chain's address space, or the order can be filled but never finalised.`
-    );
+  intent.setFillDeadline(FILL_DEADLINE_SECONDS);
+  // The library encodes the exclusive context itself (validating the solver
+  // against the input chain's namespace and keeping the Stellar recipient
+  // tag); only the window differs from its 1 minute default.
+  if (!intent.isSameChain()) {
+    intent.setExclusivity(CROSS_CHAIN_EXCLUSIVITY_SECONDS);
+    return;
   }
-  const order = orderIntent.asOrder() as StandardOrder | MultichainOrder;
-  const currentTime = Math.floor(Date.now() / 1000);
-  const exclusivitySeconds = isSameChain
-    ? SAME_CHAIN_EXCLUSIVITY_SECONDS
-    : CROSS_CHAIN_EXCLUSIVITY_SECONDS;
-  const newContext = encodePacked(
-    ["bytes1", "bytes32", "uint32"],
-    ["0xe0", exclusiveForBytes32, currentTime + exclusivitySeconds]
-  );
-  for (const output of order.outputs) {
-    if (output.context !== "0x") {
-      output.context = newContext;
-    }
-  }
+  intent.setExpiry(SAME_CHAIN_DURATION_SECONDS);
+  intent.setExclusivity(SAME_CHAIN_EXCLUSIVITY_SECONDS);
 }
 
 function toCoreTokenContext(input: AppTokenContext): TokenContext {
@@ -324,13 +275,11 @@ export class IntentFactory {
       if (this.preHook) await this.preHook(inputChain);
       const intentInstance = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
       applyIntentTimings(intentInstance);
-      const sameChain = intentInstance.isSameChain();
       const intent = intentInstance.order();
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Compact signing is not supported for Solana intents.");
       if (intent instanceof StandardStellarIntent)
         throw new Error("Stellar inputs only support escrow");
-      applyExclusivityOverride(intent, opts.exclusiveFor, sameChain, getChainType(inputChain));
 
       const sponsorSignature = await signIntentCompact(intent, account(), this.walletClient);
 
@@ -375,19 +324,11 @@ export class IntentFactory {
       }
       const intentInstance2 = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
       applyIntentTimings(intentInstance2);
-      const sameChain2 = intentInstance2.isSameChain();
       const intent = intentInstance2.singlechain();
       if (intent instanceof StandardSolanaIntent)
         throw new Error("Compact deposit and register is not supported for Solana intents.");
       if (intent instanceof StandardStellarIntent)
         throw new Error("Stellar inputs only support escrow");
-      applyExclusivityOverride(
-        intent,
-        opts.exclusiveFor,
-        sameChain2,
-        getChainType(inputTokens[0].token.chainId)
-      );
-
       if (this.preHook) await this.preHook(inputTokens[0].token.chainId);
 
       let transactionHash = await depositAndRegisterCompact(intent, account(), this.walletClient);
@@ -423,21 +364,15 @@ export class IntentFactory {
       const { inputTokens, account } = opts;
       const intentInstance3 = new Intent(toCoreCreateIntentOptions(opts), intentDeps);
       applyIntentTimings(intentInstance3);
-      const sameChain3 = intentInstance3.isSameChain();
       const intent = intentInstance3.order();
+      // Saved before the post-hook: a failed refresh must not lose an order
+      // that is already open on-chain.
       if (intent instanceof StandardStellarIntent) {
         const open = await openStellarIntent(intent, store.stellarAccount);
-        if (this.postHook) await this.postHook();
         await this.saveOrder({ order: intent.asOrder(), inputSettler: intent.inputSettler });
+        if (this.postHook) await this.postHook();
         return [open.hash];
       }
-
-      applyExclusivityOverride(
-        intent,
-        opts.exclusiveFor,
-        sameChain3,
-        getChainType(inputTokens[0].token.chainId)
-      );
 
       const inputChain = inputTokens[0].token.chainId;
       if (this.preHook) await this.preHook(inputChain);
@@ -445,13 +380,26 @@ export class IntentFactory {
       // Execute the open.
       const transactionHashes = await openEscrowIntent(intent, account(), this.walletClient);
       console.log({ tsh: transactionHashes });
-
-      if (this.postHook) await this.postHook();
+      // An EVM open is only broadcast at this point; wait for it, so the caller
+      // keeps the order "in flight" (no second open) until it has landed.
+      if (
+        transactionHashes.length === 1 &&
+        !isSolanaChain(inputChain) &&
+        !isTronChain(inputChain) &&
+        inputTokens.every(({ token }) => token.chainId === inputChain)
+      ) {
+        const receipt = await getClient(inputChain).waitForTransactionReceipt({
+          hash: transactionHashes[0] as `0x${string}`
+        });
+        if (receipt.status !== "success") throw new Error("Open transaction reverted");
+      }
 
       await this.saveOrder({
         order: intent.asOrder(),
         inputSettler: intent.inputSettler
       });
+
+      if (this.postHook) await this.postHook();
 
       return transactionHashes;
     };

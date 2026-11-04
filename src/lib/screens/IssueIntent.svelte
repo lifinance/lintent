@@ -8,7 +8,6 @@
     AXELAR_ORACLE,
     POLYMER_ALLOCATOR,
     POLYMER_ORACLE,
-    axelarCorridor,
     findAxelarCorridor,
     formatTokenAmount,
     getChainName,
@@ -30,25 +29,30 @@
   import { resolveAddressForChainType } from "$lib/utils/address";
   import { formatAddressForChain, getChainType, type ChainType } from "$lib/utils/chainType";
   import { resolveDemoQuoteParams } from "$lib/libraries/demoQuote";
-  import type { SelectedApiQuote, ApiQuoteContext, ApiQuoteStatus } from "$lib/libraries/apiQuote";
+  import {
+    stellarRouteProblem,
+    type SelectedApiQuote,
+    type ApiQuoteContext
+  } from "$lib/libraries/apiQuote";
+  // A quote only fills in the form. Orders are opened from the form's own terms
+  // ("Execute Open"); a live corridor quote can also be opened as quoted.
   let selectedQuote = $state<SelectedApiQuote | undefined>();
   let quoteGeneration = $state(0);
-  let quoteStatus = $state<ApiQuoteStatus>("idle");
-  let quoter = $state<ReturnType<typeof GetQuote>>();
-  // Set for the whole execution, so the quote can't be swapped out (and the
-  // pending button unmounted, re-enabling Execute) while a transaction is live.
-  let executingQuote = $state(false);
-  async function executeSelectedQuote() {
-    if (executingQuote || !selectedQuote) return;
-    executingQuote = true;
-    try {
-      await intentFactory.executeApiQuote(selectedQuote!);
-    } finally {
-      executingQuote = false;
-    }
-    // An executed quote is spent; fetch a fresh one rather than allow a repeat.
-    await quoter?.updateQuote();
-  }
+  // One guard for every action that sends a transaction. While it is set the
+  // action buttons are replaced by a single disabled one, so nothing (a quote
+  // arriving or expiring, a form edit) can mount a second, enabled action.
+  let executing = $state(false);
+  const guarded =
+    (action: () => Promise<unknown>): (() => Promise<void>) =>
+    async () => {
+      if (executing) return;
+      executing = true;
+      try {
+        await action();
+      } finally {
+        executing = false;
+      }
+    };
   const axelarPair = $derived(
     findAxelarCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId) !==
       undefined
@@ -81,6 +85,9 @@
     store.outputTokens.some(({ token }) => !isStellarChain(token.chainId))
   );
   const stellarInvolved = $derived(inputOnStellar || outputsOnStellar);
+  // Opening a quote as quoted is implemented for the Stellar corridors, whose
+  // quotes GetQuote validates on arrival; elsewhere a quote only fills the form.
+  const quoteExecutable = $derived(stellarInvolved && selectedQuote !== undefined);
 
   // Address namespaces for form validation. Stellar is not one of the app's
   // `ChainType`s (it never reaches the EVM/Tron/Solana code paths), so it is
@@ -229,6 +236,17 @@
         : undefined)
   );
 
+  // The library tags every Stellar recipient as an account (`G…`); a contract
+  // (`C…`) recipient would be paid as the wrong kind. A quote encodes the kind
+  // itself, so only the manual open is blocked.
+  const manualBlocker = $derived(
+    store.outputTokens.some(({ amount }) => amount <= 0n)
+      ? "Set what you receive (or get a quote) before opening."
+      : outputsOnStellar && isStellarContract(store.recipient.trim())
+        ? "Manual orders can't pay a Stellar contract (C…) recipient yet — use a quote or a G… account."
+        : undefined
+  );
+
   const originAccountConnected = $derived(
     inputOnStellar
       ? !!store.stellarAccount
@@ -323,63 +341,56 @@
       : escrowApprove(store.walletClient, approvalOptions)
   );
 
-  let allowanceCheck = $state(true);
-  $effect(() => {
-    allowanceCheck = true;
-    if (!store.allowances[store.inputTokens[0].token.chainId]) {
-      allowanceCheck = false;
-      return;
-    }
-    for (let i = 0; i < store.inputTokens.length; ++i) {
-      const { token, amount } = store.inputTokens[i];
-      const allowancePromise = store.allowances[token.chainId]?.[token.address];
-      if (!allowancePromise) {
-        allowanceCheck = false;
-        continue;
+  type AmountReads = Record<number, Record<string, Promise<bigint>> | undefined>;
+  /**
+   * Whether every input's `reads` value covers its amount. It resets to false
+   * when the inputs change and ignores superseded reads, so a stale answer can
+   * never enable an action for terms it didn't check. The store's periodic
+   * re-read of unchanged inputs keeps the last answer, so buttons don't flicker.
+   */
+  function coversInputs() {
+    let ok = $state(false);
+    let checkedTerms: string | undefined;
+    return {
+      get ok() {
+        return ok;
+      },
+      check(reads: AmountReads) {
+        const pending = store.inputTokens.map(
+          ({ token, amount }) => [reads[token.chainId]?.[token.address], amount] as const
+        );
+        const terms = store.inputTokens
+          .map(({ token, amount }) => `${token.chainId}:${token.address}:${amount}`)
+          .join();
+        if (terms !== checkedTerms) ok = false;
+        checkedTerms = terms;
+        if (pending.length === 0 || pending.some(([read]) => !read)) {
+          ok = false;
+          return;
+        }
+        let current = true;
+        Promise.all(pending.map(([read, amount]) => read!.then((value) => value >= amount)))
+          .then((results) => {
+            if (current) ok = results.every(Boolean);
+          })
+          .catch(() => {
+            if (current) ok = false;
+          });
+        return () => {
+          current = false;
+        };
       }
-      allowancePromise.then((a) => {
-        allowanceCheck = allowanceCheck && a >= amount;
-      });
-    }
-  });
-  let balanceCheckWallet = $state(true);
-  $effect(() => {
-    balanceCheckWallet = true;
-    if (!store.balances[store.inputTokens[0].token.chainId]) {
-      balanceCheckWallet = false;
-      return;
-    }
-    for (let i = 0; i < store.inputTokens.length; ++i) {
-      const { token, amount } = store.inputTokens[i];
-      const balancePromise = store.balances[token.chainId]?.[token.address];
-      if (!balancePromise) {
-        balanceCheckWallet = false;
-        continue;
-      }
-      balancePromise.then((b) => {
-        balanceCheckWallet = balanceCheckWallet && b >= amount;
-      });
-    }
-  });
-  let balanceCheckCompact = $state(true);
-  $effect(() => {
-    balanceCheckCompact = true;
-    if (!store.compactBalances[store.inputTokens[0].token.chainId]) {
-      balanceCheckCompact = false;
-      return;
-    }
-    for (let i = 0; i < store.inputTokens.length; ++i) {
-      const { token, amount } = store.inputTokens[i];
-      const compactBalancePromise = store.compactBalances[token.chainId]?.[token.address];
-      if (!compactBalancePromise) {
-        balanceCheckCompact = false;
-        continue;
-      }
-      compactBalancePromise.then((b) => {
-        balanceCheckCompact = balanceCheckCompact && b >= amount;
-      });
-    }
-  });
+    };
+  }
+  const allowance = coversInputs();
+  const walletBalance = coversInputs();
+  const compactBalance = coversInputs();
+  $effect(() => allowance.check(store.allowances));
+  $effect(() => walletBalance.check(store.balances));
+  $effect(() => compactBalance.check(store.compactBalances));
+  const allowanceCheck = $derived(allowance.ok);
+  const balanceCheckWallet = $derived(walletBalance.ok);
+  const balanceCheckCompact = $derived(compactBalance.ok);
 
   const abstractInputs = $derived.by(() => {
     const inputs: {
@@ -453,16 +464,14 @@
   });
 
   const routeBlocker = $derived.by((): string | undefined => {
-    if (stellarInvolved) {
-      try {
-        axelarCorridor(store.inputTokens[0].token.chainId, store.outputTokens[0].token.chainId);
-      } catch (error) {
-        return (error as Error).message;
-      }
-      if (store.intentType !== "escrow") return "Stellar API issuance requires escrow";
-      if (store.inputTokens.length !== 1 || store.outputTokens.length !== 1)
-        return "Stellar corridor supports one USDC input and output";
-    }
+    const stellarProblem = stellarRouteProblem({
+      inputs: store.inputTokens,
+      outputs: store.outputTokens,
+      mainnet: store.mainnet,
+      verifier: store.verifier,
+      lockType: store.intentType
+    });
+    if (stellarProblem) return stellarProblem;
     if (inputOnStellar && numInputChains > 1)
       return "Stellar inputs cannot be combined with other input chains";
     if (inputOnStellar && store.intentType === "compact")
@@ -507,15 +516,12 @@
     <SectionCard title="Intent pair" compact>
       {#snippet headerRight()}
         <GetQuote
-          bind:this={quoter}
-          bind:status={quoteStatus}
           bind:exclusiveFor={store.exclusiveFor}
           bind:selectedQuote
           bind:generation={quoteGeneration}
           context={quoteContext}
           blocked={!!routeBlocker}
-          required={axelarPair}
-          paused={executingQuote}
+          paused={executing}
           mainnet={store.mainnet}
           useProductionApi={store.useProductionApi}
           scope={`${store.intentType}:${store.verifier}:${store.allocatorId}:${store.useExclusiveForQuoteRequest}:${store.use11Demo}`}
@@ -673,9 +679,9 @@
       <p class="mx-auto w-4/5 text-center text-xs font-semibold text-red-600">{routeBlocker}</p>
     {/if}
     <div class="mt-2 flex justify-center">
-      {#if executingQuote}
-        <!-- First, so no other state can swap in a fresh, enabled Execute button
-             while a quote's transaction is still in flight. -->
+      {#if executing}
+        <!-- First, so no other state can swap in a fresh, enabled action while
+             a transaction is still in flight. -->
         <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
           >Waiting for transaction…</button
         >
@@ -704,84 +710,88 @@
         <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
           >Connect the origin wallet</button
         >
-      {:else if axelarPair}
-        {#if selectedQuote}
-          <AwaitButton buttonFunction={executeSelectedQuote}>
-            {#snippet name()}Execute quote{/snippet}
-            {#snippet awaiting()}Waiting for transaction…{/snippet}
-          </AwaitButton>
-        {:else if quoteStatus === "loading"}
-          <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
-            >Fetching quote…</button
-          >
-        {:else if quoteStatus === "needs-party"}
-          <button disabled class="rounded border px-3 py-1 text-sm text-gray-400"
-            >Enter a recipient</button
-          >
-        {:else}
-          <button
-            type="button"
-            class="rounded border px-3 py-1 text-sm hover:border-sky-300 hover:text-sky-700"
-            onclick={() => quoter?.updateQuote()}
-            >{quoteStatus === "empty"
-              ? "No quote available · Retry"
-              : quoteStatus === "error"
-                ? "Retry quote"
-                : "Get quote"}</button
-          >
-        {/if}
-      {:else if !allowanceCheck}
-        <AwaitButton buttonFunction={approveFunction}>
-          {#snippet name()}
-            Set allowance
-          {/snippet}
-          {#snippet awaiting()}
-            Waiting for transaction...
-          {/snippet}
-        </AwaitButton>
       {:else}
         <div class="flex flex-row space-x-2">
-          {#if !balanceCheckWallet}
-            <button
-              type="button"
-              class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
-              disabled
-            >
-              Low Balance
-            </button>
-          {:else if store.intentType === "escrow"}
-            <AwaitButton buttonFunction={intentFactory.openIntent(intentOptions)}>
+          {#if manualBlocker !== undefined}
+            <!-- The reason is shown below. -->
+          {:else if !allowanceCheck}
+            <AwaitButton buttonFunction={guarded(approveFunction)}>
               {#snippet name()}
-                Execute Open
+                Set allowance
               {/snippet}
               {#snippet awaiting()}
                 Waiting for transaction...
               {/snippet}
             </AwaitButton>
-          {/if}
-          {#if store.intentType === "compact" && store.allocatorId !== POLYMER_ALLOCATOR}
-            {#if !balanceCheckCompact}
+          {:else}
+            {#if !balanceCheckWallet}
               <button
                 type="button"
                 class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
                 disabled
               >
-                Low Compact Balance
+                Low Balance
               </button>
-            {:else}
-              <AwaitButton buttonFunction={intentFactory.compact(intentOptions)}>
+            {:else if store.intentType === "escrow"}
+              <AwaitButton buttonFunction={guarded(intentFactory.openIntent(intentOptions))}>
                 {#snippet name()}
-                  Sign Order
+                  Execute Open
                 {/snippet}
                 {#snippet awaiting()}
                   Waiting for transaction...
                 {/snippet}
               </AwaitButton>
             {/if}
+            {#if store.intentType === "compact" && store.allocatorId !== POLYMER_ALLOCATOR}
+              {#if !balanceCheckCompact}
+                <button
+                  type="button"
+                  class="h-8 rounded border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-400"
+                  disabled
+                >
+                  Low Compact Balance
+                </button>
+              {:else}
+                <AwaitButton buttonFunction={guarded(intentFactory.compact(intentOptions))}>
+                  {#snippet name()}
+                    Sign Order
+                  {/snippet}
+                  {#snippet awaiting()}
+                    Waiting for transaction...
+                  {/snippet}
+                </AwaitButton>
+              {/if}
+            {/if}
+          {/if}
+          {#if quoteExecutable && selectedQuote}
+            {@const quote = selectedQuote}
+            <!-- The quote's own order, exactly as the solver priced it; it sets
+                 its own allowance. Any edit to the form drops the quote. -->
+            <AwaitButton
+              buttonFunction={guarded(async () => {
+                await intentFactory.executeApiQuote(quote);
+                // Spent: its order and nonce must not be offered again.
+                if (selectedQuote === quote) {
+                  selectedQuote = undefined;
+                  quoteGeneration += 1;
+                }
+              })}
+              variant="success"
+            >
+              {#snippet name()}
+                Open with quote
+              {/snippet}
+              {#snippet awaiting()}
+                Waiting for transaction...
+              {/snippet}
+            </AwaitButton>
           {/if}
         </div>
       {/if}
     </div>
+    {#if manualBlocker !== undefined && !routeBlocker && issueBlocker === undefined}
+      <p class="mx-auto mt-2 w-4/5 text-center text-xs text-gray-600">{manualBlocker}</p>
+    {/if}
     {#if issueBlocker !== undefined}
       <p class="mx-auto mt-2 w-4/5 text-center text-xs font-medium text-amber-700">
         {issueBlocker}

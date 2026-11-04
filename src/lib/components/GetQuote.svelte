@@ -5,7 +5,6 @@
     apiQuoteDeadlineMs,
     apiQuoteRequest,
     validateApiQuote,
-    type ApiQuoteStatus,
     type ApiQuoteContext,
     type SelectedApiQuote
   } from "$lib/libraries/apiQuote";
@@ -17,28 +16,23 @@
     outputTokens = $bindable(),
     selectedQuote = $bindable(),
     generation = $bindable(0),
-    status = $bindable("idle"),
     context,
     mainnet,
     useProductionApi,
     scope,
     blocked = false,
-    required = false,
     paused = false
   }: {
     exclusiveFor: string;
     outputTokens: ApiQuoteContext["outputs"];
     selectedQuote: SelectedApiQuote | undefined;
     generation: number;
-    status?: ApiQuoteStatus;
     context: ApiQuoteContext;
     mainnet: boolean;
     useProductionApi: boolean | null;
     scope: string;
     blocked?: boolean;
-    /** The route can only execute this quote: keep one live and own the output amounts. */
-    required?: boolean;
-    /** A quote is being executed: never revoke or replace it underneath that. */
+    /** An order is being opened: don't fetch or expire quotes underneath it. */
     paused?: boolean;
   } = $props();
 
@@ -69,32 +63,18 @@
       (_, value) => (typeof value === "bigint" ? value.toString() : value)
     )
   );
+  // A quote is only a suggestion: it fills in the form, and nothing it does
+  // (arriving, failing, expiring) ever blocks or overwrites the user's terms.
   let loading = $state(false);
-  // Only failures are surfaced here; the rest is reported through `status` and
-  // rendered by the issue button, which is where the user acts on it.
   let error = $state<string | undefined>();
   let empty = $state(false);
   let expires = $state(0);
   let now = $state(Date.now());
   let timer: ReturnType<typeof setInterval> | undefined;
   let pending: ReturnType<typeof setTimeout> | undefined;
+  // The exclusive solver as the selected quote left it; an edit revokes it.
+  let appliedExclusiveFor: string | undefined;
   const hasParties = $derived(!!context.user && !!context.recipient);
-
-  $effect(() => {
-    status = blocked
-      ? "blocked"
-      : !hasParties
-        ? "needs-party"
-        : loading
-          ? "loading"
-          : selectedQuote
-            ? "ready"
-            : error
-              ? "error"
-              : empty
-                ? "empty"
-                : "idle";
-  });
 
   function revokeQuote() {
     generation = untrack(() => generation) + 1;
@@ -118,29 +98,24 @@
   // (including the exclusive solver this component writes back from a quote),
   // and tracking it would revoke a quote the moment it arrives.
   $effect(() => {
-    requestKey;
+    void requestKey;
     untrack(() => {
       revokeQuote();
       loading = false;
       error = undefined;
       empty = false;
       cancelPending();
-      if (!blocked && hasParties) scheduleQuote();
+      if (!blocked && hasParties && !paused) scheduleQuote();
     });
     return cancelPending;
   });
   $effect(() => {
     timer = setInterval(() => {
       now = Date.now();
-      // Execution re-checks every deadline itself; replacing the quote under it
-      // would unmount its pending button and allow a second execution.
+      // Execution re-checks every deadline itself.
       if (paused) return;
-      // On quote-only routes an expired quote is replaced, not just dropped: the
-      // user should never have to notice expiry to keep a usable quote.
-      if (expires && now >= expires) {
-        revokeQuote();
-        if (required && !blocked && hasParties) void updateQuote();
-      }
+      // An expired quote is dropped; the amounts it filled in stay as they are.
+      if (expires && now >= expires) revokeQuote();
     }, 1000);
     return () => clearInterval(timer);
   });
@@ -149,27 +124,21 @@
     cancelPending();
     clearInterval(timer);
   });
-  // An edited output amount no longer matches the quote. On quote-only routes
-  // the amounts are the quote's, so re-quote (which writes them back); elsewhere
-  // the quote is advisory and the user's edit stands.
+  // Editing what the quote filled in (an output amount, or the exclusive solver
+  // while it isn't locked into the request) means the form is no longer the
+  // quote's order: drop the quote and keep the edit. This applies mid-execution
+  // too, so an in-flight quote open fails its re-validation instead.
   $effect(() => {
     if (
-      !paused &&
       selectedQuote &&
-      selectedQuote.preview.outputs.some(
-        (output, i) => outputTokens[i] && outputTokens[i].amount !== BigInt(output.amount)
-      )
+      (exclusiveFor !== appliedExclusiveFor ||
+        selectedQuote.preview.outputs.some(
+          (output, i) => outputTokens[i] && outputTokens[i].amount !== BigInt(output.amount)
+        ))
     ) {
-      untrack(() => {
-        revokeQuote();
-        if (required) scheduleQuote();
-      });
+      untrack(revokeQuote);
     }
   });
-  /** Quote-only routes must not keep showing amounts from a quote that is gone. */
-  function clearQuotedAmounts() {
-    if (required) for (const output of outputTokens) output.amount = 0n;
-  }
   export async function updateQuote() {
     if (paused) return;
     cancelPending();
@@ -182,25 +151,27 @@
     // Output amounts aren't part of the request, so an edit made while it is in
     // flight must be checked for explicitly.
     const amountsAtRequest = outputTokens.map((output) => output.amount);
+    const exclusiveForAtRequest = exclusiveFor;
     try {
       const request = apiQuoteRequest(context);
       const response = await new IntentApi(resolveProductionApi(useProductionApi)).getQuotes(
         request
       );
       if (id !== generation) return;
-      // On advisory routes the user's amounts win over a quote they've since edited.
-      if (!required && outputTokens.some((output, i) => output.amount !== amountsAtRequest[i]))
+      // What the user typed while the request was in flight wins over the quote.
+      if (
+        exclusiveFor !== exclusiveForAtRequest ||
+        outputTokens.some((output, i) => output.amount !== amountsAtRequest[i])
+      )
         return;
       const quote = response.quotes[0];
       if (!quote) {
         empty = true;
-        clearQuotedAmounts();
         return;
       }
       const validated = corridor ? validateApiQuote(quote, context) : undefined;
       const deadline = apiQuoteDeadlineMs(quote, validated?.order);
-      // Re-quoting on expiry would spin once a second on a quote that is
-      // already dead on arrival (e.g. a skewed local clock); surface it instead.
+      // A quote dead on arrival (e.g. a skewed local clock) is surfaced, not applied.
       if (deadline <= Date.now()) throw new Error("Quote expired on arrival — check system clock");
       selectedQuote = quote;
       expires = deadline;
@@ -210,11 +181,9 @@
       });
       // Locked exclusivity is a request input; do not overwrite it with the response.
       if (!context.exclusiveFor) exclusiveFor = quote.metadata.exclusiveFor ?? "";
+      appliedExclusiveFor = exclusiveFor;
     } catch (err) {
-      if (id === generation) {
-        error = err instanceof Error ? err.message : String(err);
-        clearQuotedAmounts();
-      }
+      if (id === generation) error = err instanceof Error ? err.message : String(err);
     } finally {
       if (id === generation) loading = false;
     }
@@ -232,6 +201,8 @@
   </button>
   {#if error}
     <p data-testid="quote-state" class="max-w-48 truncate text-red-600" title={error}>{error}</p>
+  {:else if empty}
+    <p data-testid="quote-state" class="text-gray-500">No quote</p>
   {:else if selectedQuote}
     <p
       data-testid="quote-state"

@@ -21,15 +21,6 @@ export type ApiQuoteSelection = {
   quote: SelectedApiQuote | undefined;
   generation: number;
 };
-/** Where the quote for the current form stands, for the issue button to act on. */
-export type ApiQuoteStatus =
-  | "blocked"
-  | "needs-party"
-  | "idle"
-  | "loading"
-  | "ready"
-  | "empty"
-  | "error";
 export type ApiQuoteContext = {
   inputs: AppTokenContext[];
   outputs: AppTokenContext[];
@@ -59,37 +50,52 @@ export function apiQuoteDeadlineMs(
 }
 export const BASE_INPUT_ESCROW = "0x00fc00edbe7c003b006f870068c548940000223e" as const;
 export const BASE_OUTPUT_SETTLER = "0x75220b7600c300005038432a0000f308e0000068" as const;
+/**
+ * What makes a route touching Stellar unissuable, or undefined. Stellar is only
+ * reachable over its Axelar corridors, for the configured USDC on each side;
+ * this holds for manual orders as much as for quoted ones.
+ */
+export function stellarRouteProblem(
+  context: Pick<ApiQuoteContext, "inputs" | "outputs" | "mainnet" | "verifier" | "lockType">
+): string | undefined {
+  const { inputs, outputs } = context;
+  if (![...inputs, ...outputs].some(({ token }) => isStellarChain(token.chainId))) return undefined;
+  if (context.lockType !== undefined && context.lockType !== "escrow")
+    return "Stellar routes require escrow";
+  if (context.verifier !== undefined && context.verifier !== "axelar")
+    return "Stellar routes require the Axelar verifier";
+  if (inputs.length !== 1 || outputs.length !== 1)
+    return "Stellar corridor supports one USDC input and output";
+  let corridor: AxelarCorridor;
+  try {
+    corridor = axelarCorridor(inputs[0].token.chainId, outputs[0].token.chainId);
+  } catch (error) {
+    return (error as Error).message;
+  }
+  const { network } = corridor;
+  if (context.mainnet !== undefined && context.mainnet !== network.mainnet)
+    return `Switch to ${network.mainnet ? "Mainnet" : "Testnet"} for this corridor`;
+  for (const { token } of [...inputs, ...outputs]) {
+    const expected = isStellarChain(token.chainId)
+      ? stellarContractHex(network.stellar.usdc)
+      : corridor.evm.usdc;
+    if (
+      token.address.toLowerCase() !== expected.toLowerCase() ||
+      token.decimals !== (isStellarChain(token.chainId) ? 7 : 6)
+    )
+      return "Only the configured USDC assets are supported on Stellar routes";
+  }
+  return undefined;
+}
 export function apiQuoteRequest(context: ApiQuoteContext): GetQuoteOptions {
   const { inputs, outputs, user, recipient, exclusiveFor, integratorKey } = context;
   if (!user || !recipient)
     throw new Error("Connect the origin wallet and choose a destination recipient");
-  const stellar = [...inputs, ...outputs].some(({ token }) => isStellarChain(token.chainId));
-  let corridor: AxelarCorridor | undefined;
-  if (stellar) {
-    if (
-      (context.verifier !== undefined && context.verifier !== "axelar") ||
-      (context.lockType !== undefined && context.lockType !== "escrow")
-    )
-      throw new Error("Stellar API quotes require Axelar escrow");
-    if (inputs.length !== 1 || outputs.length !== 1)
-      throw new Error("Stellar corridor requires one USDC input and output");
-    corridor = axelarCorridor(inputs[0].token.chainId, outputs[0].token.chainId);
-    const { network } = corridor;
-    if (context.mainnet !== undefined && context.mainnet !== network.mainnet)
-      throw new Error(
-        `Switch to ${network.mainnet ? "Mainnet" : "Testnet"} before requesting or executing this corridor`
-      );
-    for (const { token } of [...inputs, ...outputs]) {
-      const expected = isStellarChain(token.chainId)
-        ? stellarContractHex(network.stellar.usdc)
-        : corridor.evm.usdc;
-      if (
-        token.address.toLowerCase() !== expected.toLowerCase() ||
-        token.decimals !== (isStellarChain(token.chainId) ? 7 : 6)
-      )
-        throw new Error("Only the configured USDC assets are supported");
-    }
-  }
+  const problem = stellarRouteProblem(context);
+  if (problem) throw new Error(problem);
+  const corridor = [...inputs, ...outputs].some(({ token }) => isStellarChain(token.chainId))
+    ? axelarCorridor(inputs[0].token.chainId, outputs[0].token.chainId)
+    : undefined;
   const namespace = (id: number) =>
     isStellarChain(id) ? ("stellar" as const) : namespaceForChain(id);
   return {

@@ -1,4 +1,18 @@
+import { existsSync, realpathSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
+
+// `bunx --bun playwright test` puts a `node` -> bun shim on PATH. Drop that
+// directory so the webServer (vite, node shebang) runs on real Node.
+const runtime = realpathSync(process.execPath);
+const nodePath = (process.env.PATH ?? "")
+  .split(delimiter)
+  .filter((dir) => {
+    if (!process.versions.bun) return true;
+    const candidate = join(dir, "node");
+    return !(existsSync(candidate) && realpathSync(candidate) === runtime);
+  })
+  .join(delimiter);
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -26,6 +40,7 @@ export default defineConfig({
     command: "bunx vite dev --force --host 127.0.0.1 --port 4173",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000
+    timeout: 120_000,
+    env: { ...process.env, PATH: nodePath } as Record<string, string>
   }
 });

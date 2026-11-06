@@ -3,7 +3,7 @@
     "allow": [
       "Bash(bun run format:*)",
       "Bash(bun run lint:*)",
-      "Bash(bunx eslint:*)",
+      "Bash(bunx oxlint:*)",
       "Bash(bun run check:*)",
       "Bash(bun run:*)",
       "Bash(bun install:*)"

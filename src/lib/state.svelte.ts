@@ -36,7 +36,7 @@ import {
   transactionReceipts as transactionReceiptsTable,
   tokens as tokensTable
 } from "./schema";
-import { and, eq, ne, notInArray } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { containerToIntent, reviveOrderBigInts } from "./utils/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {

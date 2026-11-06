@@ -18,14 +18,14 @@ Use `bun` for all workflows.
 - `bun run build` generates a production build.
 - `bun run preview` serves the production build locally.
 - `bun run check` runs `svelte-check` with the repo’s TS config.
-- `bun run lint` checks formatting (Prettier) and lint rules (ESLint).
-- `bun run format` auto-formats the repo with Prettier.
+- `bun run lint` checks formatting (oxfmt) and lint rules (oxlint); `bun run lint:fix` applies oxlint fixes.
+- `bun run format` auto-formats the repo with oxfmt (`bun run format:check` to verify).
 - `bun run migrate` generates Drizzle migrations and compiles them.
 
 ## Coding Style & Naming Conventions
 
-- Formatting is enforced by Prettier and `prettier-plugin-svelte`; run `bun run format`.
-- Linting uses ESLint with Svelte support; run `bun run lint`.
+- Formatting is enforced by oxfmt (including `.svelte` files and Tailwind class sorting); run `bun run format`.
+- Linting uses oxlint (lints `<script>` blocks in `.svelte` files; no Svelte template rules); run `bun run lint`.
 - Prefer descriptive component names in `src/lib/screens/` and keep route files minimal.
 - Use TypeScript where applicable (`.ts`, `.svelte` with `lang="ts"`).
 

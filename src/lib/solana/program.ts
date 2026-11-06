@@ -59,13 +59,11 @@ function adaptBuilder(
       const ix = await builder.instruction();
       return {
         programId: ix.programId.toBase58(),
-        keys: ix.keys.map(
-          (key): SolanaAccountMeta => ({
-            pubkey: key.pubkey.toBase58(),
-            isSigner: key.isSigner,
-            isWritable: key.isWritable
-          })
-        ),
+        keys: ix.keys.map((key): SolanaAccountMeta => ({
+          pubkey: key.pubkey.toBase58(),
+          isSigner: key.isSigner,
+          isWritable: key.isWritable
+        })),
         data: new Uint8Array(ix.data)
       };
     }

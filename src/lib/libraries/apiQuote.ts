@@ -2,7 +2,6 @@ import {
   IntentApi,
   addressToBytes32,
   stellarStrkeyToBytes32,
-  bytes32ToStellarContract,
   encodeStellarOrder,
   type StandardOrder,
   type MandateOutput,

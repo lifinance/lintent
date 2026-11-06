@@ -254,28 +254,26 @@
     integratorKey: quoteDemoParams.integratorKey
   });
 
-  const intentOptions = $derived.by(
-    (): AppCreateIntentOptions => ({
-      // Whatever the quote named as its exclusive solver, in every mode. The
-      // 1:1 demo used to substitute a hardcoded EVM solver here, which is not
-      // an identity a Solana-origin order can ever settle to; the integrator
-      // key is what drives the 1:1 quote, and the solver comes back on it.
-      exclusiveFor: resolvedExclusiveFor,
-      inputTokens: store.inputTokens,
-      outputTokens: store.outputTokens,
-      verifier: store.verifier,
-      outputRecipient,
-      lock:
-        store.intentType === "compact"
-          ? {
-              type: "compact",
-              allocatorId: store.allocatorId,
-              resetPeriod: ResetPeriod.OneDay
-            }
-          : { type: "escrow" },
-      account: inputOnStellar ? () => stellarStrkeyToBytes32(store.stellarAccount!) : account
-    })
-  );
+  const intentOptions = $derived.by((): AppCreateIntentOptions => ({
+    // Whatever the quote named as its exclusive solver, in every mode. The
+    // 1:1 demo used to substitute a hardcoded EVM solver here, which is not
+    // an identity a Solana-origin order can ever settle to; the integrator
+    // key is what drives the 1:1 quote, and the solver comes back on it.
+    exclusiveFor: resolvedExclusiveFor,
+    inputTokens: store.inputTokens,
+    outputTokens: store.outputTokens,
+    verifier: store.verifier,
+    outputRecipient,
+    lock:
+      store.intentType === "compact"
+        ? {
+            type: "compact",
+            allocatorId: store.allocatorId,
+            resetPeriod: ResetPeriod.OneDay
+          }
+        : { type: "escrow" },
+    account: inputOnStellar ? () => stellarStrkeyToBytes32(store.stellarAccount!) : account
+  }));
 
   const approvalOptions = $derived({
     preHook,
@@ -407,7 +405,7 @@
     if (numInputChains > 1) return false;
     const inputChain = store.inputTokens[0].token.chainId;
     const outputChains = store.outputTokens.map((o) => o.token.chainId);
-    const numOutputChains = [...new Set(outputChains)].length;
+    const numOutputChains = new Set(outputChains).size;
     if (numOutputChains > 1) return false;
     const outputChain = outputChains[0];
     return inputChain === outputChain;

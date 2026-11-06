@@ -22,13 +22,11 @@ import { isStellarChain } from "$lib/config";
  * same-chain output was silently classified as remote.
  */
 export function reviveOrderBigInts(order: OrderContainer["order"]): OrderContainer["order"] {
-  const outputs = order.outputs.map(
-    (output): MandateOutput => ({
-      ...output,
-      chainId: BigInt(output.chainId),
-      amount: BigInt(output.amount)
-    })
-  );
+  const outputs = order.outputs.map((output): MandateOutput => ({
+    ...output,
+    chainId: BigInt(output.chainId),
+    amount: BigInt(output.amount)
+  }));
   if ("originChainId" in order) {
     return {
       ...order,

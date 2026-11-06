@@ -819,7 +819,7 @@ export const clients = {
   }),
   pharos: createPublicClient({
     chain: pharos,
-    transport: fallback([...pharos.rpcUrls.default.http.map((v) => http(v))])
+    transport: fallback(pharos.rpcUrls.default.http.map((v) => http(v)))
   }),
   hyperEvm: createPublicClient({
     chain: hyperEvm,

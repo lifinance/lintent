@@ -35,9 +35,8 @@ beforeAll(async () => {
     return reply(calls[calls.length - 1]);
   }) as unknown as typeof fetch;
 
-  ({ verifyProvableSolanaLog, POLYMER_SOLANA_PROGRAM_ID } = await import(
-    "../../src/lib/libraries/provableSolanaLogVerify"
-  ));
+  ({ verifyProvableSolanaLog, POLYMER_SOLANA_PROGRAM_ID } =
+    await import("../../src/lib/libraries/provableSolanaLogVerify"));
 });
 
 // bun runs every test file in one process, so an unrestored stub would silently serve the next

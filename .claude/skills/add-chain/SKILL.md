@@ -84,7 +84,7 @@ Optional (accept now to avoid asking later; otherwise defaulted + warned):
    flag; **warn** if it conflicts with the user's stated mainnet/testnet. For non-viem
    chains, use the user's answer (and you **must** set `testnet: true` explicitly in
    `defineChain` for testnets — otherwise `!chainMap[c].testnet` is `!undefined ===
-true` and the app treats it as mainnet).
+   true` and the app treats it as mainnet).
 
 5. **chainKey** (the camelCase repo key, also the TS union member): derive it from the
    display name — lowercase the first word, capitalize subsequent words, strip

@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
+  "categories": { "correctness": "error" },
+  "env": { "browser": true, "node": true, "builtin": true },
+  "rules": {
+    "no-undef": "off",
+    // Svelte `$effect` blocks read bare state to register reactive dependencies.
+    "no-unused-expressions": "off",
+    // Pre-existing unused catch bindings/variables; clean up separately.
+    "no-unused-vars": "warn",
+    // Pre-existing in a test assertion; fixing would change test semantics.
+    "no-unsafe-optional-chaining": "warn",
+    // Pre-existing `?.address!` in +page.svelte; fixing changes runtime typing.
+    "typescript/no-non-null-asserted-optional-chain": "warn",
+    // src/lib/index.ts is the SvelteKit `$lib` placeholder.
+    "unicorn/no-empty-file": "off"
+  }
+}

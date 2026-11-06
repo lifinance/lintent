@@ -36,7 +36,7 @@ import {
   transactionReceipts as transactionReceiptsTable,
   tokens as tokensTable
 } from "./schema";
-import { and, eq, ne, notInArray } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { containerToIntent, reviveOrderBigInts } from "./utils/intent";
 import { getOrFetchRpc, invalidateRpcPrefix } from "./libraries/rpcCache";
 import {
@@ -452,7 +452,7 @@ class Store {
     });
   });
 
-  multichain = $derived([...new Set(this.inputTokens.map((i) => i.token.chainId))].length > 1);
+  multichain = $derived(new Set(this.inputTokens.map((i) => i.token.chainId)).size > 1);
 
   inputSettler = $derived.by(() => {
     if (this.intentType === "escrow" && !this.multichain) return INPUT_SETTLER_ESCROW_LIFI;

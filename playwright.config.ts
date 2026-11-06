@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
-// `bunx --bun playwright test` puts a `node` -> bun shim on PATH. Drop that
+// `bun --bun run test:e2e` (opt-in) puts a `node` -> bun shim on PATH. Drop that
 // directory so the webServer (vite, node shebang) runs on real Node.
 const runtime = realpathSync(process.execPath);
 const nodePath = (process.env.PATH ?? "")

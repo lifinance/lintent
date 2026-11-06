@@ -6,7 +6,7 @@
   "trailingComma": "none",
   "printWidth": 100,
   "sortPackageJson": false,
-  "sortTailwindcss": true,
+  "sortTailwindcss": { "stylesheet": "./src/app.css" },
   "svelte": true,
   "ignorePatterns": ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"]
 }

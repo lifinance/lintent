@@ -405,7 +405,7 @@
     if (numInputChains > 1) return false;
     const inputChain = store.inputTokens[0].token.chainId;
     const outputChains = store.outputTokens.map((o) => o.token.chainId);
-    const numOutputChains = [...new Set(outputChains)].length;
+    const numOutputChains = new Set(outputChains).size;
     if (numOutputChains > 1) return false;
     const outputChain = outputChains[0];
     return inputChain === outputChain;

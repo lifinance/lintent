@@ -452,7 +452,7 @@ class Store {
     });
   });
 
-  multichain = $derived([...new Set(this.inputTokens.map((i) => i.token.chainId))].length > 1);
+  multichain = $derived(new Set(this.inputTokens.map((i) => i.token.chainId)).size > 1);
 
   inputSettler = $derived.by(() => {
     if (this.intentType === "escrow" && !this.multichain) return INPUT_SETTLER_ESCROW_LIFI;

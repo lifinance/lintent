@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript"],
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
   "categories": { "correctness": "error" },
   "env": { "browser": true, "node": true, "builtin": true },
   "rules": {
@@ -12,6 +12,8 @@
     // Pre-existing in a test assertion; fixing would change test semantics.
     "no-unsafe-optional-chaining": "warn",
     // Pre-existing `?.address!` in +page.svelte; fixing changes runtime typing.
-    "typescript/no-non-null-asserted-optional-chain": "warn"
+    "typescript/no-non-null-asserted-optional-chain": "warn",
+    // src/lib/index.ts is the SvelteKit `$lib` placeholder.
+    "unicorn/no-empty-file": "off"
   }
 }

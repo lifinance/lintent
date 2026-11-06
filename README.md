@@ -235,7 +235,7 @@ tests/
 ## Testing
 
 - `bun run test:unit` runs library and unit tests with coverage
-- `bun run test:e2e` runs Playwright browser tests (requires `bunx playwright install chromium`)
+- `bun run test:e2e` runs Playwright browser tests on Node (requires `bun run playwright install chromium` or `npx playwright install chromium`). To run Playwright on Bun instead (optional; Bun >= 1.4.4, `@playwright/test` >= 1.65.0), use `bun --bun run test:e2e`. Bun caveats: UI mode has no watch mode; console output is not captured in traces.
 - `bun run test:all` runs both suites
 
 ## Deployment

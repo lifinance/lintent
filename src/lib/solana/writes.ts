@@ -9,6 +9,7 @@
 import { getOutputHash } from "@lifi/intent";
 import type { MandateOutput, StandardSolana } from "@lifi/intent";
 import { INTENTS_PROTOCOL_PROGRAM_ID, POLYMER_PROGRAM_ID } from "$lib/idl";
+import { assertRelayableFillDescription } from "$lib/libraries/fillGuards";
 import { assertSolanaCluster } from "./client";
 import {
   assertSolanaAmountFitsU64,
@@ -363,6 +364,7 @@ export async function submitFillProof(
     timestamp: number;
   }
 ): Promise<string> {
+  assertRelayableFillDescription(args.output);
   await assertSolanaCluster(deps.chainId, deps.reads);
   const c = await codecs();
   const { orderId, output, solverBytes32, timestamp } = args;

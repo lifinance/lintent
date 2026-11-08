@@ -337,6 +337,11 @@ export function validateApiQuote(
   return { ...decoded, inputSettler: wire(inputSettler) };
 }
 
+/** A quote response belongs to the request that started it. A newer request wins. */
+export function isCurrentQuoteRequest(requestId: number, generation: number) {
+  return requestId === generation;
+}
+
 /** Selection may start with a placeholder output; signing must use the selected terms. */
 export function validateApiQuoteExecution(quote: SelectedApiQuote, context: ApiQuoteContext) {
   const validated = validateApiQuote(quote, context);

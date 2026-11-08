@@ -306,7 +306,8 @@ export async function runIntentLifecycle() {
     async () => ({ status: "SUCCESS", ledger: 1, createdAt: 1_800_000_100 }) as never
   );
 
-  const { validateApiQuote } = await import("../../src/lib/libraries/apiQuote");
+  const { apiQuoteRequest, isCurrentQuoteRequest, validateApiQuote } =
+    await import("../../src/lib/libraries/apiQuote");
   const { containerToIntent } = await import("../../src/lib/utils/intent");
   const { IntentFactory } = await import("../../src/lib/libraries/intentFactory");
   const { Solver } = await import("../../src/lib/libraries/solver");
@@ -368,17 +369,14 @@ export async function runIntentLifecycle() {
   assert.equal(expiredQuoteOpens, 0);
   assert.equal(opensAfterExpiry, expiredQuoteOpens);
 
-  // Same rule as GetQuote.updateQuote: capture the generation before the
-  // order-API round trip and drop the response if a newer request started.
+  // GetQuote.updateQuote drops a response when a newer request has started.
   let generation = 0;
   async function requestQuote() {
     const requestId = ++generation;
     selection = { quote: undefined, generation: requestId };
-    const response = await new IntentApi(true).getQuotes(
-      (await import("../../src/lib/libraries/apiQuote")).apiQuoteRequest(context)
-    );
+    const response = await new IntentApi(true).getQuotes(apiQuoteRequest(context));
     const quote = response.quotes[0];
-    if (requestId !== generation) return { applied: false, quote };
+    if (!isCurrentQuoteRequest(requestId, generation)) return { applied: false, quote };
     validateApiQuote(quote, context);
     context.outputs[0].amount = BigInt(quote.preview.outputs[0].amount);
     selection = { quote, generation: requestId };

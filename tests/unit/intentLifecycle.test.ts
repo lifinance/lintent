@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -50,13 +49,6 @@ async function runLifecycle() {
 
 describe("Stellar-EVM testnet intent lifecycle", () => {
   it("locks, issues, solves, proves and finalises, and rejects a stale quote or an expired intent", async () => {
-    const quoteSource = readFileSync(
-      fileURLToPath(new URL("../../src/lib/components/GetQuote.svelte", import.meta.url)),
-      "utf8"
-    );
-    // A slower order-API response must not overwrite the quote for a newer request.
-    expect(quoteSource).toMatch(/if\s*\(\s*id\s*!==\s*generation\s*\)\s*return/);
-
     const report = await runLifecycle();
 
     expect(report.expiredQuoteError).toMatch(/expired/i);

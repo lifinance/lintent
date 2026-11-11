@@ -1,4 +1,4 @@
-import axios from "axios";
+import { postJson } from "$lib/utils/http";
 import { axelarCorridor, isStellarChain, isChainIdTestnet } from "$lib/config";
 
 /**
@@ -13,7 +13,7 @@ export async function axelarGasFee(
   stellarExecutor?: string
 ): Promise<bigint> {
   axelarCorridor(sourceChainId, destinationChainId);
-  const { data } = await axios.post<{ fee: string }>("/axelar/gas", {
+  const data = await postJson<{ fee: string }>("/axelar/gas", {
     sourceChainId: Number(sourceChainId),
     destinationChainId: Number(destinationChainId),
     payloads,

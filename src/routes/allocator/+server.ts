@@ -1,5 +1,5 @@
 import { json } from "@sveltejs/kit";
-import axios from "axios";
+import { postJson } from "$lib/utils/http";
 import type { RequestHandler } from "./$types";
 import { type StandardOrder } from "@lifi/intent";
 import {
@@ -51,31 +51,7 @@ export const POST: RequestHandler = async ({ request }) => {
   try {
     const PRIVATE_POLYMER_ZONE_API_KEY = getPolymerKey(mainnet ?? true);
 
-    const requestAllocation = await axios.post(
-      "https://allocator.devnet.polymer.zone/",
-      {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "allocator_attestCommit",
-        params: [
-          {
-            chainId,
-            blockNumber,
-            claimHash,
-            order
-          }
-        ]
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}`,
-          "Content-Type": "application/json",
-          Accept: "application/json"
-        }
-      }
-    );
-
-    const dat: {
+    const dat = await postJson<{
       jsonrpc: "2.0";
       id: 1;
       result: {
@@ -93,7 +69,23 @@ export const POST: RequestHandler = async ({ request }) => {
           balance: `0x${string}`;
         }[];
       };
-    } = requestAllocation.data;
+    }>(
+      "https://allocator.devnet.polymer.zone/",
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "allocator_attestCommit",
+        params: [
+          {
+            chainId,
+            blockNumber,
+            claimHash,
+            order
+          }
+        ]
+      },
+      { headers: { Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}` } }
+    );
 
     return json({
       allocatorSignature: dat.result.allocatorSignature,

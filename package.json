@@ -36,11 +36,11 @@
     "oxlint": "^1.91.0",
     "rollup": "^4.61.0",
     "rollup-plugin-esbuild": "^6.2.1",
-    "svelte": "^5.0.0",
+    "svelte": "^5.55.7",
     "svelte-check": "^4.0.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.6.3",
-    "vite": "^7.1.1"
+    "vite": "^7.3.7"
   },
   "lint-staged": {
     "*.{js,ts,svelte,css,md,json,html}": "oxfmt --no-error-on-unmatched-pattern"
@@ -69,16 +69,19 @@
     "@wagmi/connectors": "^7.2.1",
     "@wagmi/core": "^3.4.0",
     "@walletconnect/ethereum-provider": "^2.21.1",
-    "axios": "^1.13.6",
+    "axios": "^1.20.0",
     "base64-js": "^1.5.1",
-    "drizzle-orm": "^0.45.1",
+    "drizzle-orm": "^0.45.2",
     "porto": "~0.2.35",
     "rxjs": "^7.8.2",
-    "tronweb": "^6.4.0",
-    "viem": "~2.45.1",
+    "tronweb": "^6.5.1",
+    "viem": "~2.57.17",
     "wagmi": "^3.5.0"
   },
   "overrides": {
-    "bigint-buffer": "npm:bigint-buffer-fixed@^1.1.6"
+    "bigint-buffer": "npm:bigint-buffer-fixed@^1.1.6",
+    "axios": "^1.20.0",
+    "tar": "^7.5.21",
+    "uuid": "^11.1.1"
   }
 }

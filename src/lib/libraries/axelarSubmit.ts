@@ -2,6 +2,7 @@ import { Address, nativeToScVal, xdr } from "@stellar/stellar-sdk";
 import { addressToBytes32, bytes32ToAddress, bytes32ToStellarContract } from "@lifi/intent";
 import { encodeFunctionData, hexToBytes } from "viem";
 import { AXELAR_ORACLE_ABI, LEGACY_AXELAR_ORACLE_ABI } from "$lib/abi/axelaroracle";
+import { assertRelayPayloads } from "./fillGuards";
 import {
   AXELAR_CHAIN_NAMES,
   BYTES32_ZERO,
@@ -54,6 +55,7 @@ export function evmAxelarSubmitData(
   source: `0x${string}`,
   payloads: `0x${string}`[]
 ) {
+  assertRelayPayloads(payloads);
   return route.generation === "legacy"
     ? encodeFunctionData({
         abi: LEGACY_AXELAR_ORACLE_ABI,
@@ -74,6 +76,7 @@ export function stellarAxelarSubmitArgs(
   route: AxelarSubmitRoute,
   opts: { source: string; payer: string; payloads: `0x${string}`[]; gasAmount: bigint }
 ): xdr.ScVal[] {
+  assertRelayPayloads(opts.payloads);
   const destination =
     route.generation === "legacy"
       ? [nativeToScVal(route.destinationName, { type: "string" }), scBytes(legacyRecipient(route))]

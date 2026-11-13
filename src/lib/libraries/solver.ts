@@ -38,7 +38,7 @@ import { compactTypes } from "@lifi/intent";
 import store from "$lib/state.svelte";
 import { finaliseIntent } from "./intentExecution";
 import { getFillDetails } from "./fillEvent";
-import { isSolanaChain, isTronChain } from "$lib/utils/chainType";
+import { isEvmChain, isSolanaChain, isTronChain } from "$lib/utils/chainType";
 import { isValidTxRef, type TxRef } from "$lib/utils/txRef";
 import { polymerReceiveFunction } from "./polymerReceive";
 import { getSolanaReads } from "$lib/solana/client";
@@ -66,6 +66,11 @@ import { axelarGasFee } from "./axelar";
 import { getFillInfo, persistReceipt, solverIdentityFor } from "./fillInfo";
 import { fillStellarOutputs, finaliseStellarIntent, submitStellarAxelar } from "./stellar";
 import { axelarSubmitRoute, evmAxelarSubmitData } from "./axelarSubmit";
+import {
+  assertCleanAccountFiller,
+  assertRelayableFillDescription,
+  relaysFillDescription
+} from "./fillGuards";
 
 async function tronDeps(): Promise<TronDeps> {
   return { reads: await getTronReads(), signer: getTronSigner() };
@@ -217,6 +222,19 @@ export class Solver {
         "originChainId" in order && isStellarChain(order.originChainId)
           ? solverIdentityFor(order)
           : addressToBytes32(solverAddress);
+      const origin = "originChainId" in order ? order.originChainId : undefined;
+      const accountSolver =
+        origin === undefined || (!isStellarChain(origin) && !isSolanaChain(origin));
+      if (
+        accountSolver &&
+        outputs.length > 0 &&
+        (isEvmChain(outputs[0].chainId) || isTronChain(outputs[0].chainId))
+      ) {
+        assertCleanAccountFiller(solverBytes32);
+      }
+      for (const output of outputs) {
+        if (relaysFillDescription(order, output.chainId)) assertRelayableFillDescription(output);
+      }
 
       if (isStellarChain(outputs[0].chainId)) {
         if (outputs.some((output) => output.chainId !== outputs[0].chainId))
@@ -368,6 +386,7 @@ export class Solver {
         if (
           order.inputOracle.toLowerCase() === AXELAR_ORACLE[Number(sourceChainId)]?.toLowerCase()
         ) {
+          assertRelayableFillDescription(output);
           const { payload } = await getFillInfo({
             orderId,
             output,

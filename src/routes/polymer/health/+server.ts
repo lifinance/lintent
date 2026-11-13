@@ -1,5 +1,5 @@
 import { json } from "@sveltejs/kit";
-import axios from "axios";
+import { postJson } from "$lib/utils/http";
 import type { RequestHandler } from "./$types";
 import {
   PRIVATE_POLYMER_MAINNET_ZONE_API_KEY,
@@ -44,24 +44,7 @@ export const POST: RequestHandler = async ({ request }) => {
     const POLYMER_URL = getPolymerUrl(mainnet ?? true);
     const PRIVATE_POLYMER_ZONE_API_KEY = getPolymerKey(mainnet ?? true);
 
-    const requestProofData = await axios.post(
-      POLYMER_URL,
-      {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "info_health",
-        params: [{ chain_ids: chainIds ?? [] }]
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}`,
-          "Content-Type": "application/json",
-          Accept: "application/json"
-        }
-      }
-    );
-
-    const dat:
+    const dat = await postJson<
       | ({
           jsonrpc: "2.0";
           id: 1;
@@ -72,8 +55,17 @@ export const POST: RequestHandler = async ({ request }) => {
             };
           };
         })
-      | { error: { code: -32000; message: `unsupported chain ID(s): [${string}]` } } =
-      requestProofData.data;
+      | { error: { code: -32000; message: `unsupported chain ID(s): [${string}]` } }
+    >(
+      POLYMER_URL,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "info_health",
+        params: [{ chain_ids: chainIds ?? [] }]
+      },
+      { headers: { Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}` } }
+    );
 
     const failed = "error" in dat;
     const status = !failed ? dat.result.status : [];

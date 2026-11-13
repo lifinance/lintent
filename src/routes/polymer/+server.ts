@@ -1,5 +1,5 @@
 import { json } from "@sveltejs/kit";
-import axios from "axios";
+import { postJson } from "$lib/utils/http";
 import type { RequestHandler } from "./$types";
 import {
   PRIVATE_POLYMER_MAINNET_ZONE_API_KEY,
@@ -32,8 +32,8 @@ const POLYMER_SOLANA_CHAIN_ID = 2;
 /**
  * Reads the request index out of a `polymer_requestProof` response.
  *
- * JSON-RPC reports failures in `error`, not by HTTP status, so axios resolves
- * happily and `result` is simply absent. Reading `.result` blindly yields
+ * JSON-RPC reports failures in `error`, not by HTTP status, so the request
+ * succeeds and `result` is simply absent. Reading `.result` blindly yields
  * `undefined`, which then gets passed to `polymer_queryProof` and comes back as
  * a bare `not_found` — the caller sees "no proof yet" and polls forever for a
  * request that was never accepted. Fail loudly with Polymer's own reason
@@ -198,7 +198,7 @@ export const POST: RequestHandler = async ({ request }) => {
         });
         return json({ error: "transaction does not contain a Polymer Prove log" }, { status: 400 });
       }
-      const requestProof = await axios.post(
+      const requestProof = await postJson(
         POLYMER_URL,
         {
           jsonrpc: "2.0",
@@ -214,15 +214,9 @@ export const POST: RequestHandler = async ({ request }) => {
             }
           ]
         },
-        {
-          headers: {
-            Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}`,
-            "Content-Type": "application/json",
-            Accept: "application/json"
-          }
-        }
+        { headers: { Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}` } }
       );
-      polymerRequestIndex = assertRequestAccepted(requestProof.data, "solana");
+      polymerRequestIndex = assertRequestAccepted(requestProof, "solana");
     } else if (evmSource) {
       // V2-199 (#53) + #63: confirm the referenced log really is one of the allowlisted
       // output-settler events before spending a Polymer proof request on it.
@@ -242,7 +236,7 @@ export const POST: RequestHandler = async ({ request }) => {
           { status: 400 }
         );
       }
-      const requestProof = await axios.post(
+      const requestProof = await postJson(
         POLYMER_URL,
         {
           jsonrpc: "2.0",
@@ -256,33 +250,11 @@ export const POST: RequestHandler = async ({ request }) => {
             }
           ]
         },
-        {
-          headers: {
-            Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}`,
-            "Content-Type": "application/json",
-            Accept: "application/json"
-          }
-        }
+        { headers: { Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}` } }
       );
-      polymerRequestIndex = assertRequestAccepted(requestProof.data, "evm");
+      polymerRequestIndex = assertRequestAccepted(requestProof, "evm");
     }
-    const requestProofData = await axios.post(
-      POLYMER_URL,
-      {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "polymer_queryProof",
-        params: [polymerRequestIndex]
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}`,
-          "Content-Type": "application/json",
-          Accept: "application/json"
-        }
-      }
-    );
-    const dat: {
+    const dat = await postJson<{
       jsonrpc: "2.0";
       id: 1;
       result: {
@@ -306,7 +278,16 @@ export const POST: RequestHandler = async ({ request }) => {
             status: "initialized" | "pending" | "not_found";
           }
       );
-    } = requestProofData.data;
+    }>(
+      POLYMER_URL,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "polymer_queryProof",
+        params: [polymerRequestIndex]
+      },
+      { headers: { Authorization: `Bearer ${PRIVATE_POLYMER_ZONE_API_KEY}` } }
+    );
 
     let proof: string | undefined;
     if (dat.result.status === "complete") {

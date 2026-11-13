@@ -28,7 +28,7 @@ import {
   StandardStellarIntent,
   TRON_LEGACY_POLYMER_ORACLES
 } from "@lifi/intent";
-import axios from "axios";
+import { postJson } from "$lib/utils/http";
 import { AXELAR_ORACLE_ABI, LEGACY_AXELAR_ORACLE_ABI } from "$lib/abi/axelaroracle";
 import { POLYMER_ORACLE_ABI } from "$lib/abi/polymeroracle";
 import { COIN_FILLER_ABI } from "$lib/abi/outputsettler";
@@ -136,12 +136,11 @@ export class Solver {
   ): Promise<string | undefined> {
     let polymerIndex: number | undefined = Solver.polymerRequestIndexByLog.get(cacheKey);
     for (const waitMs of [1000, 2000, 4000, 8000]) {
-      const response = await axios.post(`/polymer`, { ...body, polymerIndex }, { timeout: 15_000 });
-      const dat = response.data as {
+      const dat = await postJson<{
         proof: undefined | string;
         polymerIndex: number;
         status?: "initialized" | "complete" | "error";
-      };
+      }>(`/polymer`, { ...body, polymerIndex }, { timeoutMs: 15_000 });
       polymerIndex = dat.polymerIndex;
       if (polymerIndex !== undefined) {
         Solver.polymerRequestIndexByLog.set(cacheKey, polymerIndex);

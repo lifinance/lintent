@@ -20,16 +20,30 @@ let verifyResult: "match" | "mismatch" | "unknown" = "match";
 let queryProofResult: unknown = { jobID: 1, createdAt: 0, updatedAt: 0, status: "initialized" };
 // The whole `polymer_requestProof` envelope, so a test can return a JSON-RPC
 // `error` instead of a `result` — that is how Polymer reports a rejection, and
-// axios resolves happily either way.
+// the HTTP request succeeds either way.
 let requestProofResponse: unknown = { jsonrpc: "2.0", id: 1, result: 7777 };
 
 // Drive the real `verifyProvableLog` through its RPC instead of `mock.module`-ing it: bun runs
 // every test file in one process and module mocks are global, so stubbing that path clobbered
 // provableLogVerify.test.ts's own subject. Intercepting fetch also means these tests exercise
-// the actual gate rather than a stand-in for it.
+// the actual gate rather than a stand-in for it. Polymer itself is reached through the same
+// global fetch, so its calls are recorded here too.
 const realFetch = global.fetch;
-global.fetch = (async (_url: string, init?: RequestInit) => {
-  const call = JSON.parse(String(init?.body)) as { method: string };
+global.fetch = (async (url: string, init?: RequestInit) => {
+  const call = JSON.parse(String(init?.body)) as { method: string; params: unknown[] };
+  if (call.method.startsWith("polymer_")) {
+    polymerCalls.push({
+      url,
+      method: call.method,
+      params: call.params,
+      auth: (init?.headers as Record<string, string>).Authorization
+    });
+    const envelope =
+      call.method === "polymer_requestProof"
+        ? requestProofResponse
+        : { jsonrpc: "2.0", id: 1, result: queryProofResult };
+    return new Response(JSON.stringify(envelope), { status: 200 });
+  }
   if (call.method !== "eth_getLogs") {
     return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: [] }), { status: 200 });
   }
@@ -72,26 +86,6 @@ global.fetch = (async (_url: string, init?: RequestInit) => {
 afterAll(() => {
   global.fetch = realFetch;
 });
-
-// No other test imports axios today, so this module mock has no one to leak onto — but it is
-// global for the whole run, so anything added later that uses axios must not rely on the real one.
-mock.module("axios", () => ({
-  default: {
-    post: async (url: string, payload: { method: string; params: unknown[] }, config: never) => {
-      const headers = (config as unknown as { headers: Record<string, string> }).headers;
-      polymerCalls.push({
-        url,
-        method: payload.method,
-        params: payload.params,
-        auth: headers.Authorization
-      });
-      if (payload.method === "polymer_requestProof") {
-        return { data: requestProofResponse };
-      }
-      return { data: { jsonrpc: "2.0", id: 1, result: queryProofResult } };
-    }
-  }
-}));
 
 const { POST } = await import("../../src/routes/polymer/+server");
 

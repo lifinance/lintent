@@ -3,6 +3,7 @@
   import { IntentApi } from "@lifi/intent";
   import {
     apiQuoteRequest,
+    isCurrentQuoteRequest,
     validateApiQuote,
     type ApiQuoteContext,
     type SelectedApiQuote
@@ -117,7 +118,7 @@
       const response = await new IntentApi(resolveProductionApi(useProductionApi)).getQuotes(
         request
       );
-      if (id !== generation) return;
+      if (!isCurrentQuoteRequest(id, generation)) return;
       const quote = response.quotes[0];
       if (!quote) return;
       const validated = corridor ? validateApiQuote(quote, context) : undefined;

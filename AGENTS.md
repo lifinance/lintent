@@ -37,7 +37,7 @@ Use `bun` for all workflows.
 
 - `bun run test:unit` runs bun test on `tests/unit/` and `tests/db.test.ts`; fixtures live in `tests/fixtures/`.
 - `bun run test:e2e` runs Playwright on `tests/e2e/` against a local `vite dev`. The live specs skip unless `E2E_PRIVATE_KEY` is set (see `.env.e2e.example`).
-- CI (`.github/workflows/test.yml`) runs `check`, `test:unit` and `test:e2e`; run `bun run check` and `bun run lint` before pushing.
+- CI (`.github/workflows/test.yml`) runs `check`, `test:unit` and `test:e2e`. CI sets no `E2E_PRIVATE_KEY`, so every E2E spec skips there: run E2E locally for UI flow changes. Run `bun run check` and `bun run lint` before pushing.
 
 ## Commit & Pull Request Guidelines
 

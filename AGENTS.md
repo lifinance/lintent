@@ -1,5 +1,9 @@
 # Repository Guidelines
 
+## Ownership
+
+Squad Intents + Solver. Reviewer: Alexander (`@reednaa`).
+
 ## Project Structure & Module Organization
 
 - `src/routes/` contains SvelteKit routes; the primary UI is `src/routes/+page.svelte`.
@@ -31,9 +35,9 @@ Use `bun` for all workflows.
 
 ## Testing Guidelines
 
-- There is no dedicated test framework in this repo.
-- Use `bun run check` and `bun run lint` as the baseline quality gate.
-- If you add tests, keep them near the feature and name them clearly (e.g. `*.test.ts`).
+- `bun run test:unit` runs bun test on `tests/unit/` and `tests/db.test.ts`; fixtures live in `tests/fixtures/`.
+- `bun run test:e2e` runs Playwright on `tests/e2e/` against a local `vite dev`. The live specs skip unless `E2E_PRIVATE_KEY` is set (see `.env.e2e.example`).
+- CI (`.github/workflows/test.yml`) runs `check`, `test:unit` and `test:e2e`; run `bun run check` and `bun run lint` before pushing.
 
 ## Commit & Pull Request Guidelines
 
@@ -44,4 +48,4 @@ Use `bun` for all workflows.
 ## Configuration & Environment
 
 - Copy `.env.example` to `.env` and fill required keys (WalletConnect + Polymer).
-- Cloudflare Workers are the default deployment target; see `svelte.config.js` and `wrangler.jsonc`.
+- Cloudflare Workers are the default deployment target; see `svelte.config.js` and `wrangler.toml`.
